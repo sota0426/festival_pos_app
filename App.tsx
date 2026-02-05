@@ -6,7 +6,7 @@ import './global.css';
 
 import { Home } from './components/Home';
 import { HQLogin, HQDashboard, BranchManagement } from './components/hq';
-import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory } from './components/store';
+import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, VisitorCounter } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 
@@ -19,7 +19,8 @@ type Screen =
   | 'store_home'
   | 'store_menus'
   | 'store_register'
-  | 'store_history';
+  | 'store_history'
+  | 'store_counter';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('home');
@@ -79,7 +80,6 @@ export default function App() {
 
       case 'store_home':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
           return null;
         }
         return (
@@ -88,11 +88,11 @@ export default function App() {
             onNavigateToRegister={() => setCurrentScreen('store_register')}
             onNavigateToMenus={() => setCurrentScreen('store_menus')}
             onNavigateToHistory={() => setCurrentScreen('store_history')}
+            onNavigateToCounter={() => setCurrentScreen('store_counter')}
             onLogout={handleBranchLogout}
           />
         );
-      
-        
+
       case 'store_menus':
         if (!currentBranch) {
           setCurrentScreen('store_login');
@@ -125,6 +125,18 @@ export default function App() {
         }
         return (
           <SalesHistory
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+          />
+        );
+
+      case 'store_counter':
+        if (!currentBranch) {
+          setCurrentScreen('store_login');
+          return null;
+        }
+        return (
+          <VisitorCounter
             branch={currentBranch}
             onBack={() => setCurrentScreen('store_home')}
           />

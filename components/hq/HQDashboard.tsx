@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Card, Header } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { clearHQAuth } from '../../lib/storage';
-import type { SalesAggregation, BranchSales, HourlySales } from '../../types/database';
+import type { SalesAggregation, BranchSales, HourlySales, HalfHourlyVisitors, BranchVisitors } from '../../types/database';
 
 interface HQDashboardProps {
   onNavigateToBranches: () => void;
@@ -23,9 +23,12 @@ export const HQDashboard = ({ onNavigateToBranches, onLogout }: HQDashboardProps
   const [branchSales, setBranchSales] = useState<BranchSales[]>([]);
   const [hourlySales, setHourlySales] = useState<HourlySales[]>([]);
   const [overallTarget, setOverallTarget] = useState(0);
+  const [totalVisitors, setTotalVisitors] = useState(0);
+  const [halfHourlyVisitors, setHalfHourlyVisitors] = useState<HalfHourlyVisitors[]>([]);
+  const [branchVisitors, setBranchVisitors] = useState<BranchVisitors[]>([]);
 
   const fetchDashboardData = useCallback(async () => {
-    
+
     if (!isSupabaseConfigured()) {
       // Demo data
       setTotalSales({
@@ -69,6 +72,38 @@ export const HQDashboard = ({ onNavigateToBranches, onLogout }: HQDashboardProps
         { hour: 14, sales: 20000, transaction_count: 37 },
       ]);
       setOverallTarget(90000);
+
+      // Demo visitor data
+      setTotalVisitors(487);
+      setHalfHourlyVisitors([
+        { time_slot: '10:00', count: 23 },
+        { time_slot: '10:30', count: 31 },
+        { time_slot: '11:00', count: 45 },
+        { time_slot: '11:30', count: 52 },
+        { time_slot: '12:00', count: 78 },
+        { time_slot: '12:30', count: 85 },
+        { time_slot: '13:00', count: 67 },
+        { time_slot: '13:30', count: 54 },
+        { time_slot: '14:00', count: 38 },
+        { time_slot: '14:30', count: 14 },
+      ]);
+      setBranchVisitors([
+        {
+          branch_id: '1',
+          branch_code: 'S001',
+          branch_name: '焼きそば屋',
+          total_visitors: 256,
+          half_hourly: [],
+        },
+        {
+          branch_id: '2',
+          branch_code: 'S002',
+          branch_name: 'たこ焼き屋',
+          total_visitors: 231,
+          half_hourly: [],
+        },
+      ]);
+
       setRefreshing(false);
       return;
     }
@@ -88,6 +123,13 @@ export const HQDashboard = ({ onNavigateToBranches, onLogout }: HQDashboardProps
         .select('*');
 
       if (branchError) throw branchError;
+
+      // Fetch visitor counts
+      const { data: visitorCounts, error: visitorError } = await supabase
+        .from('visitor_counts')
+        .select('*');
+
+      if (visitorError) console.log('Visitor counts not available:', visitorError);
 
       // Calculate total sales
       const total_sales = transactions?.reduce((sum, t) => sum + t.total_amount, 0) || 0;
@@ -148,6 +190,46 @@ export const HQDashboard = ({ onNavigateToBranches, onLogout }: HQDashboardProps
         .sort((a, b) => a.hour - b.hour);
 
       setHourlySales(hourlyData);
+
+      // Calculate visitor stats
+      if (visitorCounts) {
+        const total = visitorCounts.reduce((sum, v) => sum + v.count, 0);
+        setTotalVisitors(total);
+
+        // Calculate half-hourly visitors
+        const halfHourlyMap = new Map<string, number>();
+        visitorCounts.forEach((v) => {
+          const date = new Date(v.timestamp);
+          const hours = date.getHours();
+          const minutes = date.getMinutes();
+          const slot = minutes < 30 ? '00' : '30';
+          const timeSlot = `${hours.toString().padStart(2, '0')}:${slot}`;
+          const existing = halfHourlyMap.get(timeSlot) || 0;
+          halfHourlyMap.set(timeSlot, existing + v.count);
+        });
+
+        const halfHourlyData: HalfHourlyVisitors[] = Array.from(halfHourlyMap.entries())
+          .map(([time_slot, count]) => ({ time_slot, count }))
+          .sort((a, b) => a.time_slot.localeCompare(b.time_slot));
+
+        setHalfHourlyVisitors(halfHourlyData);
+
+        // Calculate branch visitors
+        const branchVisitorsData: BranchVisitors[] = (branches || []).map((branch) => {
+          const branchCounts = visitorCounts.filter(v => v.branch_id === branch.id);
+          const branchTotal = branchCounts.reduce((sum, v) => sum + v.count, 0);
+
+          return {
+            branch_id: branch.id,
+            branch_code: branch.branch_code,
+            branch_name: branch.branch_name,
+            total_visitors: branchTotal,
+            half_hourly: [],
+          };
+        });
+
+        setBranchVisitors(branchVisitorsData);
+      }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
@@ -165,12 +247,13 @@ export const HQDashboard = ({ onNavigateToBranches, onLogout }: HQDashboardProps
   };
 
   const achievementRate = overallTarget > 0 ? Math.round((totalSales.total_sales / overallTarget) * 100) : 0;
+  const maxVisitors = halfHourlyVisitors.length > 0 ? Math.max(...halfHourlyVisitors.map(h => h.count)) : 1;
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
       <Header
         title="本部ダッシュボード"
-        subtitle="売上集計"
+        subtitle="売上・来場者集計"
         rightElement={
           <Button title="ログアウト" onPress={handleLogout} variant="secondary" size="sm" />
         }
@@ -215,6 +298,52 @@ export const HQDashboard = ({ onNavigateToBranches, onLogout }: HQDashboardProps
               </Text>
             </View>
           </View>
+        </Card>
+
+        {/* Visitor Stats */}
+        <Card className="mb-4 bg-purple-50">
+          <Text className="text-lg font-bold text-purple-900 mb-3">来場者数</Text>
+          <View className="flex-row flex-wrap">
+            <View className="w-1/2 mb-3">
+              <Text className="text-purple-600 text-sm">本日の総来場者</Text>
+              <Text className="text-3xl font-bold text-purple-700">
+                {totalVisitors.toLocaleString()}人
+              </Text>
+            </View>
+            <View className="w-1/2 mb-3">
+              <Text className="text-purple-600 text-sm">支店別</Text>
+              {branchVisitors.map((bv) => (
+                <View key={bv.branch_id} className="flex-row justify-between">
+                  <Text className="text-purple-700">{bv.branch_code}</Text>
+                  <Text className="text-purple-900 font-semibold">{bv.total_visitors}人</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        </Card>
+
+        {/* Half-hourly Visitors Chart */}
+        <Card className="mb-4">
+          <Text className="text-lg font-bold text-gray-900 mb-3">30分毎の来場者数</Text>
+          {halfHourlyVisitors.map((slot) => (
+            <View key={slot.time_slot} className="flex-row items-center py-1.5 border-b border-gray-100 last:border-b-0">
+              <Text className="w-14 text-gray-600 text-sm font-medium">{slot.time_slot}</Text>
+              <View className="flex-1 mx-2 h-5 bg-gray-100 rounded overflow-hidden">
+                <View
+                  className="h-full bg-purple-500 rounded"
+                  style={{
+                    width: `${Math.min((slot.count / maxVisitors) * 100, 100)}%`,
+                  }}
+                />
+              </View>
+              <Text className="w-12 text-right text-gray-900 font-semibold">
+                {slot.count}人
+              </Text>
+            </View>
+          ))}
+          {halfHourlyVisitors.length === 0 && (
+            <Text className="text-gray-500 text-center py-4">データがありません</Text>
+          )}
         </Card>
 
         {/* Payment Method Breakdown */}

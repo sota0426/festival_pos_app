@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, useWindowDimensions, PanResponder } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { v4 as uuidv4 } from 'uuid';
 import { Button, Card, Header } from '../common';
@@ -18,6 +18,11 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   const [cart, setCart] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const [showCart, setShowCart] = useState(false); // For mobile view
+  const [cartWidth, setCartWidth] = useState(320); 
+  
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
 
   const fetchMenus = useCallback(async () => {
     try {
@@ -36,6 +41,20 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   }, [fetchMenus]);
 
   const totalAmount = cart.reduce((sum, item) => sum + item.subtotal, 0);
+  const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+  const panResponder = PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderMove: (_, gestureState) => {
+      const newWidth = cartWidth - gestureState.dx;
+
+      // 最小・最大幅を制限（重要）
+      if (newWidth >= 240 && newWidth <= 480) {
+        setCartWidth(newWidth);
+      }
+    },
+  });
 
   const addToCart = (menu: Menu) => {
     // Check stock if stock management is enabled
@@ -114,7 +133,10 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
     Alert.alert('確認', '注文内容をクリアしますか？', [
       { text: 'キャンセル', style: 'cancel' },
-      { text: 'クリア', style: 'destructive', onPress: () => setCart([]) },
+      { text: 'クリア', style: 'destructive', onPress: () => {
+        setCart([]);
+        setShowCart(false);
+      }},
     ]);
   };
 
@@ -224,6 +246,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
       // Clear cart and show success
       setCart([]);
+      setShowCart(false);
       Alert.alert(
         '会計完了',
         `合計: ${totalAmount.toLocaleString()}円\n支払い方法: ${paymentMethod === 'paypay' ? 'PayPay' : '金券'}\n取引番号: ${transactionCode}`,
@@ -250,6 +273,212 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
     return { color: 'text-gray-500', text: `残${menu.stock_quantity}` };
   };
 
+  // Menu Grid Component
+  const MenuGrid = () => (
+    <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
+      <View className="flex-row flex-wrap p-2">
+        {menus.map((menu) => {
+          const stockStatus = getStockStatus(menu);
+          const isDisabled = menu.stock_management && menu.stock_quantity === 0;
+          const cartItem = cart.find((item) => item.menu_id === menu.id);
+
+          return (
+            <View key={menu.id} className={isMobile ? 'w-1/2 p-1' : 'w-1/3 p-1'}>
+              <TouchableOpacity
+                onPress={() => addToCart(menu)}
+                disabled={isDisabled}
+                activeOpacity={0.7}
+              >
+                <Card
+                  className={`items-center py-4 ${isDisabled ? 'opacity-50 bg-gray-200' : ''} ${cartItem ? 'border-2 border-blue-500' : ''}`}
+                >
+                  <Text
+                    className={`text-lg font-semibold text-center ${isDisabled ? 'text-gray-400' : 'text-gray-900'}`}
+                    numberOfLines={2}
+                  >
+                    {menu.menu_name}
+                  </Text>
+                  <Text
+                    className={`text-xl font-bold mt-1 ${isDisabled ? 'text-gray-400' : 'text-blue-600'}`}
+                  >
+                    {menu.price.toLocaleString()}円
+                  </Text>
+                  {menu.stock_management && (
+                    <Text className={`text-sm mt-1 ${stockStatus.color}`}>
+                      {stockStatus.text}
+                    </Text>
+                  )}
+                  {cartItem && (
+                    <View className="absolute top-1 right-1 bg-blue-500 rounded-full w-6 h-6 items-center justify-center">
+                      <Text className="text-white text-xs font-bold">{cartItem.quantity}</Text>
+                    </View>
+                  )}
+                </Card>
+              </TouchableOpacity>
+            </View>
+          );
+        })}
+      </View>
+
+      {menus.length === 0 && !loading && (
+        <View className="items-center py-12">
+          <Text className="text-gray-500">メニューが登録されていません</Text>
+          <Text className="text-gray-400 text-sm mt-2">
+            メニュー登録画面で追加してください
+          </Text>
+        </View>
+      )}
+
+      {/* Spacer for floating cart button on mobile */}
+      {isMobile && cart.length > 0 && <View className="h-24" />}
+    </ScrollView>
+  );
+
+  // Cart Component
+  const CartPanel = () => (
+    <View className={`bg-white ${isMobile ? 'flex-1' : 'flex-1 border-l border-gray-200'}`}>
+      <View className="p-3 border-b border-gray-200 flex-row items-center justify-between">
+        <Text className="text-lg font-bold text-gray-900">注文内容</Text>
+        {isMobile && (
+          <TouchableOpacity onPress={() => setShowCart(false)} className="p-2">
+            <Text className="text-gray-500 text-2xl">×</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <ScrollView className="flex-1 p-3">
+        {cart.map((item) => (
+          <View
+            key={item.menu_id}
+            className="flex-row items-center justify-between py-3 border-b border-gray-100"
+          >
+            <View className="flex-1 mr-2">
+              <Text className="text-gray-900 font-medium" numberOfLines={1}>
+                {item.menu_name}
+              </Text>
+              <Text className="text-gray-500 text-sm">
+                @{item.unit_price.toLocaleString()}円
+              </Text>
+            </View>
+
+            <View className="flex-row items-center">
+              <TouchableOpacity
+                onPress={() => updateCartItemQuantity(item.menu_id, -1)}
+                className="w-9 h-9 bg-gray-200 rounded items-center justify-center"
+              >
+                <Text className="text-gray-600 font-bold text-lg">-</Text>
+              </TouchableOpacity>
+              <Text className="w-10 text-center font-semibold text-lg">{item.quantity}</Text>
+              <TouchableOpacity
+                onPress={() => updateCartItemQuantity(item.menu_id, 1)}
+                className="w-9 h-9 bg-gray-200 rounded items-center justify-center"
+              >
+                <Text className="text-gray-600 font-bold text-lg">+</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text className="w-20 text-right font-semibold text-gray-900">
+              {item.subtotal.toLocaleString()}円
+            </Text>
+
+            <TouchableOpacity
+              onPress={() => removeFromCart(item.menu_id)}
+              className="ml-2 p-2"
+            >
+              <Text className="text-red-500 text-lg">×</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+
+        {cart.length === 0 && (
+          <View className="items-center py-8">
+            <Text className="text-gray-400">商品を選択してください</Text>
+          </View>
+        )}
+      </ScrollView>
+
+      {/* Total & Payment */}
+      <View className="p-4 border-t border-gray-200 bg-gray-50">
+        <View className="flex-row items-center justify-between mb-4">
+          <Text className="text-lg font-semibold text-gray-700">合計</Text>
+          <Text className="text-3xl font-bold text-blue-600">
+            {totalAmount.toLocaleString()}円
+          </Text>
+        </View>
+
+        <View className="gap-3">
+          <Button
+            title="PayPay"
+            onPress={() => processPayment('paypay')}
+            disabled={cart.length === 0 || processing}
+            loading={processing}
+            size="lg"
+          />
+          <Button
+            title="金券"
+            onPress={() => processPayment('voucher')}
+            variant="success"
+            disabled={cart.length === 0 || processing}
+            loading={processing}
+            size="lg"
+          />
+          <Button
+            title="キャンセル"
+            onPress={clearCart}
+            variant="secondary"
+            disabled={cart.length === 0 || processing}
+          />
+        </View>
+      </View>
+    </View>
+  );
+
+  // Mobile Layout
+  if (isMobile) {
+    return (
+      <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
+        <Header
+          title="レジ"
+          subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+          showBack
+          onBack={onBack}
+          rightElement={
+            <Button title="履歴" onPress={onNavigateToHistory} size="sm" variant="secondary" />
+          }
+        />
+
+        {showCart ? (
+          <CartPanel />
+        ) : (
+          <>
+            <MenuGrid />
+
+            {/* Floating Cart Button */}
+            {cart.length > 0 && (
+              <TouchableOpacity
+                onPress={() => setShowCart(true)}
+                className="absolute bottom-6 left-4 right-4 bg-blue-600 rounded-xl p-4 flex-row items-center justify-between shadow-lg"
+                activeOpacity={0.9}
+              >
+                <View className="flex-row items-center">
+                  <View className="bg-white rounded-full w-10 h-10 items-center justify-center mr-3">
+                    <Text className="text-blue-600 font-bold text-lg">{totalItems}</Text>
+                  </View>
+                  <Text className="text-white font-semibold text-lg">カートを見る</Text>
+                </View>
+                <Text className="text-white text-2xl font-bold">
+                  {totalAmount.toLocaleString()}円
+                </Text>
+              </TouchableOpacity>
+            )}
+          </>
+        )}
+      </SafeAreaView>
+    );
+  }
+
+  
+  // Desktop/Tablet Layout
   return (
     <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
       <Header
@@ -264,145 +493,13 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
       <View className="flex-1 flex-row">
         {/* Left: Menu List */}
-        <View className="flex-1 p-2">
-          <ScrollView showsVerticalScrollIndicator={false}>
-            <View className="flex-row flex-wrap">
-              {menus.map((menu) => {
-                const stockStatus = getStockStatus(menu);
-                const isDisabled = menu.stock_management && menu.stock_quantity === 0;
-
-                return (
-                  <View key={menu.id} className="w-1/2 p-1">
-                    <TouchableOpacity
-                      onPress={() => addToCart(menu)}
-                      disabled={isDisabled}
-                      activeOpacity={0.7}
-                    >
-                      <Card
-                        className={`items-center py-4 ${isDisabled ? 'opacity-50 bg-gray-200' : ''}`}
-                      >
-                        <Text
-                          className={`text-lg font-semibold text-center ${isDisabled ? 'text-gray-400' : 'text-gray-900'}`}
-                          numberOfLines={2}
-                        >
-                          {menu.menu_name}
-                        </Text>
-                        <Text
-                          className={`text-xl font-bold mt-1 ${isDisabled ? 'text-gray-400' : 'text-blue-600'}`}
-                        >
-                          {menu.price.toLocaleString()}円
-                        </Text>
-                        {menu.stock_management && (
-                          <Text className={`text-sm mt-1 ${stockStatus.color}`}>
-                            {stockStatus.text}
-                          </Text>
-                        )}
-                      </Card>
-                    </TouchableOpacity>
-                  </View>
-                );
-              })}
-            </View>
-
-            {menus.length === 0 && !loading && (
-              <View className="items-center py-12">
-                <Text className="text-gray-500">メニューが登録されていません</Text>
-                <Text className="text-gray-400 text-sm mt-2">
-                  メニュー登録画面で追加してください
-                </Text>
-              </View>
-            )}
-          </ScrollView>
+        <View className="flex-1">
+          <MenuGrid />
         </View>
 
         {/* Right: Cart */}
-        <View className="w-72 bg-white border-l border-gray-200">
-          <View className="p-3 border-b border-gray-200">
-            <Text className="text-lg font-bold text-gray-900">注文内容</Text>
-          </View>
-
-          <ScrollView className="flex-1 p-3">
-            {cart.map((item) => (
-              <View
-                key={item.menu_id}
-                className="flex-row items-center justify-between py-2 border-b border-gray-100"
-              >
-                <View className="flex-1">
-                  <Text className="text-gray-900 font-medium" numberOfLines={1}>
-                    {item.menu_name}
-                  </Text>
-                  <Text className="text-gray-500 text-sm">
-                    @{item.unit_price.toLocaleString()}円
-                  </Text>
-                </View>
-
-                <View className="flex-row items-center">
-                  <TouchableOpacity
-                    onPress={() => updateCartItemQuantity(item.menu_id, -1)}
-                    className="w-7 h-7 bg-gray-200 rounded items-center justify-center"
-                  >
-                    <Text className="text-gray-600 font-bold">-</Text>
-                  </TouchableOpacity>
-                  <Text className="w-8 text-center font-semibold">{item.quantity}</Text>
-                  <TouchableOpacity
-                    onPress={() => updateCartItemQuantity(item.menu_id, 1)}
-                    className="w-7 h-7 bg-gray-200 rounded items-center justify-center"
-                  >
-                    <Text className="text-gray-600 font-bold">+</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <Text className="w-20 text-right font-semibold text-gray-900">
-                  {item.subtotal.toLocaleString()}円
-                </Text>
-
-                <TouchableOpacity
-                  onPress={() => removeFromCart(item.menu_id)}
-                  className="ml-2 p-1"
-                >
-                  <Text className="text-red-500">x</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-
-            {cart.length === 0 && (
-              <View className="items-center py-8">
-                <Text className="text-gray-400">商品を選択してください</Text>
-              </View>
-            )}
-          </ScrollView>
-
-          {/* Total & Payment */}
-          <View className="p-3 border-t border-gray-200 bg-gray-50">
-            <View className="flex-row items-center justify-between mb-3">
-              <Text className="text-lg font-semibold text-gray-700">合計</Text>
-              <Text className="text-2xl font-bold text-blue-600">
-                {totalAmount.toLocaleString()}円
-              </Text>
-            </View>
-
-            <View className="gap-2">
-              <Button
-                title="PayPay"
-                onPress={() => processPayment('paypay')}
-                disabled={cart.length === 0 || processing}
-                loading={processing}
-              />
-              <Button
-                title="金券"
-                onPress={() => processPayment('voucher')}
-                variant="success"
-                disabled={cart.length === 0 || processing}
-                loading={processing}
-              />
-              <Button
-                title="キャンセル"
-                onPress={clearCart}
-                variant="secondary"
-                disabled={cart.length === 0 || processing}
-              />
-            </View>
-          </View>
+        <View className="flex-1 flex-row">
+          <CartPanel />
         </View>
       </View>
     </SafeAreaView>

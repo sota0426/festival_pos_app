@@ -1,12 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Branch, Menu, PendingTransaction, LocalStorage } from '../types/database';
+import type { Branch, Menu, PendingTransaction, LocalStorage, PendingVisitorCount, StoreSettings, PaymentMode } from '../types/database';
 
 const STORAGE_KEYS = {
   BRANCH: '@festival_pos/branch',
   MENUS: '@festival_pos/menus',
   PENDING_TRANSACTIONS: '@festival_pos/pending_transactions',
+  PENDING_VISITOR_COUNTS: '@festival_pos/pending_visitor_counts',
   LAST_SYNC_TIME: '@festival_pos/last_sync_time',
   HQ_AUTH: '@festival_pos/hq_auth',
+  STORE_SETTINGS: '@festival_pos/store_settings',
 };
 
 // Branch storage
@@ -90,14 +92,52 @@ export const clearHQAuth = async (): Promise<void> => {
   await AsyncStorage.removeItem(STORAGE_KEYS.HQ_AUTH);
 };
 
+// Visitor count storage
+export const savePendingVisitorCount = async (visitorCount: PendingVisitorCount): Promise<void> => {
+  const counts = await getPendingVisitorCounts();
+  counts.push(visitorCount);
+  await AsyncStorage.setItem(STORAGE_KEYS.PENDING_VISITOR_COUNTS, JSON.stringify(counts));
+};
+
+export const getPendingVisitorCounts = async (): Promise<PendingVisitorCount[]> => {
+  const data = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_VISITOR_COUNTS);
+  return data ? JSON.parse(data) : [];
+};
+
+export const clearSyncedVisitorCounts = async (): Promise<void> => {
+  const counts = await getPendingVisitorCounts();
+  const unsyncedCounts = counts.filter((c) => !c.synced);
+  await AsyncStorage.setItem(STORAGE_KEYS.PENDING_VISITOR_COUNTS, JSON.stringify(unsyncedCounts));
+};
+
+export const markVisitorCountSynced = async (countId: string): Promise<void> => {
+  const counts = await getPendingVisitorCounts();
+  const updatedCounts = counts.map((c) =>
+    c.id === countId ? { ...c, synced: true } : c
+  );
+  await AsyncStorage.setItem(STORAGE_KEYS.PENDING_VISITOR_COUNTS, JSON.stringify(updatedCounts));
+};
+
+// Store settings storage
+export const saveStoreSettings = async (settings: StoreSettings): Promise<void> => {
+  await AsyncStorage.setItem(STORAGE_KEYS.STORE_SETTINGS, JSON.stringify(settings));
+};
+
+export const getStoreSettings = async (): Promise<StoreSettings> => {
+  const data = await AsyncStorage.getItem(STORAGE_KEYS.STORE_SETTINGS);
+  return data ? JSON.parse(data) : { payment_mode: 'cashless' };
+};
+
 // Clear all data
 export const clearAllData = async (): Promise<void> => {
   await AsyncStorage.multiRemove([
     STORAGE_KEYS.BRANCH,
     STORAGE_KEYS.MENUS,
     STORAGE_KEYS.PENDING_TRANSACTIONS,
+    STORAGE_KEYS.PENDING_VISITOR_COUNTS,
     STORAGE_KEYS.LAST_SYNC_TIME,
     STORAGE_KEYS.HQ_AUTH,
+    STORAGE_KEYS.STORE_SETTINGS,
   ]);
 };
 

@@ -20,7 +20,7 @@ export const Home = ({ onNavigateToHQ, onNavigateToStore }: HomeProps) => {
 
         <View className="gap-6">
           <TouchableOpacity onPress={onNavigateToStore} activeOpacity={0.8}>
-            <Card className="bg-green-400 p-8">
+            <Card className="bg-green-500 p-8">
               <Text className="text-white text-2xl font-bold text-center">模擬店</Text>
               <Text className="text-green-100 text-center mt-2">
                 レジ操作・メニュー登録・販売履歴
@@ -29,7 +29,7 @@ export const Home = ({ onNavigateToHQ, onNavigateToStore }: HomeProps) => {
           </TouchableOpacity>
 
           <TouchableOpacity onPress={onNavigateToHQ} activeOpacity={0.8}>
-            <Card className="bg-gray-400 p-8">
+            <Card className="bg-gray-600 p-8">
               <Text className="text-white text-2xl font-bold text-center">本部</Text>
               <Text className="text-gray-100 text-center mt-2">
                 支店管理・売上集計・目標管理

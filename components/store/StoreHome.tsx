@@ -9,6 +9,7 @@ interface StoreHomeProps {
   onNavigateToRegister: () => void;
   onNavigateToMenus: () => void;
   onNavigateToHistory: () => void;
+  onNavigateToCounter: () => void;
   onLogout: () => void;
 }
 
@@ -17,6 +18,7 @@ export const StoreHome = ({
   onNavigateToRegister,
   onNavigateToMenus,
   onNavigateToHistory,
+  onNavigateToCounter,
   onLogout,
 }: StoreHomeProps) => {
   const handleLogout = () => {
@@ -34,7 +36,7 @@ export const StoreHome = ({
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
+    <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
       <Header
         title={branch.branch_name}
         subtitle={`支店番号: ${branch.branch_code}`}
@@ -50,6 +52,14 @@ export const StoreHome = ({
             <Card className="bg-sky-400 p-8">
               <Text className="text-white text-3xl font-bold text-center">レジ</Text>
               <Text className="text-blue-100 text-center mt-2">注文・会計を行う</Text>
+            </Card>
+          </TouchableOpacity>
+
+          {/* Visitor Counter Button */}
+          <TouchableOpacity onPress={onNavigateToCounter} activeOpacity={0.8}>
+            <Card className="bg-purple-500 p-6">
+              <Text className="text-white text-2xl font-bold text-center">来客カウンター</Text>
+              <Text className="text-purple-100 text-center mt-1">タップして来場者数を記録</Text>
             </Card>
           </TouchableOpacity>
 

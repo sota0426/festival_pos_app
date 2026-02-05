@@ -21,12 +21,16 @@ export interface Menu {
   updated_at: string;
 }
 
+export type PaymentMethod = 'paypay' | 'voucher' | 'cash';
+
 export interface Transaction {
   id: string;
   branch_id: string;
   transaction_code: string;
   total_amount: number;
-  payment_method: 'paypay' | 'voucher';
+  payment_method: PaymentMethod;
+  received_amount?: number; // 現金受取額
+  change_amount?: number;   // お釣り
   status: 'completed' | 'cancelled';
   created_at: string;
   cancelled_at: string | null;
@@ -48,10 +52,19 @@ export interface PendingTransaction {
   branch_id: string;
   transaction_code: string;
   total_amount: number;
-  payment_method: 'paypay' | 'voucher';
+  payment_method: PaymentMethod;
+  received_amount?: number;
+  change_amount?: number;
   items: Omit<TransactionItem, 'id' | 'transaction_id'>[];
   created_at: string;
   synced: boolean;
+}
+
+// Store settings
+export type PaymentMode = 'cashless' | 'cash';
+
+export interface StoreSettings {
+  payment_mode: PaymentMode;
 }
 
 export interface LocalStorage {
@@ -98,4 +111,33 @@ export interface HourlySales {
   hour: number;
   sales: number;
   transaction_count: number;
+}
+
+// Visitor counter types
+export interface VisitorCount {
+  id: string;
+  branch_id: string;
+  count: number;
+  timestamp: string; // ISO string
+}
+
+export interface PendingVisitorCount {
+  id: string;
+  branch_id: string;
+  count: number;
+  timestamp: string;
+  synced: boolean;
+}
+
+export interface HalfHourlyVisitors {
+  time_slot: string; // "10:00", "10:30", "11:00" etc.
+  count: number;
+}
+
+export interface BranchVisitors {
+  branch_id: string;
+  branch_code: string;
+  branch_name: string;
+  total_visitors: number;
+  half_hourly: HalfHourlyVisitors[];
 }

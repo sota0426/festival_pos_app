@@ -50,11 +50,21 @@ CREATE TABLE IF NOT EXISTS transaction_items (
   subtotal INTEGER NOT NULL
 );
 
+-- Visitor Counts table (来客カウント)
+CREATE TABLE IF NOT EXISTS visitor_counts (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
+  count INTEGER NOT NULL DEFAULT 1,
+  timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_menus_branch_id ON menus(branch_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_branch_id ON transactions(branch_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
 CREATE INDEX IF NOT EXISTS idx_transaction_items_transaction_id ON transaction_items(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_visitor_counts_branch_id ON visitor_counts(branch_id);
+CREATE INDEX IF NOT EXISTS idx_visitor_counts_timestamp ON visitor_counts(timestamp);
 
 -- Row Level Security (RLS) policies
 -- Enable RLS on all tables
@@ -62,6 +72,7 @@ ALTER TABLE branches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE menus ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transaction_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE visitor_counts ENABLE ROW LEVEL SECURITY;
 
 -- Allow all operations for authenticated users (for simplicity in this demo)
 -- In production, you should implement more restrictive policies
@@ -80,6 +91,10 @@ CREATE POLICY "Allow all operations on transactions" ON transactions
 
 -- Transaction Items policies
 CREATE POLICY "Allow all operations on transaction_items" ON transaction_items
+  FOR ALL USING (true) WITH CHECK (true);
+
+-- Visitor Counts policies
+CREATE POLICY "Allow all operations on visitor_counts" ON visitor_counts
   FOR ALL USING (true) WITH CHECK (true);
 
 -- Function to update updated_at timestamp
