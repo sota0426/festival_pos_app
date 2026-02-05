@@ -1,8 +1,9 @@
 {
   "expo": {
-    "name": "festival_pos_app",
-    "slug": "festival_pos_app",
+    "name": "festival_pos",
+    "slug": "festival_pos",
     "version": "1.0.0",
+    "platforms": ["ios","android","web"],
     "web": {
       "favicon": "./assets/favicon.png"
     },
