@@ -4,7 +4,10 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "components/*": ["components/*"],
+      "lib/*": ["lib/*"],
+      "hooks/*": ["hooks/*"],
+      "types/*": ["types/*"]
     }
   }
 }
