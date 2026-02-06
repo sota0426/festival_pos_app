@@ -41,9 +41,8 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
 
     // Format branch code
     let formattedCode = branchCode.toUpperCase().trim();
-    if (!formattedCode.startsWith('S')) {
-      formattedCode = `S${formattedCode.padStart(3, '0')}`;
-    }
+    formattedCode = `${formattedCode.padStart(3, '0')}`;
+    
 
     setLoading(true);
     setError('');

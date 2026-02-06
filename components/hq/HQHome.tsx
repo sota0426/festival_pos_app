@@ -45,9 +45,9 @@ export const HQHome = ({
 
         <TouchableOpacity onPress={onNavigateManagementStore}>
           <Card className="bg-purple-500 p-6">
-            <Text className="text-white text-xl font-bold text-center">来場者ダッシュボード</Text>
+            <Text className="text-white text-xl font-bold text-center">模擬店管理</Text>
             <Text className="text-purple-100 text-center mt-1 text-sm">
-              来場者数・混雑状況
+              模擬店の追加・パスワード設定
             </Text>
           </Card>
         </TouchableOpacity>

@@ -66,10 +66,10 @@ WHERE t.transaction_code = 'T-S001-0001';
 -- Visitor Counts（来客数）
 -- =========================
 INSERT INTO visitor_counts (branch_id, count)
-SELECT id, 1 FROM branches WHERE branch_code = 'S001';
+SELECT id, 1 FROM branches WHERE branch_code = '001';
 
 INSERT INTO visitor_counts (branch_id, count)
-SELECT id, 1 FROM branches WHERE branch_code = 'S002';
+SELECT id, 1 FROM branches WHERE branch_code = '002';
 
 INSERT INTO visitor_counts (branch_id, count)
-SELECT id, 1 FROM branches WHERE branch_code = 'S003';
+SELECT id, 1 FROM branches WHERE branch_code = '003';

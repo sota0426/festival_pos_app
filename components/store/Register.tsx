@@ -290,7 +290,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
                 activeOpacity={0.7}
               >
                 <Card
-                  className={`items-center py-4 ${isDisabled ? 'opacity-50 bg-gray-200' : ''} ${cartItem ? 'border-2 border-blue-500' : ''}`}
+                  className={`items-center py-4 ${isDisabled ? 'opacity-50 bg-gray-200' : ''} ${cartItem ? 'border-2 border-blue-800' : ''}`}
                 >
                   <Text
                     className={`text-lg font-semibold text-center ${isDisabled ? 'text-gray-400' : 'text-gray-900'}`}
