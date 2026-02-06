@@ -4,6 +4,7 @@ export interface Branch {
   id: string;
   branch_code: string;
   branch_name: string;
+  password: string;
   sales_target: number;
   status: 'active' | 'inactive';
   created_at: string;

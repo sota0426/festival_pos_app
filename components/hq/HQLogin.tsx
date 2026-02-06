@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { View, Text, Alert } from 'react-native';
+import { View, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Input, Card } from '../common';
 import { saveHQAuth } from '../../lib/storage';
+import { alertNotify } from '../../lib/alertUtils';
 
 // Simple hardcoded password for demo purposes
 // In production, use Supabase Auth
@@ -30,7 +31,7 @@ export const HQLogin = ({ onLoginSuccess, onBackToHome }: HQLoginProps) => {
         setError('パスワードが正しくありません');
       }
     } catch (err) {
-      Alert.alert('エラー', 'ログインに失敗しました');
+      alertNotify('エラー', 'ログインに失敗しました');
     } finally {
       setLoading(false);
     }

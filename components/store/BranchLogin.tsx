@@ -13,6 +13,7 @@ interface BranchLoginProps {
 
 export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) => {
   const [branchCode, setBranchCode] = useState('');
+  const [password, setPassword] = useState('');
   const [branchName, setBranchName] = useState('');
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -55,6 +56,7 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
             id: '1',
             branch_code: 'S001',
             branch_name: '焼きそば屋',
+            password: '1234',
             sales_target: 50000,
             status: 'active',
             created_at: new Date().toISOString(),
@@ -66,6 +68,7 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
             id: '2',
             branch_code: 'S002',
             branch_name: 'たこ焼き屋',
+            password: '1234',
             sales_target: 40000,
             status: 'active',
             created_at: new Date().toISOString(),
@@ -111,6 +114,11 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
   const handleLogin = async () => {
     if (!foundBranch) return;
 
+    if (password !== foundBranch.password) {
+      setError('パスワードが正しくありません');
+      return;
+    }
+
     try {
       await saveBranch(foundBranch);
       onLoginSuccess(foundBranch);
@@ -134,6 +142,7 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
         id: Date.now().toString(),
         branch_code: branchCode.toUpperCase(),
         branch_name: branchName.trim(),
+        password: '',
         sales_target: 0,
         status: 'active',
         created_at: new Date().toISOString(),
@@ -201,13 +210,27 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
                 </Text>
               </View>
 
-              <View className="gap-3">
-                <Button title="この模擬店でログイン" onPress={handleLogin} />
+              <Input
+                label="パスワード"
+                value={password}
+                onChangeText={(text) => {
+                  setPassword(text);
+                  setError('');
+                }}
+                placeholder="パスワードを入力"
+                secureTextEntry={true}
+                error={error}
+              />
+
+              <View className="mt-4 gap-3">
+                <Button title="この模擬店でログイン" onPress={handleLogin} disabled={!password.trim()} />
                 <Button
                   title="別の番号を入力"
                   onPress={() => {
                     setFoundBranch(null);
                     setBranchCode('');
+                    setPassword('');
+                    setError('');
                   }}
                   variant="secondary"
                 />
@@ -259,7 +282,8 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
         </Card>
 
         <Text className="text-center text-gray-400 text-xs mt-6">
-          デモ用支店番号: S001（焼きそば屋）、S002（たこ焼き屋）
+          デモ用支店番号: S001（焼きそば屋）、S002（たこ焼き屋）{'\n'}
+          デモ用パスワード: 1234
         </Text>
       </View>
     </SafeAreaView>

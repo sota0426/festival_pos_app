@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { v4 as uuidv4 } from 'uuid';
+import * as Crypto from 'expo-crypto';
 import { Button, Input, Card, Header, Modal } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import type { Branch } from '../../types/database';
@@ -17,6 +17,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newBranchName, setNewBranchName] = useState('');
   const [newSalesTarget, setNewSalesTarget] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [saving, setSaving] = useState(false);
 
   const generateBranchCode = (existingBranches: Branch[]): string => {
@@ -35,6 +36,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
           id: '1',
           branch_code: 'S001',
           branch_name: '焼きそば屋',
+          password: '1234',
           sales_target: 50000,
           status: 'active',
           created_at: new Date().toISOString(),
@@ -43,6 +45,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
           id: '2',
           branch_code: 'S002',
           branch_name: 'たこ焼き屋',
+          password: '1234',
           sales_target: 40000,
           status: 'active',
           created_at: new Date().toISOString(),
@@ -79,13 +82,19 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
       return;
     }
 
+    if (!newPassword.trim()) {
+      Alert.alert('エラー', 'パスワードを入力してください');
+      return;
+    }
+
     setSaving(true);
 
     try {
       const newBranch: Branch = {
-        id: uuidv4(),
+        id: Crypto.randomUUID(),
         branch_code: generateBranchCode(branches),
         branch_name: newBranchName.trim(),
+        password: newPassword.trim(),
         sales_target: parseInt(newSalesTarget, 10) || 0,
         status: 'active',
         created_at: new Date().toISOString(),
@@ -100,6 +109,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
       setShowAddModal(false);
       setNewBranchName('');
       setNewSalesTarget('');
+      setNewPassword('');
       Alert.alert('成功', `支店番号 ${newBranch.branch_code} を発行しました`);
     } catch (error) {
       console.error('Error adding branch:', error);
@@ -152,6 +162,9 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
           </View>
           <Text className="text-gray-900 font-medium mt-1">{item.branch_name}</Text>
           <Text className="text-gray-500 text-sm mt-1">
+            パスワード: {item.password}
+          </Text>
+          <Text className="text-gray-500 text-sm mt-1">
             目標: {item.sales_target.toLocaleString()}円
           </Text>
         </View>
@@ -203,7 +216,10 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
 
       <Modal
         visible={showAddModal}
-        onClose={() => setShowAddModal(false)}
+        onClose={() => {
+          setShowAddModal(false);
+          setNewPassword('');
+        }}
         title="新規支店登録"
       >
         <Text className="text-gray-500 text-sm mb-4">
@@ -215,6 +231,13 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
           value={newBranchName}
           onChangeText={setNewBranchName}
           placeholder="例: 焼きそば屋"
+        />
+
+        <Input
+          label="パスワード"
+          value={newPassword}
+          onChangeText={setNewPassword}
+          placeholder="例: 1234"
         />
 
         <Input

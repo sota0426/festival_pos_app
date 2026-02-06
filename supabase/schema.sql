@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS branches (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   branch_code TEXT UNIQUE NOT NULL,
   branch_name TEXT NOT NULL,
+  password TEXT NOT NULL DEFAULT '',
   sales_target INTEGER DEFAULT 0,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -116,7 +117,11 @@ CREATE TRIGGER update_menus_updated_at
 -- Sample data (optional)
 -- Uncomment the following lines to insert sample data
 
--- INSERT INTO branches (branch_code, branch_name, sales_target, status) VALUES
---   ('S001', '焼きそば屋', 50000, 'active'),
---   ('S002', 'たこ焼き屋', 40000, 'active'),
---   ('S003', 'クレープ屋', 30000, 'active');
+-- INSERT INTO branches (branch_code, branch_name, password, sales_target, status) VALUES
+--   ('S001', '焼きそば屋', '1234', 50000, 'active'),
+--   ('S002', 'たこ焼き屋', '1234', 40000, 'active'),
+--   ('S003', 'クレープ屋', '1234', 30000, 'active');
+
+-- Migration for existing databases:
+-- ALTER TABLE branches ADD COLUMN password TEXT NOT NULL DEFAULT '';
+-- UPDATE branches SET password = '1234';

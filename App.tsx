@@ -9,10 +9,12 @@ import { HQLogin, HQDashboard, BranchManagement } from './components/hq';
 import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, VisitorCounter } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
+import { HQHome } from 'components/hq/HQHome';
 
 type Screen =
   | 'home'
   | 'hq_login'
+  | 'hq_home'
   | 'hq_dashboard'
   | 'hq_branches'
   | 'store_login'
@@ -53,16 +55,25 @@ export default function App() {
       case 'hq_login':
         return (
           <HQLogin
-            onLoginSuccess={() => setCurrentScreen('hq_dashboard')}
+            onLoginSuccess={() => setCurrentScreen('hq_home')}
             onBackToHome={() => setCurrentScreen('home')}
           />
         );
+
+      case 'hq_home':
+        return(
+          <HQHome
+            onNavigateSales={() => setCurrentScreen('hq_dashboard')}
+            onNavigateManagementStore={()=>{}}
+            onLogout={() => setCurrentScreen('home')}
+          />  
+        );     
 
       case 'hq_dashboard':
         return (
           <HQDashboard
             onNavigateToBranches={() => setCurrentScreen('hq_branches')}
-            onLogout={() => setCurrentScreen('home')}
+            onBack={() => setCurrentScreen('hq_home')}
           />
         );
 

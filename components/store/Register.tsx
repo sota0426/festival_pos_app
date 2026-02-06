@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, useWindowDimensions, PanResponder } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { v4 as uuidv4 } from 'uuid';
+import * as Crypto from 'expo-crypto';
 import { Button, Card, Header } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { getMenus, saveMenus, savePendingTransaction } from '../../lib/storage';
@@ -157,7 +157,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
     setProcessing(true);
 
     try {
-      const transactionId = uuidv4();
+      const transactionId = Crypto.randomUUID();
       const transactionCode = generateTransactionCode();
       const now = new Date().toISOString();
 
@@ -216,7 +216,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
           // Insert transaction items
           const transactionItems = cart.map((item) => ({
-            id: uuidv4(),
+            id: Crypto.randomUUID(),
             transaction_id: transactionId,
             menu_id: item.menu_id,
             menu_name: item.menu_name,

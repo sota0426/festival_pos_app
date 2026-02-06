@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, Alert, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { v4 as uuidv4 } from 'uuid';
+import * as Crypto from 'expo-crypto';
 import { Button, Input, Card, Header, Modal } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { saveMenus, getMenus } from '../../lib/storage';
@@ -120,7 +120,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
 
     try {
       const newMenu: Menu = {
-        id: uuidv4(),
+        id: Crypto.randomUUID(),
         branch_id: branch.id,
         menu_name: menuName.trim(),
         price: parseInt(price, 10),

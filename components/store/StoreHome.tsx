@@ -1,7 +1,8 @@
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button } from '../common';
 import { clearBranch } from '../../lib/storage';
+import { alertConfirm } from '../../lib/alertUtils';
 import type { Branch } from '../../types/database';
 
 interface StoreHomeProps {
@@ -21,18 +22,12 @@ export const StoreHome = ({
   onNavigateToCounter,
   onLogout,
 }: StoreHomeProps) => {
+  
   const handleLogout = () => {
-    Alert.alert('ログアウト', 'ログアウトしますか？', [
-      { text: 'キャンセル', style: 'cancel' },
-      {
-        text: 'ログアウト',
-        style: 'destructive',
-        onPress: async () => {
-          await clearBranch();
-          onLogout();
-        },
-      },
-    ]);
+    alertConfirm('ログアウト', 'ログアウトしますか？', async () => {
+      await clearBranch();
+      onLogout();
+    }, 'ログアウト');
   };
 
   return (

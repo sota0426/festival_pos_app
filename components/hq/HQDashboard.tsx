@@ -8,10 +8,10 @@ import type { SalesAggregation, BranchSales, HourlySales, HalfHourlyVisitors, Br
 
 interface HQDashboardProps {
   onNavigateToBranches: () => void;
-  onLogout: () => void;
+  onBack: () => void;
 }
 
-export const HQDashboard = ({ onNavigateToBranches, onLogout }: HQDashboardProps) => {
+export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) => {
   const [refreshing, setRefreshing] = useState(false);
   const [totalSales, setTotalSales] = useState<SalesAggregation>({
     total_sales: 0,
@@ -241,9 +241,8 @@ export const HQDashboard = ({ onNavigateToBranches, onLogout }: HQDashboardProps
     fetchDashboardData();
   }, [fetchDashboardData]);
 
-  const handleLogout = async () => {
-    await clearHQAuth();
-    onLogout();
+  const handleBack = async () => {
+    onBack();
   };
 
   const achievementRate = overallTarget > 0 ? Math.round((totalSales.total_sales / overallTarget) * 100) : 0;
@@ -254,11 +253,9 @@ export const HQDashboard = ({ onNavigateToBranches, onLogout }: HQDashboardProps
       <Header
         title="本部ダッシュボード"
         subtitle="売上・来場者集計"
-        rightElement={
-          <Button title="ログアウト" onPress={handleLogout} variant="secondary" size="sm" />
-        }
+        showBack
+        onBack={onBack}
       />
-
       <ScrollView
         className="flex-1"
         contentContainerStyle={{ padding: 16 }}

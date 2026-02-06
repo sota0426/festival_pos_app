@@ -8,7 +8,7 @@ import {
   saveLastSyncTime,
   getLastSyncTime,
 } from '../lib/storage';
-import { v4 as uuidv4 } from 'uuid';
+import * as Crypto from 'expo-crypto';
 
 const SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
 
@@ -69,7 +69,7 @@ export const useSync = () => {
 
           // Insert transaction items
           const transactionItems = transaction.items.map((item) => ({
-            id: uuidv4(),
+            id: Crypto.randomUUID(),
             transaction_id: transaction.id,
             menu_id: item.menu_id,
             menu_name: item.menu_name,
