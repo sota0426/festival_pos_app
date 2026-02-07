@@ -125,7 +125,7 @@ export const saveStoreSettings = async (settings: StoreSettings): Promise<void> 
 
 export const getStoreSettings = async (): Promise<StoreSettings> => {
   const data = await AsyncStorage.getItem(STORAGE_KEYS.STORE_SETTINGS);
-  return data ? JSON.parse(data) : { payment_mode: 'cashless' };
+  return data ? { payment_mode: 'cashless', order_board_enabled: false, ...JSON.parse(data) } : { payment_mode: 'cashless', order_board_enabled: false };
 };
 
 // Clear all data
