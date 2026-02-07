@@ -65,7 +65,7 @@ export default function App() {
         return(
           <HQHome
             onNavigateSales={() => setCurrentScreen('hq_dashboard')}
-            onNavigateManagementStore={()=>{}}
+            onNavigateManagementStore={()=>setCurrentScreen('hq_branches')}
             onLogout={() => setCurrentScreen('home')}
           />  
         );     
@@ -79,7 +79,11 @@ export default function App() {
         );
 
       case 'hq_branches':
-        return <BranchManagement onBack={() => setCurrentScreen('hq_dashboard')} />;
+        return (
+        <BranchManagement 
+          onBack={() => setCurrentScreen('hq_home')} 
+        />
+        );
 
       // Store Screens
       case 'store_login':

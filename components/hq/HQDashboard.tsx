@@ -241,10 +241,6 @@ export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) 
     fetchDashboardData();
   }, [fetchDashboardData]);
 
-  const handleBack = async () => {
-    onBack();
-  };
-
   const achievementRate = overallTarget > 0 ? Math.round((totalSales.total_sales / overallTarget) * 100) : 0;
   const maxVisitors = halfHourlyVisitors.length > 0 ? Math.max(...halfHourlyVisitors.map(h => h.count)) : 1;
 
