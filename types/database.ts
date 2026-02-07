@@ -71,6 +71,7 @@ export type PaymentMode = 'cashless' | 'cash';
 export interface StoreSettings {
   payment_mode: PaymentMode;
   order_board_enabled: boolean;
+  sub_screen_mode: boolean; 
 }
 
 export interface LocalStorage {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Input, Card, Header, Modal } from '../common';
@@ -329,24 +329,31 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
           <Button title="+ 新規登録" onPress={() => setShowAddModal(true)} size="sm" />
         }
       />
+      {loading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" />
+          <Text className="text-gray-500 mt-2">読み込み中...</Text>
+        </View>        
+        ):(
+        <FlatList
+          data={branches}
+          renderItem={renderBranchItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ padding: 16 }}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => {
+              setRefreshing(true);
+              fetchBranches();
+            }} />
+          }
+          ListEmptyComponent={
+            <View className="items-center py-12">
+              <Text className="text-gray-500">支店が登録されていません</Text>
+            </View>
+          }
+        />
+      )}
 
-      <FlatList
-        data={branches}
-        renderItem={renderBranchItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 16 }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => {
-            setRefreshing(true);
-            fetchBranches();
-          }} />
-        }
-        ListEmptyComponent={
-          <View className="items-center py-12">
-            <Text className="text-gray-500">支店が登録されていません</Text>
-          </View>
-        }
-      />
 
       <Modal
         visible={showAddModal}

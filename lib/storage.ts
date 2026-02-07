@@ -126,7 +126,15 @@ export const saveStoreSettings = async (settings: StoreSettings): Promise<void> 
 
 export const getStoreSettings = async (): Promise<StoreSettings> => {
   const data = await AsyncStorage.getItem(STORAGE_KEYS.STORE_SETTINGS);
-  return data ? { payment_mode: 'cashless', order_board_enabled: false, ...JSON.parse(data) } : { payment_mode: 'cashless', order_board_enabled: false };
+  return data ? { 
+    payment_mode: 'cashless', 
+    order_board_enabled: false, 
+    ...JSON.parse(data) 
+  } : { 
+    payment_mode: 'cashless', 
+    order_board_enabled: false,
+    sub_screen_mode:false,
+  }
 };
 
 // Order counter storage (sequential order numbers 01-99, resets daily)
