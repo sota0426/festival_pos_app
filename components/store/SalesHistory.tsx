@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Modal, Button } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
@@ -42,6 +42,8 @@ export const SalesHistory = ({
           total_amount: t.total_amount,
           payment_method: t.payment_method,
           status: 'completed' as const,
+          fulfillment_status: 'served', 
+          served_at: t.created_at,              
           created_at: t.created_at,
           cancelled_at: null,
           items: t.items.map((item, index) => ({
@@ -62,6 +64,8 @@ export const SalesHistory = ({
               total_amount: 600,
               payment_method: 'paypay',
               status: 'completed',
+              fulfillment_status: 'served', 
+              served_at: new Date(Date.now() - 3600000).toISOString(),                  
               created_at: new Date(Date.now() - 3600000).toISOString(),
               cancelled_at: null,
               items: [
@@ -75,6 +79,8 @@ export const SalesHistory = ({
               total_amount: 500,
               payment_method: 'voucher',
               status: 'completed',
+              fulfillment_status: 'served', 
+              served_at: new Date(Date.now() - 3600000).toISOString(),                 
               created_at: new Date(Date.now() - 1800000).toISOString(),
               cancelled_at: null,
               items: [
@@ -89,6 +95,8 @@ export const SalesHistory = ({
               total_amount: 300,
               payment_method: 'paypay',
               status: 'cancelled',
+              fulfillment_status: 'served', 
+              served_at: new Date(Date.now() - 3600000).toISOString(),                 
               created_at: new Date(Date.now() - 900000).toISOString(),
               cancelled_at: new Date(Date.now() - 600000).toISOString(),
               items: [
@@ -153,6 +161,8 @@ export const SalesHistory = ({
           total_amount: t.total_amount,
           payment_method: t.payment_method,
           status: 'completed' as const,
+          fulfillment_status: 'served', 
+          served_at: t.created_at,            
           created_at: t.created_at,
           cancelled_at: null,
           items: t.items.map((item, index) => ({
@@ -325,6 +335,7 @@ export const SalesHistory = ({
         }
       />
 
+
       {/* Summary */}
       <View className="flex-row p-4 gap-4">
         <Card className="flex-1 items-center">
@@ -337,6 +348,13 @@ export const SalesHistory = ({
         </Card>
       </View>
 
+      { loading &&(
+        <View className='flex-1 items-center justify-center'>
+          <ActivityIndicator size="large" />
+          <Text className='text-gray-500 mt-2'>読み込み中...</Text>
+        </View>
+      )}
+
       {view === 'menuSales' && (
         <MenuSalesSummary
           branch={branch}
@@ -345,7 +363,7 @@ export const SalesHistory = ({
         />
       )}
 
-      { view === "history" && (
+      { !loading && view === "history" && (
       <FlatList
         data={transactions}
         renderItem={renderTransaction}

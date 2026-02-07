@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Card, Header } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
@@ -26,8 +26,10 @@ export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) 
   const [totalVisitors, setTotalVisitors] = useState(0);
   const [halfHourlyVisitors, setHalfHourlyVisitors] = useState<HalfHourlyVisitors[]>([]);
   const [branchVisitors, setBranchVisitors] = useState<BranchVisitors[]>([]);
+  const [loading , setLoading] = useState(true);
 
   const fetchDashboardData = useCallback(async () => {
+    setLoading(true);
 
     if (!isSupabaseConfigured()) {
       // Demo data
@@ -105,6 +107,7 @@ export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) 
       ]);
 
       setRefreshing(false);
+      setLoading(false);
       return;
     }
 
@@ -234,6 +237,7 @@ export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) 
       console.error('Error fetching dashboard data:', error);
     } finally {
       setRefreshing(false);
+      setLoading(false);
     }
   }, []);
 
@@ -252,6 +256,12 @@ export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) 
         showBack
         onBack={onBack}
       />
+      {loading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" />
+          <Text className="text-gray-500 mt-2">読み込み中...</Text>
+        </View>        
+      ):(
       <ScrollView
         className="flex-1"
         contentContainerStyle={{ padding: 16 }}
@@ -416,6 +426,8 @@ export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) 
           )}
         </Card>
       </ScrollView>
+    )}
+
     </SafeAreaView>
   );
 };

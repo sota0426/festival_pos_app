@@ -21,16 +21,7 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
-  // Auto-refresh orders + update elapsed time every 30s
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setNow(Date.now());
-      fetchActiveOrders(false);
-    }, 30000);
-    return () => clearInterval(timer);
-  }, [fetchActiveOrders]);
-
-  // Fetch active orders
+    // Fetch active orders
   const fetchActiveOrders = useCallback(async (isRefresh = false) => {
     if (!isSupabaseConfigured()) {
       setLoading(false);
@@ -76,6 +67,17 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
       setRefreshing(false);
     }
   }, [branch.id]);
+  
+  // Auto-refresh orders + update elapsed time every 30s
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      fetchActiveOrders(false);
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [fetchActiveOrders]);
+
+
 
   // Initial load
   useEffect(() => {
