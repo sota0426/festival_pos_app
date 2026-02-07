@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Modal, Button } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
@@ -303,6 +303,13 @@ export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
         onBack={onBack}
       />
 
+      {loading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text className="text-gray-500 mt-3">履歴を読み込み中...</Text>
+        </View>
+      ) : (
+      <>
       {/* Summary */}
       <View className="flex-row p-4 gap-4">
         <Card className="flex-1 items-center">
@@ -332,6 +339,8 @@ export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
           </View>
         }
       />
+      </>
+      )}
 
       {/* Detail Modal */}
       <Modal

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button } from '../common';
 import { getStoreSettings, saveStoreSettings } from '../../lib/storage';
@@ -11,13 +11,18 @@ interface StoreSettingsProps {
 }
 
 export const StoreSettings = ({ branch, onBack }: StoreSettingsProps) => {
+  const [loading, setLoading] = useState(true);
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('cashless');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     const loadSettings = async () => {
-      const settings = await getStoreSettings();
-      setPaymentMode(settings.payment_mode);
+      try {
+        const settings = await getStoreSettings();
+        setPaymentMode(settings.payment_mode);
+      } finally {
+        setLoading(false);
+      }
     };
     loadSettings();
   }, []);
@@ -38,6 +43,12 @@ export const StoreSettings = ({ branch, onBack }: StoreSettingsProps) => {
         onBack={onBack}
       />
 
+      {loading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text className="text-gray-500 mt-3">設定を読み込み中...</Text>
+        </View>
+      ) : (
       <View className="flex-1 p-4">
         <Card className="mb-4">
           <Text className="text-lg font-bold text-gray-900 mb-4">支払い方法の設定</Text>
@@ -107,6 +118,7 @@ export const StoreSettings = ({ branch, onBack }: StoreSettingsProps) => {
           </Text>
         </Card>
       </View>
+      )}
     </SafeAreaView>
   );
 };

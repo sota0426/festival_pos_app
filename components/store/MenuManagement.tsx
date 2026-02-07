@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, Switch } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Alert, Switch, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Input, Card, Header, Modal } from '../common';
@@ -391,6 +391,12 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         }
       />
 
+      {loading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text className="text-gray-500 mt-3">メニューを読み込み中...</Text>
+        </View>
+      ) : (
       <FlatList
         data={menus}
         renderItem={renderMenuItem}
@@ -403,6 +409,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           </View>
         }
       />
+      )}
 
       <Modal
         visible={showAddModal}

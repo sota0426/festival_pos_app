@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Header, Card } from '../common';
@@ -14,6 +14,7 @@ interface VisitorCounterProps {
 }
 
 export const VisitorCounter = ({ branch, onBack }: VisitorCounterProps) => {
+  const [loading, setLoading] = useState(true);
   const [todayCount, setTodayCount] = useState(0);
   const [lastCountTime, setLastCountTime] = useState<string | null>(null);
   const [pendingCounts, setPendingCounts] = useState<PendingVisitorCount[]>([]);
@@ -41,6 +42,8 @@ export const VisitorCounter = ({ branch, onBack }: VisitorCounterProps) => {
       }
     } catch (error) {
       console.error('Error loading today count:', error);
+    } finally {
+      setLoading(false);
     }
   }, [branch.id]);
 
@@ -146,6 +149,12 @@ export const VisitorCounter = ({ branch, onBack }: VisitorCounterProps) => {
         onBack={onBack}
       />
 
+      {loading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color="#7C3AED" />
+          <Text className="text-gray-500 mt-3">データを読み込み中...</Text>
+        </View>
+      ) : (
       <ScrollView className="flex-1" contentContainerStyle={{ flexGrow: 1, padding: 16 }}>
         {/* Stats */}
         <View className="flex-row gap-4 mb-6">
@@ -255,6 +264,7 @@ export const VisitorCounter = ({ branch, onBack }: VisitorCounterProps) => {
           </Text>
         </Card>
       </ScrollView>
+      )}
     </SafeAreaView>
   );
 };

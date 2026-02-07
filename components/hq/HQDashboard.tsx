@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Card, Header } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
@@ -12,6 +12,7 @@ interface HQDashboardProps {
 }
 
 export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) => {
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [totalSales, setTotalSales] = useState<SalesAggregation>({
     total_sales: 0,
@@ -104,6 +105,7 @@ export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) 
         },
       ]);
 
+      setLoading(false);
       setRefreshing(false);
       return;
     }
@@ -233,6 +235,7 @@ export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) 
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
+      setLoading(false);
       setRefreshing(false);
     }
   }, []);
@@ -252,6 +255,12 @@ export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) 
         showBack
         onBack={onBack}
       />
+      {loading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text className="text-gray-500 mt-3">データを読み込み中...</Text>
+        </View>
+      ) : (
       <ScrollView
         className="flex-1"
         contentContainerStyle={{ padding: 16 }}
@@ -416,6 +425,7 @@ export const HQDashboard = ({ onNavigateToBranches, onBack }: HQDashboardProps) 
           )}
         </Card>
       </ScrollView>
+      )}
     </SafeAreaView>
   );
 };

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, useWindowDimensions, PanResponder } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, useWindowDimensions, PanResponder, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Card, Header } from '../common';
@@ -274,7 +274,17 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   };
 
   // Menu Grid Component
-  const MenuGrid = () => (
+  const MenuGrid = () => {
+    if (loading) {
+      return (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text className="text-gray-500 mt-3">メニューを読み込み中...</Text>
+        </View>
+      );
+    }
+
+    return (
     <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
       <View className="flex-row flex-wrap p-2">
         {menus.map((menu) => {
@@ -332,7 +342,8 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       {/* Spacer for floating cart button on mobile */}
       {isMobile && cart.length > 0 && <View className="h-24" />}
     </ScrollView>
-  );
+    );
+  };
 
   // Cart Component
   const CartPanel = () => (
