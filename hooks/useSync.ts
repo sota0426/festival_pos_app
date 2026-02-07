@@ -58,8 +58,10 @@ export const useSync = () => {
             total_amount: transaction.total_amount,
             payment_method: transaction.payment_method,
             status: 'completed',
+            fulfillment_status: 'pending',
             created_at: transaction.created_at,
             cancelled_at: null,
+            served_at: null,
           });
 
           if (transError) {

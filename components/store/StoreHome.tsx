@@ -1,7 +1,8 @@
+import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button } from '../common';
-import { clearBranch } from '../../lib/storage';
+import { clearBranch, getStoreSettings, saveStoreSettings } from '../../lib/storage';
 import { alertConfirm } from '../../lib/alertUtils';
 import type { Branch } from '../../types/database';
 
@@ -11,6 +12,7 @@ interface StoreHomeProps {
   onNavigateToMenus: () => void;
   onNavigateToHistory: () => void;
   onNavigateToCounter: () => void;
+  onNavigateToOrderBoard: () => void;
   onLogout: () => void;
 }
 
@@ -20,9 +22,26 @@ export const StoreHome = ({
   onNavigateToMenus,
   onNavigateToHistory,
   onNavigateToCounter,
+  onNavigateToOrderBoard,
   onLogout,
 }: StoreHomeProps) => {
-  
+  const [orderBoardEnabled, setOrderBoardEnabled] = useState(false);
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      const settings = await getStoreSettings();
+      setOrderBoardEnabled(settings.order_board_enabled ?? false);
+    };
+    loadSettings();
+  }, []);
+
+  const toggleOrderBoard = async () => {
+    const newValue = !orderBoardEnabled;
+    setOrderBoardEnabled(newValue);
+    const currentSettings = await getStoreSettings();
+    await saveStoreSettings({ ...currentSettings, order_board_enabled: newValue });
+  };
+
   const handleLogout = () => {
     alertConfirm('ログアウト', 'ログアウトしますか？', async () => {
       await clearBranch();
@@ -58,6 +77,16 @@ export const StoreHome = ({
             </Card>
           </TouchableOpacity>
 
+          {/* Order Board Button - show only when enabled */}
+          {orderBoardEnabled && (
+            <TouchableOpacity onPress={onNavigateToOrderBoard} activeOpacity={0.8}>
+              <Card className="bg-amber-400 p-6">
+                <Text className="text-white text-2xl font-bold text-center">注文受付</Text>
+                <Text className="text-amber-100 text-center mt-1">別端末で注文を表示・管理</Text>
+              </Card>
+            </TouchableOpacity>
+          )}
+
           <View className="flex-row gap-4">
             {/* Menu Management */}
             <TouchableOpacity onPress={onNavigateToMenus} activeOpacity={0.8} className="flex-1">
@@ -91,6 +120,29 @@ export const StoreHome = ({
                 {branch.status === 'active' ? '稼働中' : '停止中'}
               </Text>
             </View>
+          </View>
+        </Card>
+
+        {/* Order Board Toggle */}
+        <Card className="mt-2">
+          <View className="flex-row items-center justify-between">
+            <View>
+              <Text className="text-gray-700 font-medium">注文受付画面</Text>
+              <Text className="text-gray-400 text-xs">別端末での注文表示</Text>
+            </View>
+            <TouchableOpacity
+              onPress={toggleOrderBoard}
+              activeOpacity={0.8}
+              className={`w-12 h-7 rounded-full justify-center ${
+                orderBoardEnabled ? 'bg-green-500' : 'bg-gray-300'
+              }`}
+            >
+              <View
+                className={`w-5 h-5 rounded-full bg-white shadow-sm ${
+                  orderBoardEnabled ? 'ml-6' : 'ml-1'
+                }`}
+              />
+            </TouchableOpacity>
           </View>
         </Card>
       </View>

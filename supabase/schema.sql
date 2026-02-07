@@ -36,8 +36,10 @@ CREATE TABLE IF NOT EXISTS transactions (
   total_amount INTEGER NOT NULL,
   payment_method TEXT NOT NULL CHECK (payment_method IN ('paypay', 'voucher')),
   status TEXT DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
+  fulfillment_status TEXT DEFAULT 'pending' CHECK (fulfillment_status IN ('pending', 'served')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  cancelled_at TIMESTAMP WITH TIME ZONE
+  cancelled_at TIMESTAMP WITH TIME ZONE,
+  served_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Transaction Items table (取引明細)
@@ -66,6 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_a
 CREATE INDEX IF NOT EXISTS idx_transaction_items_transaction_id ON transaction_items(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_visitor_counts_branch_id ON visitor_counts(branch_id);
 CREATE INDEX IF NOT EXISTS idx_visitor_counts_timestamp ON visitor_counts(timestamp);
+CREATE INDEX IF NOT EXISTS idx_transactions_fulfillment ON transactions(branch_id, fulfillment_status);
 
 -- Row Level Security (RLS) policies
 -- Enable RLS on all tables
@@ -125,3 +128,8 @@ CREATE TRIGGER update_menus_updated_at
 -- Migration for existing databases:
 -- ALTER TABLE branches ADD COLUMN password TEXT NOT NULL DEFAULT '';
 -- UPDATE branches SET password = '1234';
+
+-- Migration: Add fulfillment_status and served_at to transactions table
+-- ALTER TABLE transactions ADD COLUMN fulfillment_status TEXT DEFAULT 'pending' CHECK (fulfillment_status IN ('pending', 'served'));
+-- ALTER TABLE transactions ADD COLUMN served_at TIMESTAMP WITH TIME ZONE;
+-- CREATE INDEX IF NOT EXISTS idx_transactions_fulfillment ON transactions(branch_id, fulfillment_status);

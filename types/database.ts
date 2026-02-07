@@ -24,6 +24,8 @@ export interface Menu {
 
 export type PaymentMethod = 'paypay' | 'voucher' | 'cash';
 
+export type FulfillmentStatus = 'pending' | 'served';
+
 export interface Transaction {
   id: string;
   branch_id: string;
@@ -33,8 +35,10 @@ export interface Transaction {
   received_amount?: number; // 現金受取額
   change_amount?: number;   // お釣り
   status: 'completed' | 'cancelled';
+  fulfillment_status: FulfillmentStatus;
   created_at: string;
   cancelled_at: string | null;
+  served_at: string | null;
 }
 
 export interface TransactionItem {
@@ -66,6 +70,7 @@ export type PaymentMode = 'cashless' | 'cash';
 
 export interface StoreSettings {
   payment_mode: PaymentMode;
+  order_board_enabled: boolean;
 }
 
 export interface LocalStorage {
@@ -73,6 +78,12 @@ export interface LocalStorage {
   menus: Menu[];
   branch: Branch | null;
   last_sync_time: string | null;
+}
+
+// Order board types
+export interface OrderBoardItem {
+  transaction: Transaction;
+  items: TransactionItem[];
 }
 
 // Cart types for register screen
