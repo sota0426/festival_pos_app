@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, useWindowDimensions, PanResponder } from 'react-native';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, PanResponder } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
-import { Button, Card, Header } from '../common';
+import { Button, Card, Header, Modal } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { getMenus, saveMenus, savePendingTransaction } from '../../lib/storage';
+import { alertConfirm, alertNotify } from '../../lib/alertUtils';
 import type { Branch, Menu, CartItem, PendingTransaction } from '../../types/database';
 
 interface RegisterProps {
@@ -19,8 +20,11 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [showCart, setShowCart] = useState(false); // For mobile view
-  const [cartWidth, setCartWidth] = useState(320); 
-  
+  const [cartWidth, setCartWidth] = useState(320);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [pendingPaymentMethod, setPendingPaymentMethod] = useState<'paypay' | 'voucher' | null>(null);
+
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -43,6 +47,14 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   const totalAmount = cart.reduce((sum, item) => sum + item.subtotal, 0);
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
 
+  const categories = useMemo(() => {
+    return [...new Set(menus.map((m) => m.category || 'メイン'))];
+  }, [menus]);
+  const showCategoryTabs = categories.length > 1;
+  const filteredMenus = selectedCategory
+    ? menus.filter((m) => (m.category || 'メイン') === selectedCategory)
+    : menus;
+
   const panResponder = PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
@@ -59,7 +71,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   const addToCart = (menu: Menu) => {
     // Check stock if stock management is enabled
     if (menu.stock_management && menu.stock_quantity <= 0) {
-      Alert.alert('在庫切れ', `「${menu.menu_name}」は在庫切れです`);
+      alertNotify('在庫切れ', `「${menu.menu_name}」は在庫切れです`);
       return;
     }
 
@@ -68,7 +80,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
     const currentQty = existingItem ? existingItem.quantity : 0;
 
     if (menu.stock_management && currentQty >= menu.stock_quantity) {
-      Alert.alert('在庫不足', `「${menu.menu_name}」の在庫が足りません（残り${menu.stock_quantity}個）`);
+      alertNotify('在庫不足', `「${menu.menu_name}」の在庫が足りません（残り${menu.stock_quantity}個）`);
       return;
     }
 
@@ -112,7 +124,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
       // Check stock
       if (menu?.stock_management && newQty > menu.stock_quantity) {
-        Alert.alert('在庫不足', `「${menu.menu_name}」の在庫が足りません（残り${menu.stock_quantity}個）`);
+        alertNotify('在庫不足', `「${menu.menu_name}」の在庫が足りません（残り${menu.stock_quantity}個）`);
         return prevCart;
       }
 
@@ -131,13 +143,15 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   const clearCart = () => {
     if (cart.length === 0) return;
 
-    Alert.alert('確認', '注文内容をクリアしますか？', [
-      { text: 'キャンセル', style: 'cancel' },
-      { text: 'クリア', style: 'destructive', onPress: () => {
+    alertConfirm(
+      '確認',
+      '注文内容をクリアしますか？',
+      () => {
         setCart([]);
         setShowCart(false);
-      }},
-    ]);
+      },
+      'クリア'
+    );
   };
 
   const generateTransactionCode = (): string => {
@@ -150,7 +164,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
   const processPayment = async (paymentMethod: 'paypay' | 'voucher') => {
     if (cart.length === 0) {
-      Alert.alert('エラー', '商品を選択してください');
+      alertNotify('エラー', '商品を選択してください');
       return;
     }
 
@@ -247,14 +261,13 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       // Clear cart and show success
       setCart([]);
       setShowCart(false);
-      Alert.alert(
+      alertNotify(
         '会計完了',
-        `合計: ${totalAmount.toLocaleString()}円\n支払い方法: ${paymentMethod === 'paypay' ? 'PayPay' : '金券'}\n取引番号: ${transactionCode}`,
-        [{ text: 'OK' }]
+        `合計: ${totalAmount.toLocaleString()}円\n支払い方法: ${paymentMethod === 'paypay' ? 'PayPay' : '金券'}\n取引番号: ${transactionCode}`
       );
     } catch (error) {
       console.error('Error processing payment:', error);
-      Alert.alert('エラー', '会計処理に失敗しました');
+      alertNotify('エラー', '会計処理に失敗しました');
     } finally {
       setProcessing(false);
     }
@@ -276,8 +289,32 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   // Menu Grid Component
   const MenuGrid = () => (
     <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
+      {showCategoryTabs && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="px-2 pt-2 pb-1">
+          <TouchableOpacity
+            onPress={() => setSelectedCategory(null)}
+            className={`px-4 py-2 rounded-full mr-2 ${selectedCategory === null ? 'bg-blue-600' : 'bg-gray-200'}`}
+          >
+            <Text className={`font-medium ${selectedCategory === null ? 'text-white' : 'text-gray-600'}`}>
+              すべて
+            </Text>
+          </TouchableOpacity>
+          {categories.map((cat) => (
+            <TouchableOpacity
+              key={cat}
+              onPress={() => setSelectedCategory(cat)}
+              className={`px-4 py-2 rounded-full mr-2 ${selectedCategory === cat ? 'bg-blue-600' : 'bg-gray-200'}`}
+            >
+              <Text className={`font-medium ${selectedCategory === cat ? 'text-white' : 'text-gray-600'}`}>
+                {cat}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
+
       <View className="flex-row flex-wrap p-2">
-        {menus.map((menu) => {
+        {filteredMenus.map((menu) => {
           const stockStatus = getStockStatus(menu);
           const isDisabled = menu.stock_management && menu.stock_quantity === 0;
           const cartItem = cart.find((item) => item.menu_id === menu.id);
@@ -409,14 +446,20 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
         <View className="gap-3">
           <Button
             title="PayPay"
-            onPress={() => processPayment('paypay')}
+            onPress={() => {
+              setPendingPaymentMethod('paypay');
+              setShowConfirmModal(true);
+            }}
             disabled={cart.length === 0 || processing}
             loading={processing}
             size="lg"
           />
           <Button
             title="金券"
-            onPress={() => processPayment('voucher')}
+            onPress={() => {
+              setPendingPaymentMethod('voucher');
+              setShowConfirmModal(true);
+            }}
             variant="success"
             disabled={cart.length === 0 || processing}
             loading={processing}
@@ -473,11 +516,56 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
             )}
           </>
         )}
+
+        {/* Order Confirmation Modal */}
+        <Modal
+          visible={showConfirmModal}
+          onClose={() => {
+            setShowConfirmModal(false);
+            setPendingPaymentMethod(null);
+          }}
+          title="注文確認"
+        >
+          {cart.map((item) => (
+            <View key={item.menu_id} className="flex-row justify-between py-1 border-b border-gray-100">
+              <Text className="text-gray-900">{item.menu_name} x {item.quantity}</Text>
+              <Text className="text-gray-900">{item.subtotal.toLocaleString()}円</Text>
+            </View>
+          ))}
+          <View className="flex-row justify-between pt-2 mt-2 mb-2">
+            <Text className="font-bold text-gray-900">合計</Text>
+            <Text className="text-2xl font-bold text-blue-600">{totalAmount.toLocaleString()}円</Text>
+          </View>
+          <Text className="text-center text-gray-500 mb-4">
+            支払い方法: {pendingPaymentMethod === 'paypay' ? 'PayPay' : '金券'}
+          </Text>
+          <View className="gap-3">
+            <Button
+              title="注文を完了する"
+              onPress={async () => {
+                setShowConfirmModal(false);
+                if (pendingPaymentMethod) {
+                  await processPayment(pendingPaymentMethod);
+                }
+                setPendingPaymentMethod(null);
+              }}
+              loading={processing}
+            />
+            <Button
+              title="キャンセル"
+              onPress={() => {
+                setShowConfirmModal(false);
+                setPendingPaymentMethod(null);
+              }}
+              variant="secondary"
+            />
+          </View>
+        </Modal>
       </SafeAreaView>
     );
   }
 
-  
+
   // Desktop/Tablet Layout
   return (
     <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
@@ -502,6 +590,51 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
           <CartPanel />
         </View>
       </View>
+
+      {/* Order Confirmation Modal */}
+      <Modal
+        visible={showConfirmModal}
+        onClose={() => {
+          setShowConfirmModal(false);
+          setPendingPaymentMethod(null);
+        }}
+        title="注文確認"
+      >
+        {cart.map((item) => (
+          <View key={item.menu_id} className="flex-row justify-between py-1 border-b border-gray-100">
+            <Text className="text-gray-900">{item.menu_name} x {item.quantity}</Text>
+            <Text className="text-gray-900">{item.subtotal.toLocaleString()}円</Text>
+          </View>
+        ))}
+        <View className="flex-row justify-between pt-2 mt-2 mb-2">
+          <Text className="font-bold text-gray-900">合計</Text>
+          <Text className="text-2xl font-bold text-blue-600">{totalAmount.toLocaleString()}円</Text>
+        </View>
+        <Text className="text-center text-gray-500 mb-4">
+          支払い方法: {pendingPaymentMethod === 'paypay' ? 'PayPay' : '金券'}
+        </Text>
+        <View className="gap-3">
+          <Button
+            title="注文を完了する"
+            onPress={async () => {
+              setShowConfirmModal(false);
+              if (pendingPaymentMethod) {
+                await processPayment(pendingPaymentMethod);
+              }
+              setPendingPaymentMethod(null);
+            }}
+            loading={processing}
+          />
+          <Button
+            title="キャンセル"
+            onPress={() => {
+              setShowConfirmModal(false);
+              setPendingPaymentMethod(null);
+            }}
+            variant="secondary"
+          />
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };

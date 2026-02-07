@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl } from 'react-native';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { View, Text, FlatList, TouchableOpacity, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Modal, Button } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { getPendingTransactions, getMenus, saveMenus } from '../../lib/storage';
-import type { Branch, Transaction, TransactionItem, PendingTransaction } from '../../types/database';
+import { alertConfirm, alertNotify } from '../../lib/alertUtils';
+import type { Branch, Transaction, TransactionItem, PendingTransaction, MenuSales } from '../../types/database';
 
 interface SalesHistoryProps {
   branch: Branch;
@@ -22,6 +23,7 @@ export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionWithItems | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [viewMode, setViewMode] = useState<'transactions' | 'menu_summary'>('transactions');
 
   const fetchTransactions = useCallback(async () => {
     try {
@@ -168,76 +170,70 @@ export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
     fetchTransactions();
   }, [fetchTransactions]);
 
-  const handleCancelTransaction = async (transaction: TransactionWithItems) => {
-    Alert.alert(
+  const handleCancelTransaction = (transaction: TransactionWithItems) => {
+    alertConfirm(
       '取引取消',
       `取引番号: ${transaction.transaction_code}\n合計: ${transaction.total_amount.toLocaleString()}円\n\nこの取引を取消しますか？\n在庫は元に戻されます。`,
-      [
-        { text: 'キャンセル', style: 'cancel' },
-        {
-          text: '取消する',
-          style: 'destructive',
-          onPress: async () => {
-            setCancelling(true);
-            try {
-              const now = new Date().toISOString();
+      async () => {
+        setCancelling(true);
+        try {
+          const now = new Date().toISOString();
 
-              // Restore stock
-              const menus = await getMenus();
-              const updatedMenus = menus.map((menu) => {
-                const item = transaction.items.find((i) => i.menu_id === menu.id);
-                if (item && menu.stock_management) {
-                  return {
-                    ...menu,
-                    stock_quantity: menu.stock_quantity + item.quantity,
-                    updated_at: now,
-                  };
-                }
-                return menu;
-              });
-              await saveMenus(updatedMenus);
-
-              // Update transaction status
-              if (isSupabaseConfigured()) {
-                const { error } = await supabase
-                  .from('transactions')
-                  .update({ status: 'cancelled', cancelled_at: now })
-                  .eq('id', transaction.id);
-
-                if (error) throw error;
-
-                // Update stock in Supabase
-                for (const item of transaction.items) {
-                  const menu = updatedMenus.find((m) => m.id === item.menu_id);
-                  if (menu?.stock_management) {
-                    await supabase
-                      .from('menus')
-                      .update({ stock_quantity: menu.stock_quantity, updated_at: now })
-                      .eq('id', menu.id);
-                  }
-                }
-              }
-
-              // Update local state
-              setTransactions((prev) =>
-                prev.map((t) =>
-                  t.id === transaction.id ? { ...t, status: 'cancelled', cancelled_at: now } : t
-                )
-              );
-
-              setShowDetailModal(false);
-              setSelectedTransaction(null);
-
-              Alert.alert('完了', '取引を取消しました。在庫は元に戻されました。');
-            } catch (error) {
-              console.error('Error cancelling transaction:', error);
-              Alert.alert('エラー', '取引の取消に失敗しました');
-            } finally {
-              setCancelling(false);
+          // Restore stock
+          const menus = await getMenus();
+          const updatedMenus = menus.map((menu) => {
+            const item = transaction.items.find((i) => i.menu_id === menu.id);
+            if (item && menu.stock_management) {
+              return {
+                ...menu,
+                stock_quantity: menu.stock_quantity + item.quantity,
+                updated_at: now,
+              };
             }
-          },
-        },
-      ]
+            return menu;
+          });
+          await saveMenus(updatedMenus);
+
+          // Update transaction status
+          if (isSupabaseConfigured()) {
+            const { error } = await supabase
+              .from('transactions')
+              .update({ status: 'cancelled', cancelled_at: now })
+              .eq('id', transaction.id);
+
+            if (error) throw error;
+
+            // Update stock in Supabase
+            for (const item of transaction.items) {
+              const menu = updatedMenus.find((m) => m.id === item.menu_id);
+              if (menu?.stock_management) {
+                await supabase
+                  .from('menus')
+                  .update({ stock_quantity: menu.stock_quantity, updated_at: now })
+                  .eq('id', menu.id);
+              }
+            }
+          }
+
+          // Update local state
+          setTransactions((prev) =>
+            prev.map((t) =>
+              t.id === transaction.id ? { ...t, status: 'cancelled', cancelled_at: now } : t
+            )
+          );
+
+          setShowDetailModal(false);
+          setSelectedTransaction(null);
+
+          alertNotify('完了', '取引を取消しました。在庫は元に戻されました。');
+        } catch (error) {
+          console.error('Error cancelling transaction:', error);
+          alertNotify('エラー', '取引の取消に失敗しました');
+        } finally {
+          setCancelling(false);
+        }
+      },
+      '取消する'
     );
   };
 
@@ -245,6 +241,35 @@ export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
     const date = new Date(dateString);
     return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
   };
+
+  // Calculate totals
+  const completedTransactions = transactions.filter((t) => t.status === 'completed');
+  const totalSales = completedTransactions.reduce((sum, t) => sum + t.total_amount, 0);
+  const transactionCount = completedTransactions.length;
+
+  // Menu-wise summary
+  const menuSummary = useMemo((): MenuSales[] => {
+    const menuMap = new Map<string, MenuSales>();
+
+    completedTransactions.forEach((trans) => {
+      trans.items.forEach((item) => {
+        const existing = menuMap.get(item.menu_id);
+        if (existing) {
+          existing.quantity_sold += item.quantity;
+          existing.total_sales += item.subtotal;
+        } else {
+          menuMap.set(item.menu_id, {
+            menu_id: item.menu_id,
+            menu_name: item.menu_name,
+            quantity_sold: item.quantity,
+            total_sales: item.subtotal,
+          });
+        }
+      });
+    });
+
+    return Array.from(menuMap.values()).sort((a, b) => b.total_sales - a.total_sales);
+  }, [completedTransactions]);
 
   const renderTransaction = ({ item }: { item: TransactionWithItems }) => {
     const isCancelled = item.status === 'cancelled';
@@ -289,10 +314,19 @@ export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
     );
   };
 
-  // Calculate totals
-  const completedTransactions = transactions.filter((t) => t.status === 'completed');
-  const totalSales = completedTransactions.reduce((sum, t) => sum + t.total_amount, 0);
-  const transactionCount = completedTransactions.length;
+  const renderMenuSummaryItem = ({ item }: { item: MenuSales }) => (
+    <Card className="mb-3">
+      <View className="flex-row items-center justify-between">
+        <View className="flex-1">
+          <Text className="text-lg font-semibold text-gray-900">{item.menu_name}</Text>
+          <Text className="text-gray-500 text-sm mt-1">{item.quantity_sold}個販売</Text>
+        </View>
+        <Text className="text-lg font-bold text-blue-600">
+          {item.total_sales.toLocaleString()}円
+        </Text>
+      </View>
+    </Card>
+  );
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
@@ -315,23 +349,57 @@ export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
         </Card>
       </View>
 
-      <FlatList
-        data={transactions}
-        renderItem={renderTransaction}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 16, paddingTop: 0 }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => {
-            setRefreshing(true);
-            fetchTransactions();
-          }} />
-        }
-        ListEmptyComponent={
-          <View className="items-center py-12">
-            <Text className="text-gray-500">販売履歴がありません</Text>
-          </View>
-        }
-      />
+      {/* View Mode Tabs */}
+      <View className="flex-row px-4 gap-2 mb-2">
+        <TouchableOpacity
+          onPress={() => setViewMode('transactions')}
+          className={`flex-1 py-2 rounded-lg items-center ${viewMode === 'transactions' ? 'bg-blue-600' : 'bg-gray-200'}`}
+        >
+          <Text className={`font-medium ${viewMode === 'transactions' ? 'text-white' : 'text-gray-600'}`}>
+            取引一覧
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setViewMode('menu_summary')}
+          className={`flex-1 py-2 rounded-lg items-center ${viewMode === 'menu_summary' ? 'bg-blue-600' : 'bg-gray-200'}`}
+        >
+          <Text className={`font-medium ${viewMode === 'menu_summary' ? 'text-white' : 'text-gray-600'}`}>
+            メニュー別
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {viewMode === 'transactions' ? (
+        <FlatList
+          data={transactions}
+          renderItem={renderTransaction}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ padding: 16, paddingTop: 0 }}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => {
+              setRefreshing(true);
+              fetchTransactions();
+            }} />
+          }
+          ListEmptyComponent={
+            <View className="items-center py-12">
+              <Text className="text-gray-500">販売履歴がありません</Text>
+            </View>
+          }
+        />
+      ) : (
+        <FlatList
+          data={menuSummary}
+          renderItem={renderMenuSummaryItem}
+          keyExtractor={(item) => item.menu_id}
+          contentContainerStyle={{ padding: 16, paddingTop: 0 }}
+          ListEmptyComponent={
+            <View className="items-center py-12">
+              <Text className="text-gray-500">販売データがありません</Text>
+            </View>
+          }
+        />
+      )}
 
       {/* Detail Modal */}
       <Modal

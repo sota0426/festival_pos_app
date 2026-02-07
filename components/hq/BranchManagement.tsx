@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Input, Card, Header, Modal } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { alertNotify } from '../../lib/alertUtils';
 import type { Branch } from '../../types/database';
 
 interface BranchManagementProps {
@@ -15,10 +16,17 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
   const [newBranchName, setNewBranchName] = useState('');
   const [newSalesTarget, setNewSalesTarget] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Edit form state
+  const [editBranchName, setEditBranchName] = useState('');
+  const [editSalesTarget, setEditSalesTarget] = useState('');
+  const [editPassword, setEditPassword] = useState('');
 
   const generateBranchCode = (existingBranches: Branch[]): string => {
     const maxNumber = existingBranches.reduce((max, branch) => {
@@ -65,7 +73,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
       setBranches(data || []);
     } catch (error) {
       console.error('Error fetching branches:', error);
-      Alert.alert('エラー', '支店情報の取得に失敗しました');
+      alertNotify('エラー', '支店情報の取得に失敗しました');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -78,12 +86,12 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
 
   const handleAddBranch = async () => {
     if (!newBranchName.trim()) {
-      Alert.alert('エラー', '模擬店名を入力してください');
+      alertNotify('エラー', '模擬店名を入力してください');
       return;
     }
 
     if (!newPassword.trim()) {
-      Alert.alert('エラー', 'パスワードを入力してください');
+      alertNotify('エラー', 'パスワードを入力してください');
       return;
     }
 
@@ -110,10 +118,53 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
       setNewBranchName('');
       setNewSalesTarget('');
       setNewPassword('');
-      Alert.alert('成功', `支店番号 ${newBranch.branch_code} を発行しました`);
+      alertNotify('成功', `支店番号 ${newBranch.branch_code} を発行しました`);
     } catch (error) {
       console.error('Error adding branch:', error);
-      Alert.alert('エラー', '支店の追加に失敗しました');
+      alertNotify('エラー', '支店の追加に失敗しました');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditBranch = async () => {
+    if (!editingBranch) return;
+
+    if (!editBranchName.trim()) {
+      alertNotify('エラー', '模擬店名を入力してください');
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const updates: Partial<Branch> = {
+        branch_name: editBranchName.trim(),
+        sales_target: parseInt(editSalesTarget, 10) || 0,
+      };
+      if (editPassword.trim()) {
+        updates.password = editPassword.trim();
+      }
+
+      if (isSupabaseConfigured()) {
+        const { error } = await supabase
+          .from('branches')
+          .update(updates)
+          .eq('id', editingBranch.id);
+        if (error) throw error;
+      }
+
+      setBranches(
+        branches.map((b) =>
+          b.id === editingBranch.id ? { ...b, ...updates } : b
+        )
+      );
+      setShowEditModal(false);
+      setEditingBranch(null);
+      alertNotify('成功', '支店情報を更新しました');
+    } catch (error) {
+      console.error('Error updating branch:', error);
+      alertNotify('エラー', '支店情報の更新に失敗しました');
     } finally {
       setSaving(false);
     }
@@ -136,8 +187,16 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
       );
     } catch (error) {
       console.error('Error updating branch status:', error);
-      Alert.alert('エラー', 'ステータスの更新に失敗しました');
+      alertNotify('エラー', 'ステータスの更新に失敗しました');
     }
+  };
+
+  const openEditModal = (branch: Branch) => {
+    setEditingBranch(branch);
+    setEditBranchName(branch.branch_name);
+    setEditSalesTarget(branch.sales_target.toString());
+    setEditPassword('');
+    setShowEditModal(true);
   };
 
   const renderBranchItem = ({ item }: { item: Branch }) => (
@@ -168,18 +227,26 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
             目標: {item.sales_target.toLocaleString()}円
           </Text>
         </View>
-        <TouchableOpacity
-          onPress={() => handleToggleStatus(item)}
-          className={`px-3 py-2 rounded-lg ${
-            item.status === 'active' ? 'bg-red-100' : 'bg-green-100'
-          }`}
-        >
-          <Text
-            className={`text-sm ${item.status === 'active' ? 'text-red-600' : 'text-green-600'}`}
+        <View className="gap-2">
+          <TouchableOpacity
+            onPress={() => openEditModal(item)}
+            className="px-3 py-2 rounded-lg bg-blue-100"
           >
-            {item.status === 'active' ? '停止' : '再開'}
-          </Text>
-        </TouchableOpacity>
+            <Text className="text-sm text-blue-600">編集</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => handleToggleStatus(item)}
+            className={`px-3 py-2 rounded-lg ${
+              item.status === 'active' ? 'bg-red-100' : 'bg-green-100'
+            }`}
+          >
+            <Text
+              className={`text-sm ${item.status === 'active' ? 'text-red-600' : 'text-green-600'}`}
+            >
+              {item.status === 'active' ? '停止' : '再開'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </Card>
   );
@@ -187,7 +254,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
   return (
     <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
       <Header
-        title="支店管理"
+        title="模擬店管理"
         subtitle={`登録済み: ${branches.length}店舗`}
         showBack
         onBack={onBack}
@@ -209,18 +276,19 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
         }
         ListEmptyComponent={
           <View className="items-center py-12">
-            <Text className="text-gray-500">支店が登録されていません</Text>
+            <Text className="text-gray-500">模擬店が登録されていません</Text>
           </View>
         }
       />
 
+      {/* Add Modal */}
       <Modal
         visible={showAddModal}
         onClose={() => {
           setShowAddModal(false);
           setNewPassword('');
         }}
-        title="新規支店登録"
+        title="新規模擬店登録"
       >
         <Text className="text-gray-500 text-sm mb-4">
           支店番号は自動で発行されます
@@ -265,6 +333,67 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
             />
           </View>
         </View>
+      </Modal>
+
+      {/* Edit Modal */}
+      <Modal
+        visible={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setEditingBranch(null);
+        }}
+        title="模擬店編集"
+      >
+        {editingBranch && (
+          <>
+            <Text className="text-gray-500 text-sm mb-4">
+              支店番号: {editingBranch.branch_code}
+            </Text>
+
+            <Input
+              label="模擬店名"
+              value={editBranchName}
+              onChangeText={setEditBranchName}
+              placeholder="例: 焼きそば屋"
+            />
+
+            <Input
+              label="売上目標（円）"
+              value={editSalesTarget}
+              onChangeText={setEditSalesTarget}
+              placeholder="例: 50000"
+              keyboardType="numeric"
+            />
+
+            <Input
+              label="新しいパスワード（空欄の場合は変更なし）"
+              value={editPassword}
+              onChangeText={setEditPassword}
+              placeholder="変更する場合のみ入力"
+            />
+
+            <View className="flex-row gap-3 mt-4">
+              <View className="flex-1">
+                <Button
+                  title="キャンセル"
+                  onPress={() => {
+                    setShowEditModal(false);
+                    setEditingBranch(null);
+                  }}
+                  variant="secondary"
+                />
+              </View>
+              <View className="flex-1">
+                <Button
+                  title="更新"
+                  onPress={handleEditBranch}
+                  loading={saving}
+                  disabled={!editBranchName.trim()}
+                />
+              </View>
+            </View>
+          </>
+        )}
       </Modal>
     </SafeAreaView>
   );

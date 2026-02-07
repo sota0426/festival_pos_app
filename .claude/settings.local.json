@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(npx tsc:*)",
-      "Bash(npm uninstall:*)"
+      "Bash(npm uninstall:*)",
+      "Bash(git -C /Users/iimorisouta/.claude-worktrees/festival_pos_app/mystifying-swartz log --oneline --all)",
+      "Bash(npx expo export:*)",
+      "Bash(npm install:*)"
     ]
   }
 }

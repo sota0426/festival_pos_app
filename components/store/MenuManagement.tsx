@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, Switch } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Input, Card, Header, Modal } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { saveMenus, getMenus } from '../../lib/storage';
+import { alertConfirm, alertNotify } from '../../lib/alertUtils';
 import type { Branch, Menu } from '../../types/database';
 
 interface MenuManagementProps {
@@ -23,6 +24,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   // Form state
   const [menuName, setMenuName] = useState('');
   const [price, setPrice] = useState('');
+  const [category, setCategory] = useState('メイン');
   const [stockManagement, setStockManagement] = useState(false);
   const [stockQuantity, setStockQuantity] = useState('');
 
@@ -42,6 +44,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               branch_id: branch.id,
               menu_name: '焼きそば',
               price: 300,
+              category: 'メイン',
               stock_management: true,
               stock_quantity: 50,
               is_active: true,
@@ -53,6 +56,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               branch_id: branch.id,
               menu_name: 'フランクフルト',
               price: 200,
+              category: 'メイン',
               stock_management: true,
               stock_quantity: 30,
               is_active: true,
@@ -64,6 +68,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               branch_id: branch.id,
               menu_name: 'ジュース',
               price: 100,
+              category: 'メイン',
               stock_management: false,
               stock_quantity: 0,
               is_active: true,
@@ -106,13 +111,14 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const resetForm = () => {
     setMenuName('');
     setPrice('');
+    setCategory('メイン');
     setStockManagement(false);
     setStockQuantity('');
   };
 
   const handleAddMenu = async () => {
     if (!menuName.trim() || !price.trim()) {
-      Alert.alert('エラー', 'メニュー名と金額を入力してください');
+      alertNotify('エラー', 'メニュー名と金額を入力してください');
       return;
     }
 
@@ -124,6 +130,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         branch_id: branch.id,
         menu_name: menuName.trim(),
         price: parseInt(price, 10),
+        category: category.trim() || 'メイン',
         stock_management: stockManagement,
         stock_quantity: stockManagement ? parseInt(stockQuantity, 10) || 0 : 0,
         is_active: true,
@@ -144,7 +151,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       resetForm();
     } catch (error) {
       console.error('Error adding menu:', error);
-      Alert.alert('エラー', 'メニューの追加に失敗しました');
+      alertNotify('エラー', 'メニューの追加に失敗しました');
     } finally {
       setSaving(false);
     }
@@ -152,7 +159,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
 
   const handleEditMenu = async () => {
     if (!editingMenu || !menuName.trim() || !price.trim()) {
-      Alert.alert('エラー', 'メニュー名と金額を入力してください');
+      alertNotify('エラー', 'メニュー名と金額を入力してください');
       return;
     }
 
@@ -163,6 +170,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         ...editingMenu,
         menu_name: menuName.trim(),
         price: parseInt(price, 10),
+        category: category.trim() || editingMenu.category || 'メイン',
         stock_management: stockManagement,
         stock_quantity: stockManagement ? parseInt(stockQuantity, 10) || 0 : editingMenu.stock_quantity,
         updated_at: new Date().toISOString(),
@@ -185,35 +193,33 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       resetForm();
     } catch (error) {
       console.error('Error updating menu:', error);
-      Alert.alert('エラー', 'メニューの更新に失敗しました');
+      alertNotify('エラー', 'メニューの更新に失敗しました');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDeleteMenu = async (menu: Menu) => {
-    Alert.alert('確認', `「${menu.menu_name}」を削除しますか？`, [
-      { text: 'キャンセル', style: 'cancel' },
-      {
-        text: '削除',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            if (isSupabaseConfigured()) {
-              const { error } = await supabase.from('menus').delete().eq('id', menu.id);
-              if (error) throw error;
-            }
-
-            const updatedMenus = menus.filter((m) => m.id !== menu.id);
-            setMenus(updatedMenus);
-            await saveMenus(updatedMenus);
-          } catch (error) {
-            console.error('Error deleting menu:', error);
-            Alert.alert('エラー', 'メニューの削除に失敗しました');
+  const handleDeleteMenu = (menu: Menu) => {
+    alertConfirm(
+      '確認',
+      `「${menu.menu_name}」を削除しますか？`,
+      async () => {
+        try {
+          if (isSupabaseConfigured()) {
+            const { error } = await supabase.from('menus').delete().eq('id', menu.id);
+            if (error) throw error;
           }
-        },
+
+          const updatedMenus = menus.filter((m) => m.id !== menu.id);
+          setMenus(updatedMenus);
+          await saveMenus(updatedMenus);
+        } catch (error) {
+          console.error('Error deleting menu:', error);
+          alertNotify('エラー', 'メニューの削除に失敗しました');
+        }
       },
-    ]);
+      '削除'
+    );
   };
 
   const handleStockChange = async (menu: Menu, change: number) => {
@@ -235,7 +241,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       await saveMenus(updatedMenus);
     } catch (error) {
       console.error('Error updating stock:', error);
-      Alert.alert('エラー', '在庫数の更新に失敗しました');
+      alertNotify('エラー', '在庫数の更新に失敗しました');
     }
   };
 
@@ -243,6 +249,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     setEditingMenu(menu);
     setMenuName(menu.menu_name);
     setPrice(menu.price.toString());
+    setCategory(menu.category || 'メイン');
     setStockManagement(menu.stock_management);
     setStockQuantity(menu.stock_quantity.toString());
     setShowEditModal(true);
@@ -253,7 +260,14 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       <TouchableOpacity onPress={() => openEditModal(item)} activeOpacity={0.7}>
         <View className="flex-row items-center justify-between">
           <View className="flex-1">
-            <Text className="text-lg font-semibold text-gray-900">{item.menu_name}</Text>
+            <View className="flex-row items-center gap-2">
+              <Text className="text-lg font-semibold text-gray-900">{item.menu_name}</Text>
+              {item.category && item.category !== 'メイン' && (
+                <View className="bg-gray-200 px-2 py-0.5 rounded">
+                  <Text className="text-gray-600 text-xs">{item.category}</Text>
+                </View>
+              )}
+            </View>
             <Text className="text-blue-600 font-bold mt-1">{item.price.toLocaleString()}円</Text>
           </View>
 
@@ -330,6 +344,13 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         onChangeText={setPrice}
         placeholder="例: 300"
         keyboardType="numeric"
+      />
+
+      <Input
+        label="カテゴリ"
+        value={category}
+        onChangeText={setCategory}
+        placeholder="例: メイン, ドリンク, サイド"
       />
 
       <View className="flex-row items-center justify-between mb-4">

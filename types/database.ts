@@ -15,6 +15,7 @@ export interface Menu {
   branch_id: string;
   menu_name: string;
   price: number;
+  category: string;
   stock_management: boolean;
   stock_quantity: number;
   is_active: boolean;
@@ -59,6 +60,7 @@ export interface PendingTransaction {
   items: Omit<TransactionItem, 'id' | 'transaction_id'>[];
   created_at: string;
   synced: boolean;
+  served?: boolean;
 }
 
 // Store settings
@@ -66,6 +68,7 @@ export type PaymentMode = 'cashless' | 'cash';
 
 export interface StoreSettings {
   payment_mode: PaymentMode;
+  serving_management_enabled?: boolean;
 }
 
 export interface LocalStorage {

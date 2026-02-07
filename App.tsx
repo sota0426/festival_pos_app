@@ -6,7 +6,7 @@ import './global.css';
 
 import { Home } from './components/Home';
 import { HQLogin, HQDashboard, BranchManagement } from './components/hq';
-import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, VisitorCounter } from './components/store';
+import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, VisitorCounter, StoreSettings, ServingManagement } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 import { HQHome } from 'components/hq/HQHome';
@@ -17,12 +17,15 @@ type Screen =
   | 'hq_home'
   | 'hq_dashboard'
   | 'hq_branches'
+  | 'hq_management'
   | 'store_login'
   | 'store_home'
   | 'store_menus'
   | 'store_register'
   | 'store_history'
-  | 'store_counter';
+  | 'store_counter'
+  | 'store_settings'
+  | 'store_serving';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('home');
@@ -64,10 +67,10 @@ export default function App() {
         return(
           <HQHome
             onNavigateSales={() => setCurrentScreen('hq_dashboard')}
-            onNavigateManagementStore={()=>{}}
+            onNavigateManagementStore={() => setCurrentScreen('hq_management')}
             onLogout={() => setCurrentScreen('home')}
-          />  
-        );     
+          />
+        );
 
       case 'hq_dashboard':
         return (
@@ -79,6 +82,9 @@ export default function App() {
 
       case 'hq_branches':
         return <BranchManagement onBack={() => setCurrentScreen('hq_dashboard')} />;
+
+      case 'hq_management':
+        return <BranchManagement onBack={() => setCurrentScreen('hq_home')} />;
 
       // Store Screens
       case 'store_login':
@@ -100,6 +106,8 @@ export default function App() {
             onNavigateToMenus={() => setCurrentScreen('store_menus')}
             onNavigateToHistory={() => setCurrentScreen('store_history')}
             onNavigateToCounter={() => setCurrentScreen('store_counter')}
+            onNavigateToSettings={() => setCurrentScreen('store_settings')}
+            onNavigateToServing={() => setCurrentScreen('store_serving')}
             onLogout={handleBranchLogout}
           />
         );
@@ -148,6 +156,31 @@ export default function App() {
         }
         return (
           <VisitorCounter
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+          />
+        );
+
+      case 'store_settings':
+        if (!currentBranch) {
+          setCurrentScreen('store_login');
+          return null;
+        }
+        return (
+          <StoreSettings
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+            onBranchUpdate={(updatedBranch) => setCurrentBranch(updatedBranch)}
+          />
+        );
+
+      case 'store_serving':
+        if (!currentBranch) {
+          setCurrentScreen('store_login');
+          return null;
+        }
+        return (
+          <ServingManagement
             branch={currentBranch}
             onBack={() => setCurrentScreen('store_home')}
           />

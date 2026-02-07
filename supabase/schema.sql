@@ -125,3 +125,6 @@ CREATE TRIGGER update_menus_updated_at
 -- Migration for existing databases:
 -- ALTER TABLE branches ADD COLUMN password TEXT NOT NULL DEFAULT '';
 -- UPDATE branches SET password = '1234';
+
+-- Migration: Add category to menus table
+-- ALTER TABLE menus ADD COLUMN category TEXT DEFAULT 'メイン';

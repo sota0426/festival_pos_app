@@ -69,6 +69,15 @@ export const markTransactionSynced = async (transactionId: string): Promise<void
   await AsyncStorage.setItem(STORAGE_KEYS.PENDING_TRANSACTIONS, JSON.stringify(updatedTransactions));
 };
 
+// Mark transaction as served (for serving management)
+export const markTransactionServed = async (transactionId: string): Promise<void> => {
+  const transactions = await getPendingTransactions();
+  const updatedTransactions = transactions.map((t) =>
+    t.id === transactionId ? { ...t, served: true } : t
+  );
+  await AsyncStorage.setItem(STORAGE_KEYS.PENDING_TRANSACTIONS, JSON.stringify(updatedTransactions));
+};
+
 // Sync time storage
 export const saveLastSyncTime = async (): Promise<void> => {
   await AsyncStorage.setItem(STORAGE_KEYS.LAST_SYNC_TIME, new Date().toISOString());
