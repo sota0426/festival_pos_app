@@ -19,6 +19,7 @@ export const Button = ({
 }: ButtonProps) => {
   const baseStyle = 'rounded-lg items-center justify-center flex-row';
 
+  
   const variantStyles = {
     primary: 'bg-blue-600',
     secondary: 'bg-gray-500',
