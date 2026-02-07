@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Card, Header } from '../common';
+import { Card, Header, Button } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import type { Branch, Transaction, TransactionItem, OrderBoardItem } from '../../types/database';
 
@@ -13,24 +13,32 @@ interface OrderBoardProps {
 export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
   const [orders, setOrders] = useState<OrderBoardItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [completing, setCompleting] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
-  const [connected, setConnected] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
-  // Update elapsed time every 30s
+  // Auto-refresh orders + update elapsed time every 30s
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30000);
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      fetchActiveOrders(false);
+    }, 30000);
     return () => clearInterval(timer);
-  }, []);
+  }, [fetchActiveOrders]);
 
-  // Fetch active orders on mount
-  const fetchActiveOrders = useCallback(async () => {
+  // Fetch active orders
+  const fetchActiveOrders = useCallback(async (isRefresh = false) => {
     if (!isSupabaseConfigured()) {
       setLoading(false);
       return;
+    }
+
+    if (isRefresh) {
+      setRefreshing(true);
     }
 
     try {
@@ -60,75 +68,23 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
       );
 
       setOrders(ordersWithItems);
+      setLastRefreshed(new Date());
     } catch (err) {
       console.error('Error fetching active orders:', err);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [branch.id]);
 
+  // Initial load
   useEffect(() => {
     fetchActiveOrders();
   }, [fetchActiveOrders]);
 
-  // Supabase Realtime subscription
-  useEffect(() => {
-    if (!isSupabaseConfigured()) return;
-
-    const channel = supabase
-      .channel(`order-board-${branch.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'transactions',
-          filter: `branch_id=eq.${branch.id}`,
-        },
-        async (payload) => {
-          const newTransaction = payload.new as Transaction;
-
-          if (newTransaction.status !== 'completed') return;
-          if (newTransaction.fulfillment_status === 'served') return;
-
-          // Fetch transaction items
-          const { data: items } = await supabase
-            .from('transaction_items')
-            .select('*')
-            .eq('transaction_id', newTransaction.id);
-
-          const newOrder: OrderBoardItem = {
-            transaction: newTransaction,
-            items: (items as TransactionItem[]) || [],
-          };
-
-          setOrders((prev) => [...prev, newOrder]);
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'transactions',
-          filter: `branch_id=eq.${branch.id}`,
-        },
-        (payload) => {
-          const updated = payload.new as Transaction;
-
-          if (updated.fulfillment_status === 'served' || updated.status === 'cancelled') {
-            setOrders((prev) => prev.filter((o) => o.transaction.id !== updated.id));
-          }
-        }
-      )
-      .subscribe((status) => {
-        setConnected(status === 'SUBSCRIBED');
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [branch.id]);
+  const handleRefresh = () => {
+    fetchActiveOrders(true);
+  };
 
   const handleMarkServed = async (transactionId: string) => {
     setCompleting(transactionId);
@@ -141,23 +97,30 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
 
       if (error) throw error;
 
-      // Remove immediately for responsiveness
+      // Remove from local state immediately, then re-fetch to sync
       setOrders((prev) => prev.filter((o) => o.transaction.id !== transactionId));
+      setCompleting(null);
+
+      // Re-fetch to ensure consistency
+      await fetchActiveOrders(false);
     } catch (err) {
       console.error('Error marking order as served:', err);
-    } finally {
       setCompleting(null);
     }
   };
 
   const getElapsedMinutes = (createdAt: string) => {
-    return Math.floor((now - new Date(createdAt).getTime()) / 60000);
+    return Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / 60000));
   };
 
   const getUrgencyStyle = (minutes: number) => {
     if (minutes >= 10) return { border: 'border-l-red-500', text: 'text-red-600', bg: 'bg-red-50' };
     if (minutes >= 5) return { border: 'border-l-yellow-500', text: 'text-yellow-600', bg: 'bg-yellow-50' };
     return { border: 'border-l-green-500', text: 'text-green-600', bg: 'bg-green-50' };
+  };
+
+  const formatTime = (date: Date) => {
+    return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`;
   };
 
   if (loading) {
@@ -177,26 +140,40 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
         showBack
         onBack={onBack}
         rightElement={
-          <View className="flex-row items-center">
-            <View className={`w-2.5 h-2.5 rounded-full mr-1.5 ${connected ? 'bg-green-500' : 'bg-gray-400'}`} />
-            <Text className={`text-xs font-medium ${connected ? 'text-green-700' : 'text-gray-500'}`}>
-              {connected ? '接続中' : '未接続'}
-            </Text>
-          </View>
+          <Button
+            title={refreshing ? '更新中...' : '更新'}
+            onPress={handleRefresh}
+            variant="primary"
+            size="sm"
+            disabled={refreshing}
+            loading={refreshing}
+          />
         }
       />
 
-      {/* Pending count banner */}
-      <View className="bg-amber-100 px-4 py-2">
-        <Text className="text-amber-800 font-bold text-center">
+      {/* Pending count banner + last refreshed */}
+      <View className="bg-amber-100 px-4 py-2 flex-row items-center justify-between">
+        <Text className="text-amber-800 font-bold">
           未提供: {orders.length}件
         </Text>
+        {lastRefreshed && (
+          <Text className="text-amber-600 text-xs">
+            最終更新: {formatTime(lastRefreshed)}
+          </Text>
+        )}
       </View>
 
       {orders.length === 0 ? (
         <View className="flex-1 items-center justify-center">
           <Text className="text-gray-400 text-xl">注文待ち...</Text>
-          <Text className="text-gray-300 mt-2">新しい注文が入ると自動的に表示されます</Text>
+          <Text className="text-gray-300 mt-2">「更新」ボタンで最新の注文を取得できます</Text>
+          <TouchableOpacity
+            onPress={handleRefresh}
+            className="mt-6 bg-amber-400 rounded-xl px-8 py-4"
+            activeOpacity={0.7}
+          >
+            <Text className="text-white font-bold text-lg">更新する</Text>
+          </TouchableOpacity>
         </View>
       ) : (
         <ScrollView className="flex-1" contentContainerStyle={{ padding: 8 }}>
@@ -211,10 +188,10 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
                   <Card className={`border-l-4 ${urgency.border}`}>
                     {/* Header: order number + elapsed time */}
                     <View className="flex-row justify-between items-center mb-3">
-                      <Text className="font-bold text-gray-900 text-lg">#{orderNumber}</Text>
+                      <Text className="font-bold text-gray-900 text-2xl">#{orderNumber}</Text>
                       <View className={`px-2 py-0.5 rounded-full ${urgency.bg}`}>
                         <Text className={`text-sm font-medium ${urgency.text}`}>
-                          {elapsed}分前
+                          {elapsed === 0 ? '今' : `${elapsed}分前`}
                         </Text>
                       </View>
                     </View>

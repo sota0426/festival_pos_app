@@ -69,6 +69,7 @@ export const StoreHome = ({
             </Card>
           </TouchableOpacity>
 
+
           {/* Visitor Counter Button */}
           <TouchableOpacity onPress={onNavigateToCounter} activeOpacity={0.8}>
             <Card className="bg-purple-500 p-6">

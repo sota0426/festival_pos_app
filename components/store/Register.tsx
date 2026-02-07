@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Card, Header } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { getMenus, saveMenus, savePendingTransaction } from '../../lib/storage';
+import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber } from '../../lib/storage';
 import type { Branch, Menu, CartItem, PendingTransaction } from '../../types/database';
 
 interface RegisterProps {
@@ -140,12 +140,13 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
     ]);
   };
 
-  const generateTransactionCode = (): string => {
+  const generateTransactionCode = async (): Promise<string> => {
     const now = new Date();
     const dateStr = `${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
     const timeStr = `${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`;
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `${branch.branch_code}-${dateStr}${timeStr}-${random}`;
+    const orderNumber = await getNextOrderNumber();
+    const orderStr = orderNumber.toString().padStart(2, '0');
+    return `${branch.branch_code}-${dateStr}${timeStr}-${orderStr}`;
   };
 
   const processPayment = async (paymentMethod: 'paypay' | 'voucher') => {
@@ -158,7 +159,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
     try {
       const transactionId = Crypto.randomUUID();
-      const transactionCode = generateTransactionCode();
+      const transactionCode = await generateTransactionCode();
       const now = new Date().toISOString();
 
       // Create transaction
@@ -249,9 +250,10 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       // Clear cart and show success
       setCart([]);
       setShowCart(false);
+      const orderNum = transactionCode.split('-').pop();
       Alert.alert(
         '会計完了',
-        `合計: ${totalAmount.toLocaleString()}円\n支払い方法: ${paymentMethod === 'paypay' ? 'PayPay' : '金券'}\n取引番号: ${transactionCode}`,
+        `注文番号: ${orderNum}\n合計: ${totalAmount.toLocaleString()}円\n支払い方法: ${paymentMethod === 'paypay' ? 'PayPay' : '金券'}`,
         [{ text: 'OK' }]
       );
     } catch (error) {

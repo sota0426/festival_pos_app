@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
   LAST_SYNC_TIME: '@festival_pos/last_sync_time',
   HQ_AUTH: '@festival_pos/hq_auth',
   STORE_SETTINGS: '@festival_pos/store_settings',
+  ORDER_COUNTER: '@festival_pos/order_counter',
 };
 
 // Branch storage
@@ -128,6 +129,24 @@ export const getStoreSettings = async (): Promise<StoreSettings> => {
   return data ? { payment_mode: 'cashless', order_board_enabled: false, ...JSON.parse(data) } : { payment_mode: 'cashless', order_board_enabled: false };
 };
 
+// Order counter storage (sequential order numbers 01-99, resets daily)
+export const getNextOrderNumber = async (): Promise<number> => {
+  const today = new Date().toISOString().split('T')[0]; // 'YYYY-MM-DD'
+  const data = await AsyncStorage.getItem(STORAGE_KEYS.ORDER_COUNTER);
+  let counter = 1;
+
+  if (data) {
+    const parsed = JSON.parse(data) as { date: string; counter: number };
+    if (parsed.date === today) {
+      counter = parsed.counter + 1;
+      if (counter > 99) counter = 1;
+    }
+  }
+
+  await AsyncStorage.setItem(STORAGE_KEYS.ORDER_COUNTER, JSON.stringify({ date: today, counter }));
+  return counter;
+};
+
 // Clear all data
 export const clearAllData = async (): Promise<void> => {
   await AsyncStorage.multiRemove([
@@ -138,6 +157,7 @@ export const clearAllData = async (): Promise<void> => {
     STORAGE_KEYS.LAST_SYNC_TIME,
     STORAGE_KEYS.HQ_AUTH,
     STORAGE_KEYS.STORE_SETTINGS,
+    STORAGE_KEYS.ORDER_COUNTER,
   ]);
 };
 
