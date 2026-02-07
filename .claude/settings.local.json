@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(npx tsc:*)",
-      "Bash(npm uninstall:*)"
+      "Bash(npm uninstall:*)",
+      "Bash(xargs cat:*)",
+      "Bash(npx expo export:*)",
+      "Bash(npm install:*)"
     ]
   }
 }

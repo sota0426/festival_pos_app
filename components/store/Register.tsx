@@ -208,8 +208,10 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
             total_amount: totalAmount,
             payment_method: paymentMethod,
             status: 'completed',
+            fulfillment_status: 'pending',
             created_at: now,
             cancelled_at: null,
+            served_at: null,
           });
 
           if (transError) throw transError;
