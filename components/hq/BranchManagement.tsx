@@ -19,6 +19,14 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
   const [newSalesTarget, setNewSalesTarget] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [saving, setSaving] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
+
+  const resetForm = () => {
+    setNewBranchName('');
+    setNewPassword('');
+    setNewSalesTarget('');
+  };
 
   const generateBranchCode = (existingBranches: Branch[]): string => {
     const maxNumber = existingBranches.reduce((max, branch) => {
@@ -107,9 +115,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
 
       setBranches([...branches, newBranch]);
       setShowAddModal(false);
-      setNewBranchName('');
-      setNewSalesTarget('');
-      setNewPassword('');
+      resetForm();
       Alert.alert('成功', `支店番号 ${newBranch.branch_code} を発行しました`);
     } catch (error) {
       console.error('Error adding branch:', error);
@@ -140,6 +146,124 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
     }
   };
 
+  const openEditModal = (branch: Branch) => {
+    setEditingBranch(branch);
+    setNewBranchName(branch.branch_name);
+    setNewPassword(branch.password);
+    setNewSalesTarget(branch.sales_target.toString());
+    setShowEditModal(true);
+  };
+
+  const handleEditBranch = async () => {
+    if (!editingBranch) return;
+
+    if (!newBranchName.trim()) {
+      Alert.alert('エラー', '模擬店名を入力してください');
+      return;
+    }
+
+    if (!newPassword.trim()) {
+      Alert.alert('エラー', 'パスワードを入力してください');
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const updatedFields = {
+        branch_name: newBranchName.trim(),
+        password: newPassword.trim(),
+        sales_target: parseInt(newSalesTarget, 10) || 0,
+      };
+
+      if (isSupabaseConfigured()) {
+        const { error } = await supabase
+          .from('branches')
+          .update(updatedFields)
+          .eq('id', editingBranch.id);
+        if (error) throw error;
+      }
+
+      setBranches(
+        branches.map((b) =>
+          b.id === editingBranch.id ? { ...b, ...updatedFields } : b
+        )
+      );
+
+      setShowEditModal(false);
+      setEditingBranch(null);
+      resetForm();
+      Alert.alert('成功', '支店情報を更新しました');
+    } catch (error) {
+      console.error('Error updating branch:', error);
+      Alert.alert('エラー', '支店情報の更新に失敗しました');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const renderBranchForm = (isEdit: boolean) => (
+    <>
+      {isEdit && editingBranch ? (
+        <Text className="text-gray-500 text-sm mb-4">
+          支店番号: {editingBranch.branch_code}
+        </Text>
+      ) : (
+        <Text className="text-gray-500 text-sm mb-4">
+          支店番号は自動で発行されます
+        </Text>
+      )}
+
+      <Input
+        label="模擬店名"
+        value={newBranchName}
+        onChangeText={setNewBranchName}
+        placeholder="例: 焼きそば屋"
+      />
+
+      <Input
+        label="パスワード"
+        value={newPassword}
+        onChangeText={setNewPassword}
+        placeholder="例: 1234"
+      />
+
+      <Input
+        label="売上目標（円）"
+        value={newSalesTarget}
+        onChangeText={setNewSalesTarget}
+        placeholder="例: 50000"
+        keyboardType="numeric"
+      />
+
+      <View className="flex-row gap-3 mt-4">
+        <View className="flex-1">
+          <Button
+            title="キャンセル"
+            onPress={() => {
+              if (isEdit) {
+                setShowEditModal(false);
+                setEditingBranch(null);
+              } else {
+                setShowAddModal(false);
+              }
+              resetForm();
+            }}
+            variant="secondary"
+          />
+        </View>
+        <View className="flex-1">
+          <Button
+            title={isEdit ? '更新' : '登録'}
+            onPress={isEdit ? handleEditBranch : handleAddBranch}
+            loading={saving}
+            disabled={!newBranchName.trim()}
+          />
+        </View>
+      </View>
+    </>
+  );
+
   const renderBranchItem = ({ item }: { item: Branch }) => (
     <Card className="mb-3">
       <View className="flex-row items-center justify-between">
@@ -168,14 +292,24 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
             目標: {item.sales_target.toLocaleString()}円
           </Text>
         </View>
+      </View>
+      <View className="flex-row mt-3 pt-3 border-t border-gray-100 gap-2">
+        <TouchableOpacity
+          onPress={() => openEditModal(item)}
+          className="flex-1 py-2 bg-blue-50 rounded-lg items-center"
+        >
+          <Text className="text-blue-600 font-medium">編集</Text>
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={() => handleToggleStatus(item)}
-          className={`px-3 py-2 rounded-lg ${
-            item.status === 'active' ? 'bg-red-100' : 'bg-green-100'
+          className={`flex-1 py-2 rounded-lg items-center ${
+            item.status === 'active' ? 'bg-red-50' : 'bg-green-50'
           }`}
         >
           <Text
-            className={`text-sm ${item.status === 'active' ? 'text-red-600' : 'text-green-600'}`}
+            className={`font-medium ${
+              item.status === 'active' ? 'text-red-600' : 'text-green-600'
+            }`}
           >
             {item.status === 'active' ? '停止' : '再開'}
           </Text>
@@ -218,53 +352,23 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
         visible={showAddModal}
         onClose={() => {
           setShowAddModal(false);
-          setNewPassword('');
+          resetForm();
         }}
         title="新規支店登録"
       >
-        <Text className="text-gray-500 text-sm mb-4">
-          支店番号は自動で発行されます
-        </Text>
+        {renderBranchForm(false)}
+      </Modal>
 
-        <Input
-          label="模擬店名"
-          value={newBranchName}
-          onChangeText={setNewBranchName}
-          placeholder="例: 焼きそば屋"
-        />
-
-        <Input
-          label="パスワード"
-          value={newPassword}
-          onChangeText={setNewPassword}
-          placeholder="例: 1234"
-        />
-
-        <Input
-          label="売上目標（円）"
-          value={newSalesTarget}
-          onChangeText={setNewSalesTarget}
-          placeholder="例: 50000"
-          keyboardType="numeric"
-        />
-
-        <View className="flex-row gap-3 mt-4">
-          <View className="flex-1">
-            <Button
-              title="キャンセル"
-              onPress={() => setShowAddModal(false)}
-              variant="secondary"
-            />
-          </View>
-          <View className="flex-1">
-            <Button
-              title="登録"
-              onPress={handleAddBranch}
-              loading={saving}
-              disabled={!newBranchName.trim()}
-            />
-          </View>
-        </View>
+      <Modal
+        visible={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setEditingBranch(null);
+          resetForm();
+        }}
+        title="支店情報編集"
+      >
+        {renderBranchForm(true)}
       </Modal>
     </SafeAreaView>
   );
