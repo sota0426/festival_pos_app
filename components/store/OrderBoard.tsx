@@ -189,7 +189,7 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
                 <View key={order.transaction.id} className={isMobile ? 'w-full p-1' : 'w-1/2 p-1'}>
                   <Card className={`border-l-4 ${urgency.border}`}>
                     {/* Header: order number + elapsed time */}
-                    <View className="flex-row justify-between items-center mb-3">
+                    <View className="flex-row justify-between items-center mb-1">
                       <Text className="font-bold text-gray-900 text-2xl">#{orderNumber}</Text>
                       <View className={`px-2 py-0.5 rounded-full ${urgency.bg}`}>
                         <Text className={`text-sm font-medium ${urgency.text}`}>
@@ -199,7 +199,7 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
                     </View>
 
                     {/* Items list */}
-                    <View className="mb-3">
+                    <View className="mb-1">
                       {order.items.map((item) => (
                         <View
                           key={item.id}
