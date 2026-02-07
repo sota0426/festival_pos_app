@@ -11,6 +11,7 @@ import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 import { HQHome } from 'components/hq/HQHome';
 
+
 type Screen =
   | 'home'
   | 'hq_login'
