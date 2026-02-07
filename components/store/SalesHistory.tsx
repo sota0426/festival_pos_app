@@ -5,6 +5,7 @@ import { Card, Header, Modal, Button } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { getPendingTransactions, getMenus, saveMenus } from '../../lib/storage';
 import type { Branch, Transaction, TransactionItem, PendingTransaction } from '../../types/database';
+import { MenuSalesSummary } from './MenuSalesSummary';
 
 interface SalesHistoryProps {
   branch: Branch;
@@ -15,13 +16,18 @@ interface TransactionWithItems extends Transaction {
   items: TransactionItem[];
 }
 
-export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
+export const SalesHistory = ({ 
+  branch, 
+  onBack,
+}: SalesHistoryProps) => {
   const [transactions, setTransactions] = useState<TransactionWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionWithItems | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [view, setView] = useState<'history' | 'menuSales'>("history");
+
 
   const fetchTransactions = useCallback(async () => {
     try {
@@ -296,11 +302,27 @@ export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
+
       <Header
-        title="販売履歴"
+        title={ view === "menuSales" ? "メニュー別売り上げ" :"販売履歴"}
         subtitle={`${branch.branch_code} - ${branch.branch_name}`}
         showBack
         onBack={onBack}
+        rightElement={
+          view === 'history' ? (
+            <Button
+              title="メニュー別売り上げ"
+              onPress={() => setView('menuSales')}
+              size="sm"
+            />
+          ) : (
+             <Button
+              title="販売履歴"
+              onPress={() => setView("history")}
+              size="sm"
+            />           
+          )
+        }
       />
 
       {/* Summary */}
@@ -315,6 +337,15 @@ export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
         </Card>
       </View>
 
+      {view === 'menuSales' && (
+        <MenuSalesSummary
+          branch={branch}
+          transactions={transactions}
+          onBack={() => setView('history')}
+        />
+      )}
+
+      { view === "history" && (
       <FlatList
         data={transactions}
         renderItem={renderTransaction}
@@ -332,6 +363,7 @@ export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
           </View>
         }
       />
+      )}
 
       {/* Detail Modal */}
       <Modal
@@ -395,6 +427,9 @@ export const SalesHistory = ({ branch, onBack }: SalesHistoryProps) => {
           </>
         )}
       </Modal>
+
+
+
     </SafeAreaView>
   );
 };
