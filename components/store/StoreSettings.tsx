@@ -9,7 +9,6 @@ interface StoreSettingsProps {
   branch: Branch;
   onBack: () => void;
 }
-
 export const StoreSettings = ({ branch, onBack }: StoreSettingsProps) => {
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('cashless');
   const [saving, setSaving] = useState(false);
