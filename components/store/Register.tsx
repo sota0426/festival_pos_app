@@ -27,6 +27,8 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   });
   const [showCashModal, setShowCashModal] = useState(false);
   const [receivedAmount, setReceivedAmount] = useState('');
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
 
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
@@ -153,6 +155,8 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       }},
     ]);
   };
+
+
 
   const generateTransactionCode = async (): Promise<string> => {
     const now = new Date();
@@ -318,7 +322,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   };
 
   const receivedNum = parseInt(receivedAmount, 10) || 0;
-  const changeNum = receivedNum - totalAmount;
+  const changeNum = receivedNum - totalAmount >= 0 ? receivedNum - totalAmount : -1 ;
 
   const getStockStatus = (menu: Menu): { color: string; text: string } => {
     if (!menu.stock_management) {
@@ -466,44 +470,60 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
           </Text>
         </View>
 
-        <View className="gap-3">
+        <View className="gap-3 mx-2">
+          <View className='flex flex-row '>
+
           {paymentMethods.cash && (
             <TouchableOpacity
               onPress={handleCashPayment}
               disabled={cart.length === 0 || processing}
               activeOpacity={0.8}
-              className={`py-4 rounded-xl items-center ${
+              className={`py-4 mr-2 rounded-xl items-center flex-1 ${
                 cart.length === 0 || processing ? 'bg-gray-300' : 'bg-green-500'
               }`}
             >
               <Text className="text-white text-lg font-bold">現金</Text>
             </TouchableOpacity>
           )}
+
           {paymentMethods.cashless && (
-            <Button
-              title="キャッシュレス"
+            <TouchableOpacity
               onPress={() => processPayment('paypay')}
               disabled={cart.length === 0 || processing}
-              loading={processing}
-              size="lg"
-            />
+              activeOpacity={0.8}
+              className={`py-4 mr-2 rounded-xl items-center flex-1 ${
+                cart.length === 0 || processing ? 'bg-gray-300' : 'bg-blue-500'
+              }`}
+            >
+              <Text className="text-white text-lg font-bold">キャッシュレス</Text>
+            </TouchableOpacity>
           )}
+
           {paymentMethods.voucher && (
-            <Button
-              title="金券"
-              onPress={() => processPayment('voucher')}
-              variant="success"
+            <TouchableOpacity
+              onPress={() => processPayment('paypay')}
               disabled={cart.length === 0 || processing}
-              loading={processing}
-              size="lg"
-            />
+              activeOpacity={0.8}
+              className={`py-4 mr-2 rounded-xl items-center flex-1 ${
+                cart.length === 0 || processing ? 'bg-gray-300' : 'bg-orange-500'
+              }`}
+            >
+              <Text className="text-white text-lg font-bold">金券</Text>
+            </TouchableOpacity>
           )}
-          <Button
-            title="キャンセル"
-            onPress={clearCart}
-            variant="secondary"
-            disabled={cart.length === 0 || processing}
-          />
+
+          </View>
+
+            <TouchableOpacity
+              onPress={() => setShowClearConfirm(true)}
+              disabled={cart.length === 0 || processing}
+              activeOpacity={0.8}
+              className={`py-4 mr-2 rounded-xl items-center flex-1 ${
+                cart.length === 0 || processing ? 'bg-gray-300' : 'bg-gray-500'
+              }`}
+            >
+              <Text className="text-white text-lg font-bold">キャンセル</Text>
+            </TouchableOpacity>
         </View>
       </View>
     </View>
@@ -526,87 +546,96 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       }}
       title="現金支払い"
     >
-      <View className="mb-4">
-        <View className="flex-row justify-between mb-2">
-          <Text className="text-gray-500">合計金額</Text>
-          <Text className="text-xl font-bold text-blue-600">{totalAmount.toLocaleString()}円</Text>
-        </View>
+      <ScrollView>
+        <View className="mb-2">
+          <View className="flex-row justify-between mb-2">
+            <Text className="text-gray-500 ">合計金額</Text>
+            <Text className="text-xl font-bold text-blue-600">{totalAmount.toLocaleString()}円</Text>
+          </View>
 
-        {/* Received Amount Display */}
-        <View className="bg-gray-100 rounded-xl p-4 mb-3">
-          <Text className="text-gray-500 text-sm mb-1">お預かり金額</Text>
-          <Text className="text-3xl font-bold text-gray-900 text-right">
-            {receivedNum > 0 ? `${receivedNum.toLocaleString()}円` : '---'}
-          </Text>
-        </View>
+          {/* Received Amount Display */}
+          <View className="bg-gray-100 rounded-xl p-4 mb-2">
+            <Text className="text-gray-500 text-sm">お預かり金額</Text>
+            <Text className="text-2xl font-bold text-gray-900 text-right">
+              {receivedNum > 0 ? `${receivedNum.toLocaleString()}円` : '---'}
+            </Text>
+          </View>
 
-        {/* Change Display */}
-        <View className={`rounded-xl p-4 mb-4 ${changeNum >= 0 && receivedNum > 0 ? 'bg-green-50' : 'bg-gray-50'}`}>
-          <Text className="text-gray-500 text-sm mb-1">お釣り</Text>
-          <Text
-            className={`text-3xl font-bold text-right ${
-              receivedNum === 0
-                ? 'text-gray-300'
-                : changeNum >= 0
-                  ? 'text-green-600'
-                  : 'text-red-500'
-            }`}
-          >
-            {receivedNum === 0
-              ? '---'
-              : changeNum >= 0
-                ? `${changeNum.toLocaleString()}円`
-                : `不足 ${Math.abs(changeNum).toLocaleString()}円`}
-          </Text>
-        </View>
+          {/* Change Display */}
+          <View className={`rounded-xl p-4 mb-2 ${changeNum >= 0 && receivedNum > 0 ? 'bg-green-50' : 'bg-gray-50'}`}>
+            <Text className="text-gray-500 text-sm">お釣り</Text>
+            <Text
+              className={`text-2xl font-bold text-right ${
+                changeNum < 0
+                  ? 'text-gray-300'
+                  : 'text-green-600'
+              }`}
+            >
+              {changeNum < 0
+                ? '---'
+                : `${changeNum.toLocaleString()}円`
+              }
+            </Text>
+          </View>
 
-        {/* Numpad */}
-        <View className="gap-2">
+          {/* Numpad */}
+          <View className="gap-2">
           {numpadKeys.map((row, rowIndex) => (
-            <View key={rowIndex} className="flex-row gap-2">
-              {row.map((key) => (
-                <TouchableOpacity
-                  key={key}
-                  onPress={() => onNumpadPress(key)}
-                  activeOpacity={0.7}
-                  className={`flex-1 py-4 rounded-xl items-center justify-center ${
-                    key === 'clear'
-                      ? 'bg-red-100'
-                      : key === 'backspace'
-                        ? 'bg-gray-200'
-                        : 'bg-gray-100'
-                  }`}
-                >
-                  <Text
-                    className={`text-xl font-bold ${
-                      key === 'clear' ? 'text-red-600' : 'text-gray-900'
+              <View key={rowIndex} className="flex-row gap-2">
+                {row.map((key) => (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => onNumpadPress(key)}
+                    activeOpacity={0.7}
+                    className={`flex-1 py-3 rounded-xl items-center justify-center ${
+                      key === 'clear'
+                        ? 'bg-red-100'
+                        : key === 'backspace'
+                          ? 'bg-gray-200'
+                          : 'bg-gray-100'
                     }`}
                   >
-                    {key === 'clear' ? 'C' : key === 'backspace' ? '←' : key}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ))}
-        </View>
+                    <Text
+                      className={`text-xl font-bold ${
+                        key === 'clear' ? 'text-red-600' : 'text-gray-900'
+                      }`}
+                    >
+                      {key === 'clear' ? 'C' : key === 'backspace' ? '←' : key}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ))}
+          </View>
 
-        {/* Quick Amount Buttons */}
-        <View className="flex-row gap-2 mt-3">
-          {[100, 500, 1000, 5000].map((amount) => (
-            <TouchableOpacity
-              key={amount}
-              onPress={() => setReceivedAmount(String(amount))}
-              activeOpacity={0.7}
-              className="flex-1 py-3 bg-blue-50 rounded-xl items-center"
-            >
-              <Text className="text-blue-600 font-bold text-sm">
-                {amount >= 1000 ? `${amount / 1000}千` : `${amount}`}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
+          {/* Quick Amount Buttons */}
+          <View className="flex-row gap-2 mt-3">
+            {[1000, 5000].map((amount) => (
+              <TouchableOpacity
+                key={amount}
+                onPress={() => setReceivedAmount(String(amount))}
+                activeOpacity={0.7}
+                className="flex-1 py-3 bg-blue-500 rounded-xl items-center"
+              >
+                <Text className="text-white font-bold text-sm">
+                  {amount >= 1000 ? `${amount / 1000}千` : `${amount}`}
+                </Text>
+              </TouchableOpacity>
+            ))}
+              <TouchableOpacity
+                onPress={() => setReceivedAmount(String(totalAmount))}
+                activeOpacity={0.7}
+                className="flex-1 py-3 bg-blue-500 rounded-xl items-center"
+              >
+                <Text className="text-white font-bold text-sm">
+                  ちょうど
+                </Text>
+              </TouchableOpacity>
 
+          </View>
+
+        </View>
+      </ScrollView>
       {/* Confirm Button */}
       <TouchableOpacity
         onPress={() => processPayment('cash', receivedNum)}
@@ -624,6 +653,37 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       </TouchableOpacity>
     </Modal>
   );
+
+  const clearConfirmModal = (
+    <Modal
+      visible={showClearConfirm}
+      onClose={() => setShowClearConfirm(false)}
+      title="確認"
+    >
+      <Text className="mb-4">注文内容をクリアしますか？</Text>
+
+      <View className="flex-row gap-2">
+        <TouchableOpacity
+          onPress={() => setShowClearConfirm(false)}
+          className="flex-1 py-3 bg-gray-300 rounded-xl items-center"
+        >
+          <Text>キャンセル</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => {
+            setCart([]);
+            setShowCart(false);
+            setShowClearConfirm(false);
+          }}
+          className="flex-1 py-3 bg-red-500 rounded-xl items-center"
+        >
+          <Text className="text-white font-bold">クリア</Text>
+        </TouchableOpacity>
+      </View>
+    </Modal>
+  );
+
 
   // Mobile Layout
   if (isMobile) {
@@ -666,6 +726,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
           </>
         )}
         {cashModal}
+        {clearConfirmModal}
       </SafeAreaView>
     );
   }
@@ -696,6 +757,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
         </View>
       </View>
       {cashModal}
+      {clearConfirmModal}
     </SafeAreaView>
   );
 };
