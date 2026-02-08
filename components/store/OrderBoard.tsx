@@ -3,6 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, useWindowD
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { getPendingTransactions, addServedTransactionId, getServedTransactionIds } from '../../lib/storage';
 import type { Branch, Transaction, TransactionItem, OrderBoardItem } from '../../types/database';
 
 interface OrderBoardProps {
@@ -23,19 +24,55 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
 
     // Fetch active orders
   const fetchActiveOrders = useCallback(async (isRefresh = false) => {
-    if (!isSupabaseConfigured()) {
-      setLoading(false);
-      return;
-    }
-
     if (isRefresh) {
       setRefreshing(true);
     }
 
     try {
-      // Only show today's orders
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
+
+      // Always load local pending transactions
+      const pendingTrans = await getPendingTransactions();
+      const servedIds = await getServedTransactionIds();
+      const localOrders: OrderBoardItem[] = pendingTrans
+        .filter(
+          (t) =>
+            t.branch_id === branch.id &&
+            new Date(t.created_at) >= todayStart &&
+            !servedIds.includes(t.id)
+        )
+        .map((t) => ({
+          transaction: {
+            id: t.id,
+            branch_id: t.branch_id,
+            transaction_code: t.transaction_code,
+            total_amount: t.total_amount,
+            payment_method: t.payment_method,
+            status: 'completed' as const,
+            fulfillment_status: 'pending' as const,
+            created_at: t.created_at,
+            cancelled_at: null,
+            served_at: null,
+          },
+          items: t.items.map((item, index) => ({
+            id: `${t.id}-${index}`,
+            transaction_id: t.id,
+            ...item,
+          })),
+        }));
+
+      if (!isSupabaseConfigured()) {
+        setOrders(
+          localOrders.sort(
+            (a, b) => new Date(a.transaction.created_at).getTime() - new Date(b.transaction.created_at).getTime()
+          )
+        );
+        setLastRefreshed(new Date());
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
 
       const { data: transactions, error } = await supabase
         .from('transactions')
@@ -58,7 +95,14 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
         })
       );
 
-      setOrders(ordersWithItems);
+      // Merge: add local orders not yet in remote
+      const remoteIds = new Set(ordersWithItems.map((o) => o.transaction.id));
+      const uniqueLocal = localOrders.filter((o) => !remoteIds.has(o.transaction.id));
+      const merged = [...ordersWithItems, ...uniqueLocal].sort(
+        (a, b) => new Date(a.transaction.created_at).getTime() - new Date(b.transaction.created_at).getTime()
+      );
+
+      setOrders(merged);
       setLastRefreshed(new Date());
     } catch (err) {
       console.error('Error fetching active orders:', err);
@@ -92,19 +136,22 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
     setCompleting(transactionId);
     try {
       const servedAt = new Date().toISOString();
-      const { error } = await supabase
-        .from('transactions')
-        .update({ fulfillment_status: 'served', served_at: servedAt })
-        .eq('id', transactionId);
 
-      if (error) throw error;
+      // ローカルに提供済みIDを記録（再取得時に除外するため）
+      await addServedTransactionId(transactionId);
 
-      // Remove from local state immediately, then re-fetch to sync
+      if (isSupabaseConfigured()) {
+        const { error } = await supabase
+          .from('transactions')
+          .update({ fulfillment_status: 'served', served_at: servedAt })
+          .eq('id', transactionId);
+
+        if (error) throw error;
+      }
+
+      // Remove from local state immediately
       setOrders((prev) => prev.filter((o) => o.transaction.id !== transactionId));
       setCompleting(null);
-
-      // Re-fetch to ensure consistency
-      await fetchActiveOrders(false);
     } catch (err) {
       console.error('Error marking order as served:', err);
       setCompleting(null);

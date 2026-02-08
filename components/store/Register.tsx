@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, useWindowDimensions, PanResponder } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
-import { Button, Card, Header } from '../common';
+import { Button, Card, Header, Modal } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber } from '../../lib/storage';
-import type { Branch, Menu, CartItem, PendingTransaction } from '../../types/database';
+import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings } from '../../lib/storage';
+import type { Branch, Menu, CartItem, PendingTransaction, PaymentMethodSettings } from '../../types/database';
 
 interface RegisterProps {
   branch: Branch;
@@ -19,8 +19,15 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [showCart, setShowCart] = useState(false); // For mobile view
-  const [cartWidth, setCartWidth] = useState(320); 
-  
+  const [cartWidth, setCartWidth] = useState(320);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodSettings>({
+    cash: false,
+    cashless: true,
+    voucher: true,
+  });
+  const [showCashModal, setShowCashModal] = useState(false);
+  const [receivedAmount, setReceivedAmount] = useState('');
+
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -38,6 +45,13 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
   useEffect(() => {
     fetchMenus();
+    const loadSettings = async () => {
+      const settings = await getStoreSettings();
+      if (settings.payment_methods) {
+        setPaymentMethods(settings.payment_methods);
+      }
+    };
+    loadSettings();
   }, [fetchMenus]);
 
   const totalAmount = cart.reduce((sum, item) => sum + item.subtotal, 0);
@@ -149,7 +163,10 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
     return `${branch.branch_code}-${dateStr}${timeStr}-${orderStr}`;
   };
 
-  const processPayment = async (paymentMethod: 'paypay' | 'voucher') => {
+  const processPayment = async (
+    paymentMethod: 'paypay' | 'voucher' | 'cash',
+    cashReceived?: number,
+  ) => {
     if (cart.length === 0) {
       Alert.alert('エラー', '商品を選択してください');
       return;
@@ -162,7 +179,13 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       const transactionCode = await generateTransactionCode();
       const now = new Date().toISOString();
 
-      // Create transaction
+      // お釣り計算（UI表示用のみ、DBには保存しない）
+      const changeAmount =
+        paymentMethod === 'cash' && cashReceived != null
+          ? cashReceived - totalAmount
+          : undefined;
+
+      // Create transaction (received_amount/change_amount はDBに保存しない)
       const transaction: PendingTransaction = {
         id: transactionId,
         branch_id: branch.id,
@@ -201,7 +224,6 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       // Try to sync with Supabase
       if (isSupabaseConfigured()) {
         try {
-          // Insert transaction
           const { error: transError } = await supabase.from('transactions').insert({
             id: transactionId,
             branch_id: branch.id,
@@ -217,7 +239,6 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
           if (transError) throw transError;
 
-          // Insert transaction items
           const transactionItems = cart.map((item) => ({
             id: Crypto.randomUUID(),
             transaction_id: transactionId,
@@ -231,7 +252,6 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
           const { error: itemsError } = await supabase.from('transaction_items').insert(transactionItems);
           if (itemsError) throw itemsError;
 
-          // Update stock in Supabase
           for (const menu of updatedMenus) {
             const cartItem = cart.find((item) => item.menu_id === menu.id);
             if (cartItem && menu.stock_management) {
@@ -243,18 +263,27 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
           }
         } catch (syncError) {
           console.log('Sync failed, will retry later:', syncError);
-          // Data is already saved locally, sync will happen later
         }
       }
 
       // Clear cart and show success
       setCart([]);
       setShowCart(false);
+      setShowCashModal(false);
+      setReceivedAmount('');
       const orderNum = transactionCode.split('-').pop();
+
+      const methodLabel =
+        paymentMethod === 'paypay' ? 'PayPay' : paymentMethod === 'voucher' ? '金券' : '現金';
+      const cashInfo =
+        paymentMethod === 'cash' && cashReceived != null
+          ? `\nお預かり: ${cashReceived.toLocaleString()}円\nお釣り: ${changeAmount!.toLocaleString()}円`
+          : '';
+
       Alert.alert(
         '会計完了',
-        `注文番号: ${orderNum}\n合計: ${totalAmount.toLocaleString()}円\n支払い方法: ${paymentMethod === 'paypay' ? 'PayPay' : '金券'}`,
-        [{ text: 'OK' }]
+        `注文番号: ${orderNum}\n合計: ${totalAmount.toLocaleString()}円\n支払い方法: ${methodLabel}${cashInfo}`,
+        [{ text: 'OK' }],
       );
     } catch (error) {
       console.error('Error processing payment:', error);
@@ -263,6 +292,33 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       setProcessing(false);
     }
   };
+
+  const handleCashPayment = () => {
+    if (cart.length === 0) {
+      Alert.alert('エラー', '商品を選択してください');
+      return;
+    }
+    setReceivedAmount('');
+    setShowCashModal(true);
+  };
+
+  const onNumpadPress = (key: string) => {
+    if (key === 'clear') {
+      setReceivedAmount('');
+    } else if (key === 'backspace') {
+      setReceivedAmount((prev) => prev.slice(0, -1));
+    } else {
+      setReceivedAmount((prev) => {
+        const next = prev + key;
+        // Prevent unreasonably large numbers
+        if (next.length > 7) return prev;
+        return next;
+      });
+    }
+  };
+
+  const receivedNum = parseInt(receivedAmount, 10) || 0;
+  const changeNum = receivedNum - totalAmount;
 
   const getStockStatus = (menu: Menu): { color: string; text: string } => {
     if (!menu.stock_management) {
@@ -411,21 +467,37 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
         </View>
 
         <View className="gap-3">
-          <Button
-            title="PayPay"
-            onPress={() => processPayment('paypay')}
-            disabled={cart.length === 0 || processing}
-            loading={processing}
-            size="lg"
-          />
-          <Button
-            title="金券"
-            onPress={() => processPayment('voucher')}
-            variant="success"
-            disabled={cart.length === 0 || processing}
-            loading={processing}
-            size="lg"
-          />
+          {paymentMethods.cash && (
+            <TouchableOpacity
+              onPress={handleCashPayment}
+              disabled={cart.length === 0 || processing}
+              activeOpacity={0.8}
+              className={`py-4 rounded-xl items-center ${
+                cart.length === 0 || processing ? 'bg-gray-300' : 'bg-green-500'
+              }`}
+            >
+              <Text className="text-white text-lg font-bold">現金</Text>
+            </TouchableOpacity>
+          )}
+          {paymentMethods.cashless && (
+            <Button
+              title="キャッシュレス"
+              onPress={() => processPayment('paypay')}
+              disabled={cart.length === 0 || processing}
+              loading={processing}
+              size="lg"
+            />
+          )}
+          {paymentMethods.voucher && (
+            <Button
+              title="金券"
+              onPress={() => processPayment('voucher')}
+              variant="success"
+              disabled={cart.length === 0 || processing}
+              loading={processing}
+              size="lg"
+            />
+          )}
           <Button
             title="キャンセル"
             onPress={clearCart}
@@ -435,6 +507,122 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
         </View>
       </View>
     </View>
+  );
+
+  // Cash Payment Modal (inline JSX variable to avoid remount on state change)
+  const numpadKeys = [
+    ['1', '2', '3'],
+    ['4', '5', '6'],
+    ['7', '8', '9'],
+    ['clear', '0', 'backspace'],
+  ];
+
+  const cashModal = (
+    <Modal
+      visible={showCashModal}
+      onClose={() => {
+        setShowCashModal(false);
+        setReceivedAmount('');
+      }}
+      title="現金支払い"
+    >
+      <View className="mb-4">
+        <View className="flex-row justify-between mb-2">
+          <Text className="text-gray-500">合計金額</Text>
+          <Text className="text-xl font-bold text-blue-600">{totalAmount.toLocaleString()}円</Text>
+        </View>
+
+        {/* Received Amount Display */}
+        <View className="bg-gray-100 rounded-xl p-4 mb-3">
+          <Text className="text-gray-500 text-sm mb-1">お預かり金額</Text>
+          <Text className="text-3xl font-bold text-gray-900 text-right">
+            {receivedNum > 0 ? `${receivedNum.toLocaleString()}円` : '---'}
+          </Text>
+        </View>
+
+        {/* Change Display */}
+        <View className={`rounded-xl p-4 mb-4 ${changeNum >= 0 && receivedNum > 0 ? 'bg-green-50' : 'bg-gray-50'}`}>
+          <Text className="text-gray-500 text-sm mb-1">お釣り</Text>
+          <Text
+            className={`text-3xl font-bold text-right ${
+              receivedNum === 0
+                ? 'text-gray-300'
+                : changeNum >= 0
+                  ? 'text-green-600'
+                  : 'text-red-500'
+            }`}
+          >
+            {receivedNum === 0
+              ? '---'
+              : changeNum >= 0
+                ? `${changeNum.toLocaleString()}円`
+                : `不足 ${Math.abs(changeNum).toLocaleString()}円`}
+          </Text>
+        </View>
+
+        {/* Numpad */}
+        <View className="gap-2">
+          {numpadKeys.map((row, rowIndex) => (
+            <View key={rowIndex} className="flex-row gap-2">
+              {row.map((key) => (
+                <TouchableOpacity
+                  key={key}
+                  onPress={() => onNumpadPress(key)}
+                  activeOpacity={0.7}
+                  className={`flex-1 py-4 rounded-xl items-center justify-center ${
+                    key === 'clear'
+                      ? 'bg-red-100'
+                      : key === 'backspace'
+                        ? 'bg-gray-200'
+                        : 'bg-gray-100'
+                  }`}
+                >
+                  <Text
+                    className={`text-xl font-bold ${
+                      key === 'clear' ? 'text-red-600' : 'text-gray-900'
+                    }`}
+                  >
+                    {key === 'clear' ? 'C' : key === 'backspace' ? '←' : key}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ))}
+        </View>
+
+        {/* Quick Amount Buttons */}
+        <View className="flex-row gap-2 mt-3">
+          {[100, 500, 1000, 5000].map((amount) => (
+            <TouchableOpacity
+              key={amount}
+              onPress={() => setReceivedAmount(String(amount))}
+              activeOpacity={0.7}
+              className="flex-1 py-3 bg-blue-50 rounded-xl items-center"
+            >
+              <Text className="text-blue-600 font-bold text-sm">
+                {amount >= 1000 ? `${amount / 1000}千` : `${amount}`}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Confirm Button */}
+      <TouchableOpacity
+        onPress={() => processPayment('cash', receivedNum)}
+        disabled={receivedNum < totalAmount || processing || totalAmount === 0}
+        activeOpacity={0.8}
+        className={`py-4 rounded-xl items-center ${
+          receivedNum >= totalAmount && !processing && totalAmount > 0
+            ? 'bg-green-500'
+            : 'bg-gray-300'
+        }`}
+      >
+        <Text className="text-white text-lg font-bold">
+          {processing ? '処理中...' : '会計する'}
+        </Text>
+      </TouchableOpacity>
+    </Modal>
   );
 
   // Mobile Layout
@@ -477,11 +665,12 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
             )}
           </>
         )}
+        {cashModal}
       </SafeAreaView>
     );
   }
 
-  
+
   // Desktop/Tablet Layout
   return (
     <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
@@ -506,6 +695,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
           <CartPanel />
         </View>
       </View>
+      {cashModal}
     </SafeAreaView>
   );
 };

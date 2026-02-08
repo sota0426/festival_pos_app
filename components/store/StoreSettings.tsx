@@ -24,7 +24,8 @@ export const StoreSettings = ({ branch, onBack }: StoreSettingsProps) => {
   const handleSave = async (mode: PaymentMode) => {
     setSaving(true);
     setPaymentMode(mode);
-    await saveStoreSettings({ payment_mode: mode });
+    const currentSettings = await getStoreSettings();
+    await saveStoreSettings({ ...currentSettings, payment_mode: mode });
     setSaving(false);
   };
 

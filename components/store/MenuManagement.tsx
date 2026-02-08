@@ -5,6 +5,7 @@ import * as Crypto from 'expo-crypto';
 import { Button, Input, Card, Header, Modal } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { saveMenus, getMenus } from '../../lib/storage';
+import { alertConfirm } from '../../lib/alertUtils';
 import type { Branch, Menu } from '../../types/database';
 
 interface MenuManagementProps {
@@ -191,29 +192,22 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     }
   };
 
-  const handleDeleteMenu = async (menu: Menu) => {
-    Alert.alert('確認', `「${menu.menu_name}」を削除しますか？`, [
-      { text: 'キャンセル', style: 'cancel' },
-      {
-        text: '削除',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            if (isSupabaseConfigured()) {
-              const { error } = await supabase.from('menus').delete().eq('id', menu.id);
-              if (error) throw error;
-            }
+  const handleDeleteMenu = (menu: Menu) => {
+    alertConfirm('確認', `「${menu.menu_name}」を削除しますか？`, async () => {
+      try {
+        if (isSupabaseConfigured()) {
+          const { error } = await supabase.from('menus').delete().eq('id', menu.id);
+          if (error) throw error;
+        }
 
-            const updatedMenus = menus.filter((m) => m.id !== menu.id);
-            setMenus(updatedMenus);
-            await saveMenus(updatedMenus);
-          } catch (error) {
-            console.error('Error deleting menu:', error);
-            Alert.alert('エラー', 'メニューの削除に失敗しました');
-          }
-        },
-      },
-    ]);
+        const updatedMenus = menus.filter((m) => m.id !== menu.id);
+        setMenus(updatedMenus);
+        await saveMenus(updatedMenus);
+      } catch (error) {
+        console.error('Error deleting menu:', error);
+        Alert.alert('エラー', 'メニューの削除に失敗しました');
+      }
+    }, '削除');
   };
 
   const handleStockChange = async (menu: Menu, change: number) => {

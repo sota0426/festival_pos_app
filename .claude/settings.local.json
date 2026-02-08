@@ -5,7 +5,8 @@
       "Bash(npm uninstall:*)",
       "Bash(xargs cat:*)",
       "Bash(npx expo export:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(git stash:*)"
     ]
   }
 }
