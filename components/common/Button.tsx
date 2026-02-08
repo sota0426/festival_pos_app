@@ -3,7 +3,7 @@ import { Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 interface ButtonProps {
   title: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'danger' | 'success';
+  variant?: 'primary' | 'secondary' | 'thirdy' |'danger' | 'success';
   disabled?: boolean;
   loading?: boolean;
   size?: 'sm' | 'md' | 'lg';
@@ -23,6 +23,7 @@ export const Button = ({
   const variantStyles = {
     primary: 'bg-blue-600',
     secondary: 'bg-gray-500',
+    thirdy:'bg-orange-500',
     danger: 'bg-red-600',
     success: 'bg-green-600',
   };
