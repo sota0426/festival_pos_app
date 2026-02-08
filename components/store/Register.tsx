@@ -498,7 +498,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
                         cart.length === 0 || processing ? 'bg-gray-300' : 'bg-blue-500'
                       }`}
                     >
-                      <Text className="text-white text-lg font-bold">QRコード</Text>
+                      <Text className="text-white text-lg font-bold">PayPay</Text>
                     </TouchableOpacity>
                   )}
                   {paymentMethods.voucher && (

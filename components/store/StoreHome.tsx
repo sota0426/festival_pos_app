@@ -93,8 +93,8 @@ export const StoreHome = ({
 
   const achievementRate =
     branch.sales_target > 0
-      ? Math.min(100, Math.floor((currentSales / branch.sales_target) * 100))
-      : 0;
+      ?  Math.floor((currentSales / branch.sales_target) * 100)
+      : 0 ;
 
   const handleTabChange = async (tab: TabKey) => {
     setActiveTab(tab);
@@ -304,36 +304,6 @@ export const StoreHome = ({
                 </TouchableOpacity>
               </View>
             </Card>
-
-            {/* Branch Info */}
-            <Card>
-              <Text className="text-gray-900 text-lg font-bold mb-3">支店情報</Text>
-              <View className="gap-2">
-                <View className="flex-row justify-between">
-                  <Text className="text-gray-500">支店名</Text>
-                  <Text className="text-gray-900 font-medium">{branch.branch_name}</Text>
-                </View>
-                <View className="flex-row justify-between">
-                  <Text className="text-gray-500">支店番号</Text>
-                  <Text className="text-gray-900 font-medium">{branch.branch_code}</Text>
-                </View>
-                <View className="flex-row justify-between">
-                  <Text className="text-gray-500">ステータス</Text>
-                  <Text
-                    className={`font-medium ${
-                      branch.status === 'active' ? 'text-green-600' : 'text-gray-500'
-                    }`}
-                  >
-                    {branch.status === 'active' ? '稼働中' : '停止中'}
-                  </Text>
-                </View>
-              </View>
-            </Card>
-
-            {/* Logout */}
-            <View className="mt-4">
-              <Button title="ログアウト" onPress={handleLogout} variant="danger" size="lg" />
-            </View>
           </View>
         )}
       </ScrollView>
