@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Modal, Button } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { getPendingTransactions, getMenus, saveMenus } from '../../lib/storage';
+import { alertConfirm, alertNotify } from '../../lib/alertUtils';
 import type { Branch, Transaction, TransactionItem, PendingTransaction } from '../../types/database';
 import { MenuSalesSummary } from './MenuSalesSummary';
 
@@ -184,76 +185,70 @@ export const SalesHistory = ({
     fetchTransactions();
   }, [fetchTransactions]);
 
-  const handleCancelTransaction = async (transaction: TransactionWithItems) => {
-    Alert.alert(
+  const handleCancelTransaction = (transaction: TransactionWithItems) => {
+    alertConfirm(
       '取引取消',
       `取引番号: ${transaction.transaction_code}\n合計: ${transaction.total_amount.toLocaleString()}円\n\nこの取引を取消しますか？\n在庫は元に戻されます。`,
-      [
-        { text: 'キャンセル', style: 'cancel' },
-        {
-          text: '取消する',
-          style: 'destructive',
-          onPress: async () => {
-            setCancelling(true);
-            try {
-              const now = new Date().toISOString();
+      async () => {
+        setCancelling(true);
+        try {
+          const now = new Date().toISOString();
 
-              // Restore stock
-              const menus = await getMenus();
-              const updatedMenus = menus.map((menu) => {
-                const item = transaction.items.find((i) => i.menu_id === menu.id);
-                if (item && menu.stock_management) {
-                  return {
-                    ...menu,
-                    stock_quantity: menu.stock_quantity + item.quantity,
-                    updated_at: now,
-                  };
-                }
-                return menu;
-              });
-              await saveMenus(updatedMenus);
-
-              // Update transaction status
-              if (isSupabaseConfigured()) {
-                const { error } = await supabase
-                  .from('transactions')
-                  .update({ status: 'cancelled', cancelled_at: now })
-                  .eq('id', transaction.id);
-
-                if (error) throw error;
-
-                // Update stock in Supabase
-                for (const item of transaction.items) {
-                  const menu = updatedMenus.find((m) => m.id === item.menu_id);
-                  if (menu?.stock_management) {
-                    await supabase
-                      .from('menus')
-                      .update({ stock_quantity: menu.stock_quantity, updated_at: now })
-                      .eq('id', menu.id);
-                  }
-                }
-              }
-
-              // Update local state
-              setTransactions((prev) =>
-                prev.map((t) =>
-                  t.id === transaction.id ? { ...t, status: 'cancelled', cancelled_at: now } : t
-                )
-              );
-
-              setShowDetailModal(false);
-              setSelectedTransaction(null);
-
-              Alert.alert('完了', '取引を取消しました。在庫は元に戻されました。');
-            } catch (error) {
-              console.error('Error cancelling transaction:', error);
-              Alert.alert('エラー', '取引の取消に失敗しました');
-            } finally {
-              setCancelling(false);
+          // Restore stock
+          const menus = await getMenus();
+          const updatedMenus = menus.map((menu) => {
+            const item = transaction.items.find((i) => i.menu_id === menu.id);
+            if (item && menu.stock_management) {
+              return {
+                ...menu,
+                stock_quantity: menu.stock_quantity + item.quantity,
+                updated_at: now,
+              };
             }
-          },
-        },
-      ]
+            return menu;
+          });
+          await saveMenus(updatedMenus);
+
+          // Update transaction status
+          if (isSupabaseConfigured()) {
+            const { error } = await supabase
+              .from('transactions')
+              .update({ status: 'cancelled', cancelled_at: now })
+              .eq('id', transaction.id);
+
+            if (error) throw error;
+
+            // Update stock in Supabase
+            for (const item of transaction.items) {
+              const menu = updatedMenus.find((m) => m.id === item.menu_id);
+              if (menu?.stock_management) {
+                await supabase
+                  .from('menus')
+                  .update({ stock_quantity: menu.stock_quantity, updated_at: now })
+                  .eq('id', menu.id);
+              }
+            }
+          }
+
+          // Update local state
+          setTransactions((prev) =>
+            prev.map((t) =>
+              t.id === transaction.id ? { ...t, status: 'cancelled', cancelled_at: now } : t
+            )
+          );
+
+          setShowDetailModal(false);
+          setSelectedTransaction(null);
+
+          alertNotify('完了', '取引を取消しました。在庫は元に戻されました。');
+        } catch (error) {
+          console.error('Error cancelling transaction:', error);
+          alertNotify('エラー', '取引の取消に失敗しました');
+        } finally {
+          setCancelling(false);
+        }
+      },
+      '取消する',
     );
   };
 
@@ -293,9 +288,17 @@ export const SalesHistory = ({
               <Text className={`text-lg font-bold ${isCancelled ? 'text-gray-400 line-through' : 'text-blue-600'}`}>
                 {item.total_amount.toLocaleString()}円
               </Text>
-              <View className={`px-2 py-0.5 rounded mt-1 ${item.payment_method === 'paypay' ? 'bg-blue-100' : 'bg-yellow-100'}`}>
-                <Text className={`text-xs ${item.payment_method === 'paypay' ? 'text-blue-700' : 'text-yellow-700'}`}>
-                  {item.payment_method === 'paypay' ? 'PayPay' : '金券'}
+              <View className={`px-2 py-0.5 rounded mt-1 ${
+                item.payment_method === 'paypay' ? 'bg-blue-100'
+                  : item.payment_method === 'cash' ? 'bg-green-100'
+                  : 'bg-yellow-100'
+              }`}>
+                <Text className={`text-xs ${
+                  item.payment_method === 'paypay' ? 'text-blue-700'
+                    : item.payment_method === 'cash' ? 'text-green-700'
+                    : 'text-yellow-700'
+                }`}>
+                  {item.payment_method === 'paypay' ? 'キャッシュレス' : item.payment_method === 'cash' ? '現金' : '金券'}
                 </Text>
               </View>
             </View>
@@ -407,7 +410,7 @@ export const SalesHistory = ({
               <View className="flex-1">
                 <Text className="text-gray-500 text-sm">支払い方法</Text>
                 <Text className="text-gray-900">
-                  {selectedTransaction.payment_method === 'paypay' ? 'PayPay' : '金券'}
+                  {selectedTransaction.payment_method === 'paypay' ? 'キャッシュレス' : selectedTransaction.payment_method === 'cash' ? '現金' : '金券'}
                 </Text>
               </View>
             </View>

@@ -32,8 +32,6 @@ export interface Transaction {
   transaction_code: string;
   total_amount: number;
   payment_method: PaymentMethod;
-  received_amount?: number; // 現金受取額
-  change_amount?: number;   // お釣り
   status: 'completed' | 'cancelled';
   fulfillment_status: FulfillmentStatus;
   created_at: string;
@@ -58,8 +56,6 @@ export interface PendingTransaction {
   transaction_code: string;
   total_amount: number;
   payment_method: PaymentMethod;
-  received_amount?: number;
-  change_amount?: number;
   items: Omit<TransactionItem, 'id' | 'transaction_id'>[];
   created_at: string;
   synced: boolean;
@@ -68,10 +64,17 @@ export interface PendingTransaction {
 // Store settings
 export type PaymentMode = 'cashless' | 'cash';
 
+export interface PaymentMethodSettings {
+  cash: boolean;
+  cashless: boolean;
+  voucher: boolean;
+}
+
 export interface StoreSettings {
   payment_mode: PaymentMode;
+  payment_methods: PaymentMethodSettings;
   order_board_enabled: boolean;
-  sub_screen_mode: boolean; 
+  sub_screen_mode: boolean;
 }
 
 export interface LocalStorage {

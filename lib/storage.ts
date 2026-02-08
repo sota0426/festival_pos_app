@@ -70,6 +70,22 @@ export const markTransactionSynced = async (transactionId: string): Promise<void
   await AsyncStorage.setItem(STORAGE_KEYS.PENDING_TRANSACTIONS, JSON.stringify(updatedTransactions));
 };
 
+// Served transaction IDs storage (提供完了した注文のIDを記録)
+const SERVED_IDS_KEY = '@festival_pos/served_transaction_ids';
+
+export const addServedTransactionId = async (transactionId: string): Promise<void> => {
+  const ids = await getServedTransactionIds();
+  if (!ids.includes(transactionId)) {
+    ids.push(transactionId);
+    await AsyncStorage.setItem(SERVED_IDS_KEY, JSON.stringify(ids));
+  }
+};
+
+export const getServedTransactionIds = async (): Promise<string[]> => {
+  const data = await AsyncStorage.getItem(SERVED_IDS_KEY);
+  return data ? JSON.parse(data) : [];
+};
+
 // Sync time storage
 export const saveLastSyncTime = async (): Promise<void> => {
   await AsyncStorage.setItem(STORAGE_KEYS.LAST_SYNC_TIME, new Date().toISOString());
@@ -124,17 +140,25 @@ export const saveStoreSettings = async (settings: StoreSettings): Promise<void> 
   await AsyncStorage.setItem(STORAGE_KEYS.STORE_SETTINGS, JSON.stringify(settings));
 };
 
+const DEFAULT_PAYMENT_METHODS = { cash: false, cashless: true, voucher: true };
+
 export const getStoreSettings = async (): Promise<StoreSettings> => {
   const data = await AsyncStorage.getItem(STORAGE_KEYS.STORE_SETTINGS);
-  return data ? { 
-    payment_mode: 'cashless', 
-    order_board_enabled: false, 
-    ...JSON.parse(data) 
-  } : { 
-    payment_mode: 'cashless', 
-    order_board_enabled: false,
-    sub_screen_mode:false,
+  if (data) {
+    const parsed = JSON.parse(data);
+    return {
+      payment_mode: parsed.payment_mode ?? 'cashless',
+      payment_methods: { ...DEFAULT_PAYMENT_METHODS, ...parsed.payment_methods },
+      order_board_enabled: parsed.order_board_enabled ?? false,
+      sub_screen_mode: parsed.sub_screen_mode ?? false,
+    };
   }
+  return {
+    payment_mode: 'cashless',
+    payment_methods: DEFAULT_PAYMENT_METHODS,
+    order_board_enabled: false,
+    sub_screen_mode: false,
+  };
 };
 
 // Order counter storage (sequential order numbers 01-99, resets daily)
