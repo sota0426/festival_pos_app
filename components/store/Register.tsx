@@ -462,69 +462,72 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       </ScrollView>
 
       {/* Total & Payment */}
-      <View className="p-4 border-t border-gray-200 bg-gray-50">
-        <View className="flex-row items-center justify-between mb-4">
-          <Text className="text-lg font-semibold text-gray-700">合計</Text>
-          <Text className="text-3xl font-bold text-blue-600">
-            {totalAmount.toLocaleString()}円
-          </Text>
-        </View>
+      
+      <View 
+        className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200 bg-gray-50"
+        style={{ paddingBottom: 16 }}        >
 
-        <View className="gap-3 mx-2">
-          <View className='flex flex-row '>
+              <View className="flex-row items-center justify-between mb-4">
+                <Text className="text-lg font-semibold text-gray-700">合計</Text>
+                <Text className="text-3xl font-bold text-blue-600">
+                  {totalAmount.toLocaleString()}円
+                </Text>
+              </View>
 
-          {paymentMethods.cash && (
-            <TouchableOpacity
-              onPress={handleCashPayment}
-              disabled={cart.length === 0 || processing}
-              activeOpacity={0.8}
-              className={`py-4 mr-2 rounded-xl items-center flex-1 ${
-                cart.length === 0 || processing ? 'bg-gray-300' : 'bg-green-500'
-              }`}
-            >
-              <Text className="text-white text-lg font-bold">現金</Text>
-            </TouchableOpacity>
-          )}
+              <View className="gap-3 mx-2 flex-col">
+                {/** 各種支払いボタン */}
+                <View className='flex flex-row '>
+                  {paymentMethods.cash && (
+                    <TouchableOpacity
+                      onPress={handleCashPayment}
+                      disabled={cart.length === 0 || processing}
+                      activeOpacity={0.8}
+                      className={`py-4 mr-2 rounded-xl items-center flex-1 ${
+                        cart.length === 0 || processing ? 'bg-gray-300' : 'bg-green-500'
+                      }`}
+                    >
+                      <Text className="text-white text-lg font-bold">現金</Text>
+                    </TouchableOpacity>
+                  )}
+                  {paymentMethods.cashless && (
+                    <TouchableOpacity
+                      onPress={() => processPayment('paypay')}
+                      disabled={cart.length === 0 || processing}
+                      activeOpacity={0.8}
+                      className={`py-4 mr-2 rounded-xl items-center flex-1 ${
+                        cart.length === 0 || processing ? 'bg-gray-300' : 'bg-blue-500'
+                      }`}
+                    >
+                      <Text className="text-white text-lg font-bold">QRコード</Text>
+                    </TouchableOpacity>
+                  )}
+                  {paymentMethods.voucher && (
+                    <TouchableOpacity
+                      onPress={() => processPayment('paypay')}
+                      disabled={cart.length === 0 || processing}
+                      activeOpacity={0.8}
+                      className={`py-4 mr-2 rounded-xl items-center flex-1 ${
+                        cart.length === 0 || processing ? 'bg-gray-300' : 'bg-orange-500'
+                      }`}
+                    >
+                      <Text className="text-white text-lg font-bold">金券</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
 
-          {paymentMethods.cashless && (
-            <TouchableOpacity
-              onPress={() => processPayment('paypay')}
-              disabled={cart.length === 0 || processing}
-              activeOpacity={0.8}
-              className={`py-4 mr-2 rounded-xl items-center flex-1 ${
-                cart.length === 0 || processing ? 'bg-gray-300' : 'bg-blue-500'
-              }`}
-            >
-              <Text className="text-white text-lg font-bold">キャッシュレス</Text>
-            </TouchableOpacity>
-          )}
+                  {/**キャンセルボタン */}
+                <TouchableOpacity
+                  onPress={() => setShowClearConfirm(true)}
+                  disabled={cart.length === 0 || processing}
+                  activeOpacity={0.8}
+                  className={`py-4 mr-2 rounded-xl items-center flex-1 ${
+                    cart.length === 0 || processing ? 'bg-gray-300' : 'bg-gray-500'
+                  }`}
+                >
+                  <Text className="text-white text-lg font-bold">キャンセル</Text>
+                </TouchableOpacity>
 
-          {paymentMethods.voucher && (
-            <TouchableOpacity
-              onPress={() => processPayment('paypay')}
-              disabled={cart.length === 0 || processing}
-              activeOpacity={0.8}
-              className={`py-4 mr-2 rounded-xl items-center flex-1 ${
-                cart.length === 0 || processing ? 'bg-gray-300' : 'bg-orange-500'
-              }`}
-            >
-              <Text className="text-white text-lg font-bold">金券</Text>
-            </TouchableOpacity>
-          )}
-
-          </View>
-
-            <TouchableOpacity
-              onPress={() => setShowClearConfirm(true)}
-              disabled={cart.length === 0 || processing}
-              activeOpacity={0.8}
-              className={`py-4 mr-2 rounded-xl items-center flex-1 ${
-                cart.length === 0 || processing ? 'bg-gray-300' : 'bg-gray-500'
-              }`}
-            >
-              <Text className="text-white text-lg font-bold">キャンセル</Text>
-            </TouchableOpacity>
-        </View>
+              </View>
       </View>
     </View>
   );
