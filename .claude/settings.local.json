@@ -9,7 +9,9 @@
       "Bash(git stash:*)",
       "Bash(npx expo install:*)",
       "Bash(npm ls:*)",
-      "Bash(npm view:*)"
+      "Bash(npm view:*)",
+      "Bash(npx expo typescript:check:*)",
+      "Bash(npx:*)"
     ]
   }
 }

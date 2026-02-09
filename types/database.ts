@@ -91,7 +91,7 @@ export interface OrderBoardItem {
 }
 
 // Budget management types
-export type ExpenseCategory = 'material' | 'decoration' | 'other';
+export type ExpenseCategory = 'material' | 'decoration' | 'equipment' | 'other';
 export type ExpensePaymentMethod = 'cash' | 'paypay' | 'amazon';
 
 export interface BudgetExpense {

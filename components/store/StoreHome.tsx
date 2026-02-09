@@ -7,7 +7,7 @@ import { alertConfirm } from '../../lib/alertUtils';
 import type { Branch, PaymentMethodSettings } from '../../types/database';
 import { isSupabaseConfigured, supabase } from 'lib/supabase';
 
-type TabKey = 'main' | 'sub' | 'settings';
+type TabKey = 'main' | 'sub' | 'budget' | 'settings';
 
 interface StoreHomeProps {
   branch: Branch;
@@ -23,6 +23,7 @@ interface StoreHomeProps {
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'main', label: 'メイン' },
   { key: 'sub', label: 'サブ' },
+  { key: 'budget', label: '予算管理' },
   { key: 'settings', label: '設定' },
 ];
 
@@ -179,12 +180,6 @@ export const StoreHome = ({
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity onPress={onNavigateToBudget} activeOpacity={0.8}>
-              <Card className="bg-indigo-500 p-6">
-                <Text className="text-white text-xl font-bold text-center">予算管理</Text>
-                <Text className="text-indigo-100 text-center mt-1 text-sm">支出記録・損益分岐点・報告書</Text>
-              </Card>
-            </TouchableOpacity>
           </View>
         )}
 
@@ -201,6 +196,17 @@ export const StoreHome = ({
               <Card className="bg-amber-400 p-8">
                 <Text className="text-white text-3xl font-bold text-center">注文受付</Text>
                 <Text className="text-amber-100 text-center mt-2">別端末で注文を表示・管理</Text>
+              </Card>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {activeTab === 'budget' && (
+          <View className="flex-1 gap-4">
+            <TouchableOpacity onPress={onNavigateToBudget} activeOpacity={0.8}>
+              <Card className="bg-indigo-500 p-8">
+                <Text className="text-white text-3xl font-bold text-center">予算管理</Text>
+                <Text className="text-indigo-100 text-center mt-2">支出記録・損益分岐点・報告書</Text>
               </Card>
             </TouchableOpacity>
           </View>
