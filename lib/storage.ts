@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Branch, Menu, PendingTransaction, LocalStorage, PendingVisitorCount, StoreSettings, PaymentMode } from '../types/database';
+import type { Branch, Menu, PendingTransaction, LocalStorage, PendingVisitorCount, StoreSettings, PaymentMode, BudgetExpense, BudgetSettings } from '../types/database';
 
 const STORAGE_KEYS = {
   BRANCH: '@festival_pos/branch',
@@ -10,6 +10,8 @@ const STORAGE_KEYS = {
   HQ_AUTH: '@festival_pos/hq_auth',
   STORE_SETTINGS: '@festival_pos/store_settings',
   ORDER_COUNTER: '@festival_pos/order_counter',
+  BUDGET_SETTINGS: '@festival_pos/budget_settings',
+  BUDGET_EXPENSES: '@festival_pos/budget_expenses',
 };
 
 // Branch storage
@@ -191,6 +193,38 @@ export const clearAllData = async (): Promise<void> => {
     STORAGE_KEYS.STORE_SETTINGS,
     STORAGE_KEYS.ORDER_COUNTER,
   ]);
+};
+
+// Budget settings storage
+export const saveBudgetSettings = async (settings: BudgetSettings): Promise<void> => {
+  await AsyncStorage.setItem(STORAGE_KEYS.BUDGET_SETTINGS, JSON.stringify(settings));
+};
+
+export const getBudgetSettings = async (branchId: string): Promise<BudgetSettings> => {
+  const data = await AsyncStorage.getItem(STORAGE_KEYS.BUDGET_SETTINGS);
+  if (data) {
+    const parsed = JSON.parse(data) as BudgetSettings;
+    if (parsed.branch_id === branchId) return parsed;
+  }
+  return { branch_id: branchId, initial_budget: 0, target_sales: 0 };
+};
+
+// Budget expenses storage
+export const saveBudgetExpense = async (expense: BudgetExpense): Promise<void> => {
+  const expenses = await getBudgetExpenses();
+  expenses.push(expense);
+  await AsyncStorage.setItem(STORAGE_KEYS.BUDGET_EXPENSES, JSON.stringify(expenses));
+};
+
+export const getBudgetExpenses = async (): Promise<BudgetExpense[]> => {
+  const data = await AsyncStorage.getItem(STORAGE_KEYS.BUDGET_EXPENSES);
+  return data ? JSON.parse(data) : [];
+};
+
+export const deleteBudgetExpense = async (expenseId: string): Promise<void> => {
+  const expenses = await getBudgetExpenses();
+  const filtered = expenses.filter((e) => e.id !== expenseId);
+  await AsyncStorage.setItem(STORAGE_KEYS.BUDGET_EXPENSES, JSON.stringify(filtered));
 };
 
 // Get all local storage data

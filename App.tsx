@@ -6,7 +6,7 @@ import './global.css';
 
 import { Home } from './components/Home';
 import { HQLogin, HQDashboard, BranchManagement } from './components/hq';
-import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, VisitorCounter, OrderBoard } from './components/store';
+import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, VisitorCounter, OrderBoard, BudgetManager } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 import { HQHome } from 'components/hq/HQHome';
@@ -24,7 +24,8 @@ type Screen =
   | 'store_register'
   | 'store_history'
   | 'store_counter'
-  | 'store_order_board';
+  | 'store_order_board'
+  | 'store_budget';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('home');
@@ -107,6 +108,7 @@ export default function App() {
             onNavigateToHistory={() => setCurrentScreen('store_history')}
             onNavigateToCounter={() => setCurrentScreen('store_counter')}
             onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
+            onNavigateToBudget={() => setCurrentScreen('store_budget')}
             onLogout={handleBranchLogout}
           />
         );
@@ -167,6 +169,18 @@ export default function App() {
         }
         return (
           <OrderBoard
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+          />
+        );
+
+      case 'store_budget':
+        if (!currentBranch) {
+          setCurrentScreen('store_login');
+          return null;
+        }
+        return (
+          <BudgetManager
             branch={currentBranch}
             onBack={() => setCurrentScreen('store_home')}
           />

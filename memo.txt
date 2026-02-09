@@ -1,0 +1,5 @@
+PS C:\Users\user\Desktop\festival_pos_app> node -v
+v22.21.0
+PS C:\Users\user\Desktop\festival_pos_app> nvm -v
+1.2.2
+PS C:\Users\user\Desktop\festival_pos_app> 

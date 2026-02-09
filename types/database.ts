@@ -90,6 +90,36 @@ export interface OrderBoardItem {
   items: TransactionItem[];
 }
 
+// Budget management types
+export type ExpenseCategory = 'material' | 'decoration' | 'other';
+export type ExpensePaymentMethod = 'cash' | 'paypay' | 'amazon';
+
+export interface BudgetExpense {
+  id: string;
+  branch_id: string;
+  date: string;
+  category: ExpenseCategory;
+  amount: number;
+  payment_method: ExpensePaymentMethod;
+  memo: string;
+  receipt_image: string | null;
+  created_at: string;
+  synced: boolean;
+}
+
+export interface BudgetSettings {
+  branch_id: string;
+  initial_budget: number;
+  target_sales: number;
+}
+
+export interface BreakevenParams {
+  product_name: string;
+  selling_price: number;
+  variable_cost: number;
+  fixed_cost: number;
+}
+
 // Cart types for register screen
 export interface CartItem {
   menu_id: string;

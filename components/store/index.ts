@@ -5,3 +5,4 @@ export { Register } from './Register';
 export { SalesHistory } from './SalesHistory';
 export { VisitorCounter } from './VisitorCounter';
 export { OrderBoard } from './OrderBoard';
+export { BudgetManager } from './BudgetManager';

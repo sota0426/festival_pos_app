@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, useWindowDimensions, PanResponder } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, PanResponder } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Card, Header, Modal } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings } from '../../lib/storage';
+import { alertNotify, alertConfirm } from '../../lib/alertUtils';
 import type { Branch, Menu, CartItem, PendingTransaction, PaymentMethodSettings } from '../../types/database';
 
 interface RegisterProps {
@@ -75,7 +76,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   const addToCart = (menu: Menu) => {
     // Check stock if stock management is enabled
     if (menu.stock_management && menu.stock_quantity <= 0) {
-      Alert.alert('在庫切れ', `「${menu.menu_name}」は在庫切れです`);
+      alertNotify('在庫切れ', `「${menu.menu_name}」は在庫切れです`);
       return;
     }
 
@@ -84,7 +85,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
     const currentQty = existingItem ? existingItem.quantity : 0;
 
     if (menu.stock_management && currentQty >= menu.stock_quantity) {
-      Alert.alert('在庫不足', `「${menu.menu_name}」の在庫が足りません（残り${menu.stock_quantity}個）`);
+      alertNotify('在庫不足', `「${menu.menu_name}」の在庫が足りません（残り${menu.stock_quantity}個）`);
       return;
     }
 
@@ -128,7 +129,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
       // Check stock
       if (menu?.stock_management && newQty > menu.stock_quantity) {
-        Alert.alert('在庫不足', `「${menu.menu_name}」の在庫が足りません（残り${menu.stock_quantity}個）`);
+        alertNotify('在庫不足', `「${menu.menu_name}」の在庫が足りません（残り${menu.stock_quantity}個）`);
         return prevCart;
       }
 
@@ -147,13 +148,10 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   const clearCart = () => {
     if (cart.length === 0) return;
 
-    Alert.alert('確認', '注文内容をクリアしますか？', [
-      { text: 'キャンセル', style: 'cancel' },
-      { text: 'クリア', style: 'destructive', onPress: () => {
-        setCart([]);
-        setShowCart(false);
-      }},
-    ]);
+    alertConfirm('確認', '注文内容をクリアしますか？', () => {
+      setCart([]);
+      setShowCart(false);
+    }, 'クリア');
   };
 
 
@@ -172,7 +170,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
     cashReceived?: number,
   ) => {
     if (cart.length === 0) {
-      Alert.alert('エラー', '商品を選択してください');
+      alertNotify('エラー', '商品を選択してください');
       return;
     }
 
@@ -284,14 +282,13 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
           ? `\nお預かり: ${cashReceived.toLocaleString()}円\nお釣り: ${changeAmount!.toLocaleString()}円`
           : '';
 
-      Alert.alert(
+      alertNotify(
         '会計完了',
         `注文番号: ${orderNum}\n合計: ${totalAmount.toLocaleString()}円\n支払い方法: ${methodLabel}${cashInfo}`,
-        [{ text: 'OK' }],
       );
     } catch (error) {
       console.error('Error processing payment:', error);
-      Alert.alert('エラー', '会計処理に失敗しました');
+      alertNotify('エラー', '会計処理に失敗しました');
     } finally {
       setProcessing(false);
     }
@@ -299,7 +296,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
   const handleCashPayment = () => {
     if (cart.length === 0) {
-      Alert.alert('エラー', '商品を選択してください');
+      alertNotify('エラー', '商品を選択してください');
       return;
     }
     setReceivedAmount('');

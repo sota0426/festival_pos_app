@@ -226,14 +226,14 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
         </View>
       ) : (
         <ScrollView className="flex-1" contentContainerStyle={{ padding: 8 }}>
-          <View className="flex-row flex-wrap">
+          <View className="flex-wrap ">
             {orders.map((order) => {
               const elapsed = getElapsedMinutes(order.transaction.created_at);
               const urgency = getUrgencyStyle(elapsed);
               const orderNumber = order.transaction.transaction_code.split('-').pop();
 
               return (
-                <View key={order.transaction.id} className={isMobile ? 'w-full p-1' : 'w-1/2 p-1'}>
+                <View key={order.transaction.id} className={isMobile ? 'w-full p-4' : 'w-1/2 p-4'}>
                   <Card className={`border-l-4 ${urgency.border}`}>
                     {/* Header: order number + elapsed time */}
                     <View className="flex-row justify-between items-center mb-1">
@@ -250,16 +250,18 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
                       {order.items.map((item) => (
                         <View
                           key={item.id}
-                          className="flex-row justify-between items-center py-1.5 border-b border-gray-100"
+                          className="flex-row justify-center items-center py-1.5 border-b border-gray-100"
                         >
-                          <Text className="text-gray-800 text-base font-medium flex-1">
+                          <Text className="text-gray-800 text-base font-medium ">
                             {item.menu_name}
                           </Text>
+                          
                           <View className="bg-blue-100 rounded px-2 py-0.5 ml-2">
                             <Text className="text-blue-800 font-bold text-base">
-                              x{item.quantity}
+                              {item.quantity} 個
                             </Text>
                           </View>
+
                         </View>
                       ))}
                     </View>

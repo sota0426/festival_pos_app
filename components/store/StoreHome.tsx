@@ -16,6 +16,7 @@ interface StoreHomeProps {
   onNavigateToHistory: () => void;
   onNavigateToCounter: () => void;
   onNavigateToOrderBoard: () => void;
+  onNavigateToBudget: () => void;
   onLogout: () => void;
 }
 
@@ -32,6 +33,7 @@ export const StoreHome = ({
   onNavigateToHistory,
   onNavigateToCounter,
   onNavigateToOrderBoard,
+  onNavigateToBudget,
   onLogout,
 }: StoreHomeProps) => {
   const [activeTab, setActiveTab] = useState<TabKey>('main');
@@ -176,6 +178,13 @@ export const StoreHome = ({
                 </Card>
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity onPress={onNavigateToBudget} activeOpacity={0.8}>
+              <Card className="bg-indigo-500 p-6">
+                <Text className="text-white text-xl font-bold text-center">予算管理</Text>
+                <Text className="text-indigo-100 text-center mt-1 text-sm">支出記録・損益分岐点・報告書</Text>
+              </Card>
+            </TouchableOpacity>
           </View>
         )}
 
