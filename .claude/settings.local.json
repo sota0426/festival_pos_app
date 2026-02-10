@@ -11,7 +11,9 @@
       "Bash(npm ls:*)",
       "Bash(npm view:*)",
       "Bash(npx expo typescript:check:*)",
-      "Bash(npx:*)"
+      "Bash(npx:*)",
+      "Bash(wc:*)",
+      "Bash(git -C /Users/iimorisouta/Desktop/festival_pos_app log --oneline -10)"
     ]
   }
 }

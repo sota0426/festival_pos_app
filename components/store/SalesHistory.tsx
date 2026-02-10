@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl, ActivityIndicator, Platform, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Card, Header, Modal, Button, Input } from '../common';
+import { Card, Header, Modal, Button } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { getPendingTransactions, getMenus, saveMenus, clearAllPendingTransactions, verifyAdminPassword } from '../../lib/storage';
+import { getPendingTransactions, getMenus, saveMenus } from '../../lib/storage';
 import { alertConfirm, alertNotify } from '../../lib/alertUtils';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -30,11 +30,6 @@ export const SalesHistory = ({
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [view, setView] = useState<'history' | 'menuSales'>("history");
-  const [showResetModal, setShowResetModal] = useState(false);
-  const [adminPasswordInput, setAdminPasswordInput] = useState('');
-  const [resetError, setResetError] = useState('');
-  const [resetting, setResetting] = useState(false);
-  const [showActionsMenu, setShowActionsMenu] = useState(false);
 
 
   const fetchTransactions = useCallback(async () => {
@@ -259,59 +254,6 @@ export const SalesHistory = ({
     );
   };
 
-  // Reset all sales data
-  const handleResetSales = async () => {
-    if (!adminPasswordInput.trim()) {
-      setResetError('管理者パスワードを入力してください');
-      return;
-    }
-
-    const isValid = await verifyAdminPassword(adminPasswordInput);
-    if (!isValid) {
-      setResetError('パスワードが正しくありません');
-      return;
-    }
-
-    setResetting(true);
-    try {
-      // Clear local pending transactions for this branch
-      await clearAllPendingTransactions(branch.id);
-
-      // Clear from Supabase if configured
-      if (isSupabaseConfigured()) {
-        // Delete transaction_items first (foreign key)
-        const { data: transData } = await supabase
-          .from('transactions')
-          .select('id')
-          .eq('branch_id', branch.id);
-
-        if (transData && transData.length > 0) {
-          const transIds = transData.map((t) => t.id);
-          await supabase
-            .from('transaction_items')
-            .delete()
-            .in('transaction_id', transIds);
-
-          await supabase
-            .from('transactions')
-            .delete()
-            .eq('branch_id', branch.id);
-        }
-      }
-
-      setTransactions([]);
-      setShowResetModal(false);
-      setAdminPasswordInput('');
-      setResetError('');
-      alertNotify('完了', '全ての売上データを削除しました');
-    } catch (error) {
-      console.error('Error resetting sales:', error);
-      alertNotify('エラー', '売上データの削除に失敗しました');
-    } finally {
-      setResetting(false);
-    }
-  };
-
   // CSV export
   const generateCSV = (): string => {
     const completedTrans = transactions.filter((t) => t.status === 'completed');
@@ -506,8 +448,8 @@ export const SalesHistory = ({
               />
             )}
             <Button
-              title="..."
-              onPress={() => setShowActionsMenu(true)}
+              title="CSV"
+              onPress={handleExportCSV}
               size="sm"
               variant="secondary"
             />
@@ -624,105 +566,6 @@ export const SalesHistory = ({
             )}
           </>
         )}
-      </Modal>
-
-      {/* Actions Menu Modal */}
-      <Modal
-        visible={showActionsMenu}
-        onClose={() => setShowActionsMenu(false)}
-        title="操作メニュー"
-      >
-        <View className="gap-3">
-          <TouchableOpacity
-            onPress={() => {
-              setShowActionsMenu(false);
-              handleExportCSV();
-            }}
-            className="py-4 px-4 bg-blue-50 rounded-xl flex-row items-center"
-          >
-            <View className="flex-1">
-              <Text className="text-blue-700 font-bold text-base">CSV出力</Text>
-              <Text className="text-blue-500 text-xs mt-0.5">売上データをCSVファイルで出力します</Text>
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => {
-              setShowActionsMenu(false);
-              setAdminPasswordInput('');
-              setResetError('');
-              setShowResetModal(true);
-            }}
-            className="py-4 px-4 bg-red-50 rounded-xl flex-row items-center"
-          >
-            <View className="flex-1">
-              <Text className="text-red-700 font-bold text-base">売上データ全削除</Text>
-              <Text className="text-red-500 text-xs mt-0.5">管理者パスワードが必要です</Text>
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => setShowActionsMenu(false)}
-            className="py-3 items-center"
-          >
-            <Text className="text-gray-500">閉じる</Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
-
-      {/* Reset Sales Modal */}
-      <Modal
-        visible={showResetModal}
-        onClose={() => {
-          setShowResetModal(false);
-          setAdminPasswordInput('');
-          setResetError('');
-        }}
-        title="売上データ全削除"
-      >
-        <View className="bg-red-50 p-3 rounded-lg mb-4">
-          <Text className="text-red-700 font-medium text-center">
-            この操作は取り消せません
-          </Text>
-          <Text className="text-red-600 text-sm text-center mt-1">
-            全{completedTransactions.length}件の売上データが削除されます
-          </Text>
-        </View>
-
-        <Input
-          label="管理者パスワード"
-          value={adminPasswordInput}
-          onChangeText={(text) => {
-            setAdminPasswordInput(text);
-            setResetError('');
-          }}
-          placeholder="パスワードを入力"
-          secureTextEntry
-          error={resetError}
-        />
-
-        <View className="flex-row gap-3 mt-2">
-          <View className="flex-1">
-            <Button
-              title="キャンセル"
-              onPress={() => {
-                setShowResetModal(false);
-                setAdminPasswordInput('');
-                setResetError('');
-              }}
-              variant="secondary"
-            />
-          </View>
-          <View className="flex-1">
-            <Button
-              title="全削除"
-              onPress={handleResetSales}
-              variant="danger"
-              loading={resetting}
-              disabled={!adminPasswordInput.trim()}
-            />
-          </View>
-        </View>
       </Modal>
 
     </SafeAreaView>

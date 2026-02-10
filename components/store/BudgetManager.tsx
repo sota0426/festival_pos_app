@@ -826,7 +826,7 @@ export const BudgetManager = ({ branch, onBack }: BudgetManagerProps) => {
               </View>
               {/* Hint for selected category */}
               <TouchableOpacity onPress={() => openCategoryHint(expCategory)} className="mt-1 flex-row items-center">
-                <Text className="text-indigo-500 text-xs">💡 {CATEGORY_HINTS[expCategory].substring(0, 30)}...</Text>
+                <Text className="text-indigo-500 text-xs">💡  {CATEGORY_LABELS[expCategory]}の具体例 → 　{CATEGORY_HINTS[expCategory].substring(0, 30)}</Text>
               </TouchableOpacity>
             </View>
 

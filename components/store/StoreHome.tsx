@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button, Input, Modal } from '../common';
-import { clearBranch, getPendingTransactions, getStoreSettings, saveStoreSettings, getAdminPassword, saveAdminPassword, verifyAdminPassword } from '../../lib/storage';
+import { clearBranch, getPendingTransactions, getStoreSettings, saveStoreSettings, getAdminPassword, saveAdminPassword, verifyAdminPassword, clearAllPendingTransactions } from '../../lib/storage';
 import { alertConfirm, alertNotify } from '../../lib/alertUtils';
 import type { Branch, PaymentMethodSettings } from '../../types/database';
 import { isSupabaseConfigured, supabase } from 'lib/supabase';
@@ -21,8 +21,8 @@ interface StoreHomeProps {
 }
 
 const TABS: { key: TabKey; label: string }[] = [
-  { key: 'main', label: 'メイン' },
-  { key: 'sub', label: 'サブ' },
+  { key: 'main', label: 'メイン画面' },
+  { key: 'sub', label: 'サブ画面' },
   { key: 'budget', label: '予算管理' },
   { key: 'settings', label: '設定' },
 ];
@@ -46,11 +46,14 @@ export const StoreHome = ({
     voucher: true,
   });
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [resetError, setResetError] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -121,17 +124,12 @@ export const StoreHome = ({
   };
 
   const resetPasswordForm = () => {
-    setCurrentPassword('');
     setNewPassword('');
     setConfirmPassword('');
     setPasswordError('');
   };
 
   const handleChangePassword = async () => {
-    if (!currentPassword.trim()) {
-      setPasswordError('現在のパスワードを入力してください');
-      return;
-    }
     if (!newPassword.trim()) {
       setPasswordError('新しいパスワードを入力してください');
       return;
@@ -147,13 +145,6 @@ export const StoreHome = ({
 
     setSavingPassword(true);
     try {
-      const isValid = await verifyAdminPassword(currentPassword);
-      if (!isValid) {
-        setPasswordError('現在のパスワードが正しくありません');
-        setSavingPassword(false);
-        return;
-      }
-
       await saveAdminPassword(newPassword);
       setShowPasswordModal(false);
       resetPasswordForm();
@@ -164,6 +155,66 @@ export const StoreHome = ({
     } finally {
       setSavingPassword(false);
     }
+  };
+
+  const executeResetSales = async () => {
+    setResetting(true);
+    try {
+      // Delete from Supabase if configured
+      if (isSupabaseConfigured()) {
+        const { error: itemsError } = await supabase
+          .from('transaction_items')
+          .delete()
+          .in(
+            'transaction_id',
+            (await supabase.from('transactions').select('id').eq('branch_id', branch.id)).data?.map((t) => t.id) ?? []
+          );
+        if (itemsError) console.error('Error deleting transaction items:', itemsError);
+
+        const { error: transError } = await supabase
+          .from('transactions')
+          .delete()
+          .eq('branch_id', branch.id);
+        if (transError) console.error('Error deleting transactions:', transError);
+      }
+
+      // Delete local pending transactions
+      await clearAllPendingTransactions(branch.id);
+
+      // Reset current sales display
+      setCurrentSales(0);
+
+      setShowResetModal(false);
+      setAdminPasswordInput('');
+      setResetError('');
+      alertNotify('完了', '売上データを全件削除しました');
+    } catch (error) {
+      console.error('Error resetting sales:', error);
+      setResetError('売上データの削除に失敗しました');
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const handleResetSales = async () => {
+    if (!adminPasswordInput.trim()) {
+      setResetError('管理者パスワードを入力してください');
+      return;
+    }
+
+    const isValid = await verifyAdminPassword(adminPasswordInput);
+    if (!isValid) {
+      setResetError('パスワードが正しくありません');
+      return;
+    }
+
+    // Final confirmation
+    alertConfirm(
+      '最終確認',
+      'この操作は取り消せません。本当に売上データを全件削除しますか？',
+      executeResetSales,
+      '削除する',
+    );
   };
 
   const handleLogout = () => {
@@ -386,6 +437,23 @@ export const StoreHome = ({
                 variant="secondary"
               />
             </Card>
+
+            {/* Reset Sales Data */}
+            <Card>
+              <Text className="text-gray-900 text-lg font-bold mb-3">売上データ全削除</Text>
+              <Text className="text-gray-500 text-sm mb-3">
+                この店舗の売上データを全件削除します。この操作は取り消せません。
+              </Text>
+              <Button
+                title="売上データを全削除"
+                onPress={() => {
+                  setAdminPasswordInput('');
+                  setResetError('');
+                  setShowResetModal(true);
+                }}
+                variant="danger"
+              />
+            </Card>
           </View>
         )}
       </ScrollView>
@@ -400,16 +468,6 @@ export const StoreHome = ({
         title="管理者パスワード変更"
       >
         <Input
-          label="現在のパスワード"
-          value={currentPassword}
-          onChangeText={(text) => {
-            setCurrentPassword(text);
-            setPasswordError('');
-          }}
-          placeholder="現在のパスワード"
-          secureTextEntry
-        />
-        <Input
           label="新しいパスワード"
           value={newPassword}
           onChangeText={(text) => {
@@ -417,7 +475,6 @@ export const StoreHome = ({
             setPasswordError('');
           }}
           placeholder="4文字以上"
-          secureTextEntry
         />
         <Input
           label="新しいパスワード（確認）"
@@ -427,7 +484,6 @@ export const StoreHome = ({
             setPasswordError('');
           }}
           placeholder="もう一度入力"
-          secureTextEntry
           error={passwordError}
         />
         <View className="flex-row gap-3 mt-2">
@@ -446,7 +502,60 @@ export const StoreHome = ({
               title="変更"
               onPress={handleChangePassword}
               loading={savingPassword}
-              disabled={!currentPassword.trim() || !newPassword.trim() || !confirmPassword.trim()}
+              disabled={!newPassword.trim() || !confirmPassword.trim()}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Reset Sales Modal */}
+      <Modal
+        visible={showResetModal}
+        onClose={() => {
+          setShowResetModal(false);
+          setAdminPasswordInput('');
+          setResetError('');
+        }}
+        title="売上データ全削除"
+      >
+        <View className="bg-red-50 p-3 rounded-lg mb-4">
+          <Text className="text-red-700 text-sm font-medium text-center">
+            この操作は取り消せません
+          </Text>
+          <Text className="text-red-600 text-xs text-center mt-1">
+            全ての売上データが完全に削除されます
+          </Text>
+        </View>
+        <Input
+          label="管理者パスワード"
+          value={adminPasswordInput}
+          onChangeText={(text) => {
+            setAdminPasswordInput(text);
+            setResetError('');
+          }}
+          placeholder="パスワードを入力（デフォルト: 0000）"
+          secureTextEntry
+          error={resetError}
+        />
+        <View className="flex-row gap-3 mt-2">
+          <View className="flex-1">
+            <Button
+              title="キャンセル"
+              onPress={() => {
+                setShowResetModal(false);
+                setAdminPasswordInput('');
+                setResetError('');
+              }}
+              variant="secondary"
+            />
+          </View>
+          <View className="flex-1">
+            <Button
+              title="全削除"
+              onPress={handleResetSales}
+              variant="danger"
+              loading={resetting}
+              disabled={!adminPasswordInput.trim()}
             />
           </View>
         </View>

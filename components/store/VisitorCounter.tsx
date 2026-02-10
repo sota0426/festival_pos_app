@@ -17,7 +17,7 @@ export const VisitorCounter = ({ branch, onBack }: VisitorCounterProps) => {
   const [todayCount, setTodayCount] = useState(0);
   const [lastCountTime, setLastCountTime] = useState<string | null>(null);
   const [pendingCounts, setPendingCounts] = useState<PendingVisitorCount[]>([]);
-  const [showTrend, setShowTrend] = useState(false);
+  const [showTrend, setShowTrend] = useState(true);
 
   // Load today's count from local storage
   const loadTodayCount = useCallback(async () => {
@@ -56,7 +56,7 @@ export const VisitorCounter = ({ branch, onBack }: VisitorCounterProps) => {
       const date = new Date(v.timestamp);
       const hours = date.getHours();
       const minutes = date.getMinutes();
-      const slot = minutes < 30 ? '00' : '30';
+      const slot = minutes < 15 ? '00' : '15';
       const timeSlot = `${hours.toString().padStart(2, '0')}:${slot}`;
       const existing = halfHourlyMap.get(timeSlot) || 0;
       halfHourlyMap.set(timeSlot, existing + v.count);
@@ -117,12 +117,6 @@ export const VisitorCounter = ({ branch, onBack }: VisitorCounterProps) => {
     }
   };
 
-  const handleUndo = async () => {
-    if (todayCount <= 0) return;
-
-    alertConfirm('確認', '1人分取り消しますか？', () => handleCount(-1), '取消');
-  };
-
   const formatTime = (isoString: string | null): string => {
     if (!isoString) return '--:--';
     const date = new Date(isoString);
@@ -133,9 +127,15 @@ export const VisitorCounter = ({ branch, onBack }: VisitorCounterProps) => {
     const now = new Date();
     const hours = now.getHours();
     const minutes = now.getMinutes();
-    const slot = minutes < 30 ? '00' : '30';
-    return `${hours.toString().padStart(2, '0')}:${slot}`;
+
+    // 15分単位に切り捨て
+    const slotMinutes = Math.floor(minutes / 15) * 15;
+
+    return `${hours.toString().padStart(2, '0')}:${slotMinutes
+      .toString()
+      .padStart(2, '0')}`;
   };
+
 
   return (
     <SafeAreaView className="flex-1 bg-purple-50" edges={['top']}>
@@ -197,7 +197,7 @@ export const VisitorCounter = ({ branch, onBack }: VisitorCounterProps) => {
             <Text className="text-white text-2xl font-bold">+10</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={handleUndo}
+            onPress={() => handleCount(-1)}
             className="flex-1 bg-gray-400 py-4 rounded-xl items-center"
             activeOpacity={0.8}
             disabled={todayCount <= 0}
@@ -251,7 +251,7 @@ export const VisitorCounter = ({ branch, onBack }: VisitorCounterProps) => {
         <Card className="bg-purple-100">
           <Text className="text-purple-700 text-center text-sm">
             カウントは自動的に本部へ送信されます。{'\n'}
-            30分毎の来場者数として集計されます。
+            15分毎の来場者数として集計されます。
           </Text>
         </Card>
       </ScrollView>

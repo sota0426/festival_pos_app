@@ -322,8 +322,8 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
           : '';
 
       alertNotify(
-        '会計完了',
-        `注文番号: ${orderNum}\n合計: ${totalAmount.toLocaleString()}円\n支払い方法: ${methodLabel}${cashInfo}`,
+        '-----会計完了-----',
+        `注文番号: ${orderNum}\n\n合計: ${totalAmount.toLocaleString()}円\n支払い方法: ${methodLabel}${cashInfo}`,
       );
     } catch (error) {
       console.error('Error processing payment:', error);
@@ -489,7 +489,10 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
         )}
       </View>
 
-      <ScrollView className="flex-1 p-3">
+      <ScrollView 
+        className="flex-1 p-3"
+        contentContainerStyle={{ paddingBottom: 300 }}
+      >
         {cart.map((item) => (
           <View
             key={item.menu_id}
@@ -497,13 +500,13 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
           >
             <View className="flex-row items-center justify-between">
               <TouchableOpacity className="flex-1 mr-2" onLongPress={() => openDiscountModal(item.menu_id)}>
-                <Text className="text-gray-900 font-medium" numberOfLines={1}>
+                <Text className="text-gray-900 font-medium text-xl" numberOfLines={1}>
                   {item.menu_name}
                 </Text>
                 <Text className="text-gray-500 text-sm">
                   @{item.unit_price.toLocaleString()}円
                   {item.discount > 0 && (
-                    <Text className="text-red-500 text-sm"> -{item.discount.toLocaleString()}円</Text>
+                    <Text className="text-red-500 "> -{item.discount.toLocaleString()}円</Text>
                   )}
                 </Text>
               </TouchableOpacity>
@@ -587,7 +590,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
                   )}
                   {paymentMethods.voucher && (
                     <TouchableOpacity
-                      onPress={() => processPayment('paypay')}
+                      onPress={() => processPayment('voucher')}
                       disabled={cart.length === 0 || processing}
                       activeOpacity={0.8}
                       className={`py-4 mr-2 rounded-xl items-center flex-1 ${
