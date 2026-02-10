@@ -209,6 +209,7 @@ export const StoreHome = ({
       <ScrollView className="flex-1 p-6" contentContainerStyle={{ flexGrow: 1 }}>
         {activeTab === 'main' && (
           <View className="flex-1 gap-4">
+
             <TouchableOpacity onPress={onNavigateToRegister} activeOpacity={0.8}>
               <Card className="bg-sky-400 p-8">
                 <Text className="text-white text-3xl font-bold text-center">レジ</Text>
@@ -216,21 +217,19 @@ export const StoreHome = ({
               </Card>
             </TouchableOpacity>
 
-            <View className="flex-row gap-4">
-              <TouchableOpacity onPress={onNavigateToMenus} activeOpacity={0.8} className="flex-1">
+              <TouchableOpacity onPress={onNavigateToMenus} activeOpacity={0.8}>
                 <Card className="bg-green-400 p-6">
-                  <Text className="text-white text-xl font-bold text-center">メニュー登録</Text>
-                  <Text className="text-green-100 text-center mt-1 text-sm">商品・在庫管理</Text>
+                  <Text className="text-white text-3xl font-bold text-center">メニュー登録</Text>
+                  <Text className="text-green-100 text-center mt-2">商品・在庫管理</Text>
                 </Card>
               </TouchableOpacity>
 
-              <TouchableOpacity onPress={onNavigateToHistory} activeOpacity={0.8} className="flex-1">
+              <TouchableOpacity onPress={onNavigateToHistory} activeOpacity={0.8}>
                 <Card className="bg-orange-400 p-6">
-                  <Text className="text-white text-xl font-bold text-center">販売履歴</Text>
-                  <Text className="text-orange-100 text-center mt-1 text-sm">売上確認・取消</Text>
+                  <Text className="text-white text-3xl font-bold text-center">販売履歴</Text>
+                  <Text className="text-orange-100 text-center mt-2">売上確認・取消</Text>
                 </Card>
               </TouchableOpacity>
-            </View>
 
           </View>
         )}
