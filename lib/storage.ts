@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Branch, Menu, PendingTransaction, LocalStorage, PendingVisitorCount, StoreSettings, PaymentMode, BudgetExpense, BudgetSettings } from '../types/database';
+import type { Branch, Menu, MenuCategory, PendingTransaction, LocalStorage, PendingVisitorCount, StoreSettings, PaymentMode, BudgetExpense, BudgetSettings } from '../types/database';
 
 const STORAGE_KEYS = {
   BRANCH: '@festival_pos/branch',
@@ -12,6 +12,8 @@ const STORAGE_KEYS = {
   ORDER_COUNTER: '@festival_pos/order_counter',
   BUDGET_SETTINGS: '@festival_pos/budget_settings',
   BUDGET_EXPENSES: '@festival_pos/budget_expenses',
+  MENU_CATEGORIES: '@festival_pos/menu_categories',
+  ADMIN_PASSWORD: '@festival_pos/admin_password',
 };
 
 // Branch storage
@@ -44,6 +46,16 @@ export const updateMenuStock = async (menuId: string, newQuantity: number): Prom
     menu.id === menuId ? { ...menu, stock_quantity: newQuantity, updated_at: new Date().toISOString() } : menu
   );
   await saveMenus(updatedMenus);
+};
+
+// Menu categories storage
+export const saveMenuCategories = async (categories: MenuCategory[]): Promise<void> => {
+  await AsyncStorage.setItem(STORAGE_KEYS.MENU_CATEGORIES, JSON.stringify(categories));
+};
+
+export const getMenuCategories = async (): Promise<MenuCategory[]> => {
+  const data = await AsyncStorage.getItem(STORAGE_KEYS.MENU_CATEGORIES);
+  return data ? JSON.parse(data) : [];
 };
 
 // Pending transactions storage
@@ -225,6 +237,30 @@ export const deleteBudgetExpense = async (expenseId: string): Promise<void> => {
   const expenses = await getBudgetExpenses();
   const filtered = expenses.filter((e) => e.id !== expenseId);
   await AsyncStorage.setItem(STORAGE_KEYS.BUDGET_EXPENSES, JSON.stringify(filtered));
+};
+
+// Admin password storage
+const DEFAULT_ADMIN_PASSWORD = '0000';
+
+export const getAdminPassword = async (): Promise<string> => {
+  const data = await AsyncStorage.getItem(STORAGE_KEYS.ADMIN_PASSWORD);
+  return data ?? DEFAULT_ADMIN_PASSWORD;
+};
+
+export const saveAdminPassword = async (password: string): Promise<void> => {
+  await AsyncStorage.setItem(STORAGE_KEYS.ADMIN_PASSWORD, password);
+};
+
+export const verifyAdminPassword = async (input: string): Promise<boolean> => {
+  const stored = await getAdminPassword();
+  return input === stored;
+};
+
+// Clear all pending transactions for a branch
+export const clearAllPendingTransactions = async (branchId: string): Promise<void> => {
+  const transactions = await getPendingTransactions();
+  const remaining = transactions.filter((t) => t.branch_id !== branchId);
+  await AsyncStorage.setItem(STORAGE_KEYS.PENDING_TRANSACTIONS, JSON.stringify(remaining));
 };
 
 // Get all local storage data

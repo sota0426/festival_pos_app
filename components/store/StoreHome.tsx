@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Card, Header, Button } from '../common';
-import { clearBranch, getPendingTransactions, getStoreSettings, saveStoreSettings } from '../../lib/storage';
-import { alertConfirm } from '../../lib/alertUtils';
+import { Card, Header, Button, Input, Modal } from '../common';
+import { clearBranch, getPendingTransactions, getStoreSettings, saveStoreSettings, getAdminPassword, saveAdminPassword, verifyAdminPassword } from '../../lib/storage';
+import { alertConfirm, alertNotify } from '../../lib/alertUtils';
 import type { Branch, PaymentMethodSettings } from '../../types/database';
 import { isSupabaseConfigured, supabase } from 'lib/supabase';
 
@@ -45,6 +45,12 @@ export const StoreHome = ({
     cashless: true,
     voucher: true,
   });
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -112,6 +118,52 @@ export const StoreHome = ({
     setPaymentMethods(updated);
     const currentSettings = await getStoreSettings();
     await saveStoreSettings({ ...currentSettings, payment_methods: updated });
+  };
+
+  const resetPasswordForm = () => {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordError('');
+  };
+
+  const handleChangePassword = async () => {
+    if (!currentPassword.trim()) {
+      setPasswordError('現在のパスワードを入力してください');
+      return;
+    }
+    if (!newPassword.trim()) {
+      setPasswordError('新しいパスワードを入力してください');
+      return;
+    }
+    if (newPassword.length < 4) {
+      setPasswordError('パスワードは4文字以上で設定してください');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('新しいパスワードが一致しません');
+      return;
+    }
+
+    setSavingPassword(true);
+    try {
+      const isValid = await verifyAdminPassword(currentPassword);
+      if (!isValid) {
+        setPasswordError('現在のパスワードが正しくありません');
+        setSavingPassword(false);
+        return;
+      }
+
+      await saveAdminPassword(newPassword);
+      setShowPasswordModal(false);
+      resetPasswordForm();
+      alertNotify('完了', '管理者パスワードを変更しました');
+    } catch (error) {
+      console.error('Error changing password:', error);
+      setPasswordError('パスワードの変更に失敗しました');
+    } finally {
+      setSavingPassword(false);
+    }
   };
 
   const handleLogout = () => {
@@ -319,9 +371,87 @@ export const StoreHome = ({
                 </TouchableOpacity>
               </View>
             </Card>
+
+            {/* Admin Password Settings */}
+            <Card>
+              <Text className="text-gray-900 text-lg font-bold mb-3">管理者パスワード</Text>
+              <Text className="text-gray-500 text-sm mb-3">
+                売上データ全削除などの操作に必要なパスワードです
+              </Text>
+              <Button
+                title="パスワードを変更"
+                onPress={() => {
+                  resetPasswordForm();
+                  setShowPasswordModal(true);
+                }}
+                variant="secondary"
+              />
+            </Card>
           </View>
         )}
       </ScrollView>
+
+      {/* Password Change Modal */}
+      <Modal
+        visible={showPasswordModal}
+        onClose={() => {
+          setShowPasswordModal(false);
+          resetPasswordForm();
+        }}
+        title="管理者パスワード変更"
+      >
+        <Input
+          label="現在のパスワード"
+          value={currentPassword}
+          onChangeText={(text) => {
+            setCurrentPassword(text);
+            setPasswordError('');
+          }}
+          placeholder="現在のパスワード"
+          secureTextEntry
+        />
+        <Input
+          label="新しいパスワード"
+          value={newPassword}
+          onChangeText={(text) => {
+            setNewPassword(text);
+            setPasswordError('');
+          }}
+          placeholder="4文字以上"
+          secureTextEntry
+        />
+        <Input
+          label="新しいパスワード（確認）"
+          value={confirmPassword}
+          onChangeText={(text) => {
+            setConfirmPassword(text);
+            setPasswordError('');
+          }}
+          placeholder="もう一度入力"
+          secureTextEntry
+          error={passwordError}
+        />
+        <View className="flex-row gap-3 mt-2">
+          <View className="flex-1">
+            <Button
+              title="キャンセル"
+              onPress={() => {
+                setShowPasswordModal(false);
+                resetPasswordForm();
+              }}
+              variant="secondary"
+            />
+          </View>
+          <View className="flex-1">
+            <Button
+              title="変更"
+              onPress={handleChangePassword}
+              loading={savingPassword}
+              disabled={!currentPassword.trim() || !newPassword.trim() || !confirmPassword.trim()}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };

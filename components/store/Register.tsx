@@ -4,9 +4,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Card, Header, Modal } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings } from '../../lib/storage';
+import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings, getMenuCategories } from '../../lib/storage';
 import { alertNotify, alertConfirm } from '../../lib/alertUtils';
-import type { Branch, Menu, CartItem, PendingTransaction, PaymentMethodSettings } from '../../types/database';
+import type { Branch, Menu, MenuCategory, CartItem, PendingTransaction, PaymentMethodSettings } from '../../types/database';
 
 interface RegisterProps {
   branch: Branch;
@@ -16,6 +16,7 @@ interface RegisterProps {
 
 export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps) => {
   const [menus, setMenus] = useState<Menu[]>([]);
+  const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
@@ -29,6 +30,9 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   const [showCashModal, setShowCashModal] = useState(false);
   const [receivedAmount, setReceivedAmount] = useState('');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showDiscountModal, setShowDiscountModal] = useState(false);
+  const [discountTargetMenuId, setDiscountTargetMenuId] = useState<string | null>(null);
+  const [discountAmount, setDiscountAmount] = useState('');
 
 
   const { width } = useWindowDimensions();
@@ -39,6 +43,10 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       const localMenus = await getMenus();
       const branchMenus = localMenus.filter((m) => m.branch_id === branch.id && m.is_active);
       setMenus(branchMenus);
+
+      const localCategories = await getMenuCategories();
+      const branchCategories = localCategories.filter((c) => c.branch_id === branch.id);
+      setCategories(branchCategories.sort((a, b) => a.sort_order - b.sort_order));
     } catch (error) {
       console.error('Error fetching menus:', error);
     } finally {
@@ -97,7 +105,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
             ? {
                 ...item,
                 quantity: item.quantity + 1,
-                subtotal: (item.quantity + 1) * item.unit_price,
+                subtotal: (item.quantity + 1) * (item.unit_price - item.discount),
               }
             : item
         );
@@ -108,6 +116,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
           menu_id: menu.id,
           menu_name: menu.menu_name,
           unit_price: menu.price,
+          discount: 0,
           quantity: 1,
           subtotal: menu.price,
         },
@@ -135,7 +144,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
 
       return prevCart.map((i) =>
         i.menu_id === menuId
-          ? { ...i, quantity: newQty, subtotal: newQty * i.unit_price }
+          ? { ...i, quantity: newQty, subtotal: newQty * (i.unit_price - i.discount) }
           : i
       );
     });
@@ -155,6 +164,36 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   };
 
 
+
+  const openDiscountModal = (menuId: string) => {
+    const item = cart.find((i) => i.menu_id === menuId);
+    if (item) {
+      setDiscountTargetMenuId(menuId);
+      setDiscountAmount(item.discount > 0 ? item.discount.toString() : '');
+      setShowDiscountModal(true);
+    }
+  };
+
+  const applyDiscount = () => {
+    if (!discountTargetMenuId) return;
+    const amount = parseInt(discountAmount, 10) || 0;
+
+    setCart((prevCart) =>
+      prevCart.map((item) => {
+        if (item.menu_id !== discountTargetMenuId) return item;
+        const discountedPrice = Math.max(0, item.unit_price - amount);
+        return {
+          ...item,
+          discount: amount,
+          subtotal: item.quantity * discountedPrice,
+        };
+      })
+    );
+
+    setShowDiscountModal(false);
+    setDiscountTargetMenuId(null);
+    setDiscountAmount('');
+  };
 
   const generateTransactionCode = async (): Promise<string> => {
     const now = new Date();
@@ -334,51 +373,94 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
     return { color: 'text-gray-500', text: `残${menu.stock_quantity}` };
   };
 
+  // Helper to render a group of menu cards
+  const renderMenuCards = (menuList: Menu[]) => (
+    <View className="flex-row flex-wrap">
+      {menuList.map((menu) => {
+        const stockStatus = getStockStatus(menu);
+        const isDisabled = menu.stock_management && menu.stock_quantity === 0;
+        const cartItem = cart.find((item) => item.menu_id === menu.id);
+
+        return (
+          <View key={menu.id} className={isMobile ? 'w-1/2 p-1' : 'w-1/3 p-1'}>
+            <TouchableOpacity
+              onPress={() => addToCart(menu)}
+              disabled={isDisabled}
+              activeOpacity={0.7}
+            >
+              <Card
+                className={`items-center py-4 ${isDisabled ? 'opacity-50 bg-gray-200' : ''} ${cartItem ? 'border-2 border-blue-800' : ''}`}
+              >
+                <Text
+                  className={`text-lg font-semibold text-center ${isDisabled ? 'text-gray-400' : 'text-gray-900'}`}
+                  numberOfLines={2}
+                >
+                  {menu.menu_name}
+                </Text>
+                <Text
+                  className={`text-xl font-bold mt-1 ${isDisabled ? 'text-gray-400' : 'text-blue-600'}`}
+                >
+                  {menu.price.toLocaleString()}円
+                </Text>
+                {menu.stock_management && (
+                  <Text className={`text-sm mt-1 ${stockStatus.color}`}>
+                    {stockStatus.text}
+                  </Text>
+                )}
+                {cartItem && (
+                  <View className="absolute top-1 right-1 bg-blue-500 rounded-full w-6 h-6 items-center justify-center">
+                    <Text className="text-white text-xs font-bold">{cartItem.quantity}</Text>
+                  </View>
+                )}
+              </Card>
+            </TouchableOpacity>
+          </View>
+        );
+      })}
+    </View>
+  );
+
+  // Check if any menu has a category assigned
+  const hasCategories = categories.length > 0 && menus.some((m) => m.category_id !== null);
+
   // Menu Grid Component
   const MenuGrid = () => (
     <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
-      <View className="flex-row flex-wrap p-2">
-        {menus.map((menu) => {
-          const stockStatus = getStockStatus(menu);
-          const isDisabled = menu.stock_management && menu.stock_quantity === 0;
-          const cartItem = cart.find((item) => item.menu_id === menu.id);
-
-          return (
-            <View key={menu.id} className={isMobile ? 'w-1/2 p-1' : 'w-1/3 p-1'}>
-              <TouchableOpacity
-                onPress={() => addToCart(menu)}
-                disabled={isDisabled}
-                activeOpacity={0.7}
-              >
-                <Card
-                  className={`items-center py-4 ${isDisabled ? 'opacity-50 bg-gray-200' : ''} ${cartItem ? 'border-2 border-blue-800' : ''}`}
-                >
-                  <Text
-                    className={`text-lg font-semibold text-center ${isDisabled ? 'text-gray-400' : 'text-gray-900'}`}
-                    numberOfLines={2}
-                  >
-                    {menu.menu_name}
-                  </Text>
-                  <Text
-                    className={`text-xl font-bold mt-1 ${isDisabled ? 'text-gray-400' : 'text-blue-600'}`}
-                  >
-                    {menu.price.toLocaleString()}円
-                  </Text>
-                  {menu.stock_management && (
-                    <Text className={`text-sm mt-1 ${stockStatus.color}`}>
-                      {stockStatus.text}
-                    </Text>
-                  )}
-                  {cartItem && (
-                    <View className="absolute top-1 right-1 bg-blue-500 rounded-full w-6 h-6 items-center justify-center">
-                      <Text className="text-white text-xs font-bold">{cartItem.quantity}</Text>
-                    </View>
-                  )}
-                </Card>
-              </TouchableOpacity>
-            </View>
-          );
-        })}
+      <View className="p-2">
+        {hasCategories ? (
+          <>
+            {/* Render menus grouped by category */}
+            {categories.map((category) => {
+              const categoryMenus = menus.filter((m) => m.category_id === category.id);
+              if (categoryMenus.length === 0) return null;
+              return (
+                <View key={category.id} className="mb-3">
+                  <View className="bg-purple-100 px-3 py-2 rounded-lg mb-1">
+                    <Text className="text-purple-800 font-bold">{category.category_name}</Text>
+                  </View>
+                  {renderMenuCards(categoryMenus)}
+                </View>
+              );
+            })}
+            {/* Render uncategorized menus */}
+            {(() => {
+              const uncategorized = menus.filter(
+                (m) => !m.category_id || !categories.find((c) => c.id === m.category_id)
+              );
+              if (uncategorized.length === 0) return null;
+              return (
+                <View className="mb-3">
+                  <View className="bg-gray-100 px-3 py-2 rounded-lg mb-1">
+                    <Text className="text-gray-700 font-bold">その他</Text>
+                  </View>
+                  {renderMenuCards(uncategorized)}
+                </View>
+              );
+            })()}
+          </>
+        ) : (
+          renderMenuCards(menus)
+        )}
       </View>
 
       {menus.length === 0 && !loading && (
@@ -411,43 +493,48 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
         {cart.map((item) => (
           <View
             key={item.menu_id}
-            className="flex-row items-center justify-between py-3 border-b border-gray-100"
+            className="py-3 border-b border-gray-100"
           >
-            <View className="flex-1 mr-2">
-              <Text className="text-gray-900 font-medium" numberOfLines={1}>
-                {item.menu_name}
-              </Text>
-              <Text className="text-gray-500 text-sm">
-                @{item.unit_price.toLocaleString()}円
-              </Text>
-            </View>
-
-            <View className="flex-row items-center">
-              <TouchableOpacity
-                onPress={() => updateCartItemQuantity(item.menu_id, -1)}
-                className="w-9 h-9 bg-gray-200 rounded items-center justify-center"
-              >
-                <Text className="text-gray-600 font-bold text-lg">-</Text>
+            <View className="flex-row items-center justify-between">
+              <TouchableOpacity className="flex-1 mr-2" onLongPress={() => openDiscountModal(item.menu_id)}>
+                <Text className="text-gray-900 font-medium" numberOfLines={1}>
+                  {item.menu_name}
+                </Text>
+                <Text className="text-gray-500 text-sm">
+                  @{item.unit_price.toLocaleString()}円
+                  {item.discount > 0 && (
+                    <Text className="text-red-500 text-sm"> -{item.discount.toLocaleString()}円</Text>
+                  )}
+                </Text>
               </TouchableOpacity>
-              <Text className="w-10 text-center font-semibold text-lg">{item.quantity}</Text>
+
+              <View className="flex-row items-center">
+                <TouchableOpacity
+                  onPress={() => updateCartItemQuantity(item.menu_id, -1)}
+                  className="w-9 h-9 bg-gray-200 rounded items-center justify-center"
+                >
+                  <Text className="text-gray-600 font-bold text-lg">-</Text>
+                </TouchableOpacity>
+                <Text className="w-10 text-center font-semibold text-lg">{item.quantity}</Text>
+                <TouchableOpacity
+                  onPress={() => updateCartItemQuantity(item.menu_id, 1)}
+                  className="w-9 h-9 bg-gray-200 rounded items-center justify-center"
+                >
+                  <Text className="text-gray-600 font-bold text-lg">+</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text className="w-20 text-right font-semibold text-gray-900">
+                {item.subtotal.toLocaleString()}円
+              </Text>
+
               <TouchableOpacity
-                onPress={() => updateCartItemQuantity(item.menu_id, 1)}
-                className="w-9 h-9 bg-gray-200 rounded items-center justify-center"
-              >
-                <Text className="text-gray-600 font-bold text-lg">+</Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text className="w-20 text-right font-semibold text-gray-900">
-              {item.subtotal.toLocaleString()}円
-            </Text>
-
-            <TouchableOpacity
-              onPress={() => removeFromCart(item.menu_id)}
-              className="ml-2 p-2"
+                onPress={() => removeFromCart(item.menu_id)}
+                className="ml-2 p-2"
             >
               <Text className="text-red-500 text-lg">×</Text>
             </TouchableOpacity>
+            </View>
           </View>
         ))}
 
@@ -685,6 +772,111 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   );
 
 
+  const discountNumpadKeys = [
+    ['1', '2', '3'],
+    ['4', '5', '6'],
+    ['7', '8', '9'],
+    ['clear', '0', 'backspace'],
+  ];
+
+  const onDiscountNumpadPress = (key: string) => {
+    if (key === 'clear') {
+      setDiscountAmount('');
+    } else if (key === 'backspace') {
+      setDiscountAmount((prev) => prev.slice(0, -1));
+    } else {
+      setDiscountAmount((prev) => {
+        const next = prev + key;
+        if (next.length > 5) return prev;
+        return next;
+      });
+    }
+  };
+
+  const discountTargetItem = cart.find((i) => i.menu_id === discountTargetMenuId);
+  const discountNum = parseInt(discountAmount, 10) || 0;
+
+  const discountModal = (
+    <Modal
+      visible={showDiscountModal}
+      onClose={() => {
+        setShowDiscountModal(false);
+        setDiscountTargetMenuId(null);
+        setDiscountAmount('');
+      }}
+      title="割引設定"
+    >
+      {discountTargetItem && (
+        <ScrollView>
+          <View className="mb-2">
+            <Text className="text-gray-700 font-medium mb-1">{discountTargetItem.menu_name}</Text>
+            <Text className="text-gray-500 text-sm mb-3">
+              定価: {discountTargetItem.unit_price.toLocaleString()}円
+            </Text>
+          </View>
+
+          <View className="bg-gray-100 rounded-xl p-4 mb-2">
+            <Text className="text-gray-500 text-sm">割引額（円）</Text>
+            <Text className="text-2xl font-bold text-gray-900 text-right">
+              {discountNum > 0 ? `${discountNum.toLocaleString()}円` : '---'}
+            </Text>
+          </View>
+
+          <View className={`rounded-xl p-4 mb-2 ${discountNum > 0 ? 'bg-green-50' : 'bg-gray-50'}`}>
+            <Text className="text-gray-500 text-sm">割引後単価</Text>
+            <Text className={`text-2xl font-bold text-right ${discountNum > 0 ? 'text-green-600' : 'text-gray-300'}`}>
+              {Math.max(0, discountTargetItem.unit_price - discountNum).toLocaleString()}円
+            </Text>
+          </View>
+
+          <View className="gap-2">
+            {discountNumpadKeys.map((row, rowIndex) => (
+              <View key={rowIndex} className="flex-row gap-2">
+                {row.map((key) => (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => onDiscountNumpadPress(key)}
+                    activeOpacity={0.7}
+                    className={`flex-1 py-3 rounded-xl items-center justify-center ${
+                      key === 'clear' ? 'bg-red-100' : key === 'backspace' ? 'bg-gray-200' : 'bg-gray-100'
+                    }`}
+                  >
+                    <Text className={`text-xl font-bold ${key === 'clear' ? 'text-red-600' : 'text-gray-900'}`}>
+                      {key === 'clear' ? 'C' : key === 'backspace' ? '←' : key}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ))}
+          </View>
+
+          <View className="flex-row gap-2 mt-3">
+            <TouchableOpacity
+              onPress={() => {
+                setDiscountAmount('');
+                applyDiscount();
+              }}
+              activeOpacity={0.7}
+              className="flex-1 py-3 bg-gray-200 rounded-xl items-center"
+            >
+              <Text className="text-gray-700 font-bold text-sm">割引解除</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={applyDiscount}
+              disabled={discountNum <= 0 || discountNum >= discountTargetItem.unit_price}
+              activeOpacity={0.8}
+              className={`flex-1 py-3 rounded-xl items-center ${
+                discountNum > 0 && discountNum < discountTargetItem.unit_price ? 'bg-blue-500' : 'bg-gray-300'
+              }`}
+            >
+              <Text className="text-white text-lg font-bold">適用</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      )}
+    </Modal>
+  );
+
   // Mobile Layout
   if (isMobile) {
     return (
@@ -727,6 +919,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
         )}
         {cashModal}
         {clearConfirmModal}
+        {discountModal}
       </SafeAreaView>
     );
   }
@@ -758,6 +951,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       </View>
       {cashModal}
       {clearConfirmModal}
+      {discountModal}
     </SafeAreaView>
   );
 };

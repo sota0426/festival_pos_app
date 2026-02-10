@@ -10,11 +10,20 @@ export interface Branch {
   created_at: string;
 }
 
+export interface MenuCategory {
+  id: string;
+  branch_id: string;
+  category_name: string;
+  sort_order: number;
+  created_at: string;
+}
+
 export interface Menu {
   id: string;
   branch_id: string;
   menu_name: string;
   price: number;
+  category_id: string | null;
   stock_management: boolean;
   stock_quantity: number;
   is_active: boolean;
@@ -125,6 +134,7 @@ export interface CartItem {
   menu_id: string;
   menu_name: string;
   unit_price: number;
+  discount: number;
   quantity: number;
   subtotal: number;
 }
