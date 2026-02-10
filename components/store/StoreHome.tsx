@@ -15,6 +15,7 @@ interface StoreHomeProps {
   onNavigateToMenus: () => void;
   onNavigateToHistory: () => void;
   onNavigateToCounter: () => void;
+  onNavigateToAutoCounter:()=>void;
   onNavigateToOrderBoard: () => void;
   onNavigateToBudget: () => void;
   onLogout: () => void;
@@ -33,6 +34,7 @@ export const StoreHome = ({
   onNavigateToMenus,
   onNavigateToHistory,
   onNavigateToCounter,
+  onNavigateToAutoCounter,
   onNavigateToOrderBoard,
   onNavigateToBudget,
   onLogout,
@@ -293,6 +295,16 @@ export const StoreHome = ({
                 <Text className="text-purple-100 text-center mt-2">タップして来場者数を記録</Text>
               </Card>
             </TouchableOpacity>
+
+            <TouchableOpacity onPress={onNavigateToAutoCounter} activeOpacity={0.8}>
+              <Card className="bg-slate-500 p-8">
+                <Text className="text-white text-3xl font-bold text-center">自動集計カウンター</Text>
+                <Text className="text-purple-100 text-center mt-2">カメラを起動して自動で来場者数を集計</Text>
+              </Card>
+            </TouchableOpacity>
+
+
+
 
             <TouchableOpacity onPress={onNavigateToOrderBoard} activeOpacity={0.8}>
               <Card className="bg-amber-400 p-8">

@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, Alert, Switch, ActivityIndicator, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
-import { Button, Input, Card, Header, Modal } from '../common';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { saveMenus, getMenus, saveMenuCategories, getMenuCategories } from '../../lib/storage';
-import { alertConfirm } from '../../lib/alertUtils';
-import type { Branch, Menu, MenuCategory } from '../../types/database';
+import { Button, Input, Card, Header, Modal } from '../../common';
+import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
+import { saveMenus, getMenus, saveMenuCategories, getMenuCategories } from '../../../lib/storage';
+import { alertConfirm } from '../../../lib/alertUtils';
+import type { Branch, Menu, MenuCategory } from '../../../types/database';
 
 interface MenuManagementProps {
   branch: Branch;

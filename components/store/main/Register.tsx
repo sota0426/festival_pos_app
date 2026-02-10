@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, PanResponder } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
-import { Button, Card, Header, Modal } from '../common';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings, getMenuCategories } from '../../lib/storage';
-import { alertNotify, alertConfirm } from '../../lib/alertUtils';
-import type { Branch, Menu, MenuCategory, CartItem, PendingTransaction, PaymentMethodSettings } from '../../types/database';
+import { Button, Card, Header, Modal } from '../../common';
+import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
+import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings, getMenuCategories } from '../../../lib/storage';
+import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
+import type { Branch, Menu, MenuCategory, CartItem, PendingTransaction, PaymentMethodSettings } from '../../../types/database';
 
 interface RegisterProps {
   branch: Branch;

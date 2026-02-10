@@ -1,8 +1,8 @@
 export { BranchLogin } from './BranchLogin';
 export { StoreHome } from './StoreHome';
-export { MenuManagement } from './MenuManagement';
-export { Register } from './Register';
-export { SalesHistory } from './SalesHistory';
-export { VisitorCounter } from './VisitorCounter';
-export { OrderBoard } from './OrderBoard';
-export { BudgetManager } from './BudgetManager';
+export { MenuManagement } from './main/MenuManagement';
+export { Register } from './main/Register';
+export { SalesHistory } from './main/SalesHistory';
+export { VisitorCounter } from './sub/VisitorCounter';
+export { OrderBoard } from './sub/OrderBoard';
+export { BudgetManager } from './budget/BudgetManager';

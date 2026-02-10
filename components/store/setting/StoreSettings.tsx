@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Card, Header, Button } from '../common';
-import { getStoreSettings, saveStoreSettings } from '../../lib/storage';
-import type { Branch, PaymentMode } from '../../types/database';
+import { Card, Header, Button } from '../../common';
+import { getStoreSettings, saveStoreSettings } from '../../../lib/storage';
+import type { Branch, PaymentMode } from '../../../types/database';
 
 interface StoreSettingsProps {
   branch: Branch;

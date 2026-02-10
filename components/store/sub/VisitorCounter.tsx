@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
-import { Header, Card } from '../common';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { savePendingVisitorCount, getPendingVisitorCounts } from '../../lib/storage';
-import { alertNotify, alertConfirm, safeVibrate } from '../../lib/alertUtils';
-import type { Branch, PendingVisitorCount, HalfHourlyVisitors } from '../../types/database';
+import { Header, Card } from '../../common';
+import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
+import { savePendingVisitorCount, getPendingVisitorCounts } from '../../../lib/storage';
+import { alertNotify, alertConfirm, safeVibrate } from '../../../lib/alertUtils';
+import type { Branch, PendingVisitorCount, HalfHourlyVisitors } from '../../../types/database';
 
 interface VisitorCounterProps {
   branch: Branch;

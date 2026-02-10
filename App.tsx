@@ -10,6 +10,7 @@ import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, Visitor
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 import { HQHome } from 'components/hq/HQHome';
+import AutomaticCounter from 'components/store/sub/AutoCounter';
 
 
 type Screen =
@@ -24,6 +25,7 @@ type Screen =
   | 'store_register'
   | 'store_history'
   | 'store_counter'
+  | 'store_autocounter'
   | 'store_order_board'
   | 'store_budget';
 
@@ -107,6 +109,7 @@ export default function App() {
             onNavigateToMenus={() => setCurrentScreen('store_menus')}
             onNavigateToHistory={() => setCurrentScreen('store_history')}
             onNavigateToCounter={() => setCurrentScreen('store_counter')}
+            onNavigateToAutoCounter={()=>setCurrentScreen('store_autocounter')}
             onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
             onNavigateToBudget={() => setCurrentScreen('store_budget')}
             onLogout={handleBranchLogout}
@@ -159,6 +162,17 @@ export default function App() {
           <VisitorCounter
             branch={currentBranch}
             onBack={() => setCurrentScreen('store_home')}
+          />
+        );
+
+        //TODO
+      case 'store_autocounter':
+        if (!currentBranch) {
+          setCurrentScreen('store_login');
+          return null;
+        }
+        return (
+          <AutomaticCounter
           />
         );
 

@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Card, Header, Button } from '../common';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { getPendingTransactions, addServedTransactionId, getServedTransactionIds } from '../../lib/storage';
-import type { Branch, Transaction, TransactionItem, OrderBoardItem } from '../../types/database';
+import { Card, Header, Button } from '../../common';
+import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
+import { getPendingTransactions, addServedTransactionId, getServedTransactionIds } from '../../../lib/storage';
+import type { Branch, Transaction, TransactionItem, OrderBoardItem } from '../../../types/database';
 
 interface OrderBoardProps {
   branch: Branch;

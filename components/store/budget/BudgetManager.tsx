@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
-import { Card, Header, Button, Modal } from '../common';
+import { Card, Header, Button, Modal } from '../../common';
 import {
   getBudgetSettings,
   saveBudgetSettings,
@@ -10,15 +10,15 @@ import {
   saveBudgetExpense,
   deleteBudgetExpense,
   getPendingTransactions,
-} from '../../lib/storage';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { alertNotify, alertConfirm } from '../../lib/alertUtils';
+} from '../../../lib/storage';
+import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
+import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
 import type {
   Branch,
   BudgetExpense,
   BudgetSettings,
   ExpenseCategory,
-} from '../../types/database';
+} from '../../../types/database';
 
 // ------- types -------
 type BudgetTab = 'dashboard' | 'expense' | 'breakeven' | 'report';
