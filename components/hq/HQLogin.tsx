@@ -17,19 +17,24 @@ interface HQLoginProps {
 export const HQLogin = ({ onLoginSuccess, onBackToHome }: HQLoginProps) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
 
   const handleLogin = async () => {
-    setError('');
-    setLoading(true);
+    setSubmitted(true);
 
+    // ❌ パスワード不一致 → ここで終了
+    if (password !== HQ_PASSWORD) {
+      setError('パスワードが正しくありません');
+      return;
+    }
+
+    // ✅ 正しい場合のみここに来る
     try {
-      if (password === HQ_PASSWORD) {
-        await saveHQAuth(true);
-        onLoginSuccess();
-      } else {
-        setError('パスワードが正しくありません');
-      }
+      setLoading(true);
+      setError(null);
+      await saveHQAuth(true);
+      onLoginSuccess();
     } catch (err) {
       alertNotify('エラー', 'ログインに失敗しました');
     } finally {
@@ -41,24 +46,38 @@ export const HQLogin = ({ onLoginSuccess, onBackToHome }: HQLoginProps) => {
     <SafeAreaView className="flex-1 bg-gray-50">
       <View className="flex-1 justify-center p-6">
         <Card className="p-6">
-          <Text className="text-2xl font-bold text-center text-gray-900 mb-2">本部ログイン</Text>
-          <Text className="text-gray-500 text-center mb-6">管理者パスワードを入力してください</Text>
+          <Text className="text-2xl font-bold text-center text-gray-900 mb-2">
+            本部ログイン
+          </Text>
+          <Text className="text-gray-500 text-center mb-6">
+            管理者パスワードを入力してください
+          </Text>
 
           <Input
             label="パスワード"
             value={password}
             onChangeText={(text) => {
               setPassword(text);
-              setError('');
+              if (submitted) setError(null); // 入力中はエラーを消す
             }}
             placeholder="パスワードを入力"
             secureTextEntry
-            error={error}
+            error={submitted ? error ?? undefined : undefined}
           />
 
           <View className="mt-4 gap-3">
-            <Button title="ログイン" onPress={handleLogin} loading={loading} disabled={!password} />
-            <Button title="戻る" onPress={onBackToHome} variant="secondary" />
+            <Button
+              title="ログイン"
+              onPress={handleLogin}
+              loading={loading}
+              disabled={!password || loading}
+            />
+            <Button
+              title="戻る"
+              onPress={onBackToHome}
+              variant="secondary"
+              disabled={loading}
+            />
           </View>
         </Card>
 

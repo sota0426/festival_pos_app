@@ -19,9 +19,10 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
   const [checking, setChecking] = useState(true);
   const [isNewBranch, setIsNewBranch] = useState(false);
   const [foundBranch, setFoundBranch] = useState<Branch | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
 
-  // Check if already logged in
+  // already logged in?
   useEffect(() => {
     const checkExistingBranch = async () => {
       const savedBranch = await getBranch();
@@ -34,41 +35,27 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
   }, [onLoginSuccess]);
 
   const handleCheckBranchCode = async () => {
+    setSubmitted(true);
+
     if (!branchCode.trim()) {
       setError('支店番号を入力してください');
       return;
     }
 
-    // Format branch code
-    let formattedCode = branchCode.toUpperCase().trim();
-    formattedCode = `${formattedCode.padStart(3, '0')}`;
-    
+    let formattedCode = branchCode.toUpperCase().trim().padStart(3, '0');
 
     setLoading(true);
-    setError('');
+    setError(null);
 
     try {
       if (!isSupabaseConfigured()) {
-        // Demo mode: accept S001, S002, or any code
-        if (formattedCode === 'S001') {
+        if (formattedCode === 'S001' || formattedCode === 'S002') {
           const demoBranch: Branch = {
-            id: '1',
-            branch_code: 'S001',
-            branch_name: '焼きそば屋',
+            id: formattedCode,
+            branch_code: formattedCode,
+            branch_name: formattedCode === 'S001' ? '焼きそば屋' : 'たこ焼き屋',
             password: '1234',
-            sales_target: 50000,
-            status: 'active',
-            created_at: new Date().toISOString(),
-          };
-          setFoundBranch(demoBranch);
-          setIsNewBranch(false);
-        } else if (formattedCode === 'S002') {
-          const demoBranch: Branch = {
-            id: '2',
-            branch_code: 'S002',
-            branch_name: 'たこ焼き屋',
-            password: '1234',
-            sales_target: 40000,
+            sales_target: 0,
             status: 'active',
             created_at: new Date().toISOString(),
           };
@@ -79,11 +66,9 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
           setFoundBranch(null);
           setBranchCode(formattedCode);
         }
-        setLoading(false);
         return;
       }
 
-      // Check if branch exists in Supabase
       const { data, error: fetchError } = await supabase
         .from('branches')
         .select('*')
@@ -94,16 +79,15 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
         throw fetchError;
       }
 
-      if (data) {
-        setFoundBranch(data);
-        setIsNewBranch(false);
-      } else {
-        setError('この支店番号は登録されていません。本部で発行された番号を入力してください。');
-        setIsNewBranch(false);
-        setFoundBranch(null);
+      if (!data) {
+        setError('この支店番号は登録されていません');
+        return;
       }
+
+      setFoundBranch(data);
+      setIsNewBranch(false);
     } catch (err) {
-      console.error('Error checking branch code:', err);
+      console.error(err);
       setError('支店番号の確認に失敗しました');
     } finally {
       setLoading(false);
@@ -113,30 +97,37 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
   const handleLogin = async () => {
     if (!foundBranch) return;
 
+    setSubmitted(true);
+
     if (password !== foundBranch.password) {
       setError('パスワードが正しくありません');
       return;
     }
 
     try {
+      setLoading(true);
+      setError(null);
       await saveBranch(foundBranch);
       onLoginSuccess(foundBranch);
-    } catch (err) {
+    } catch {
       Alert.alert('エラー', 'ログインに失敗しました');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleRegisterNewBranch = async () => {
+    setSubmitted(true);
+
     if (!branchName.trim()) {
       setError('模擬店名を入力してください');
       return;
     }
 
-    setLoading(true);
-
     try {
-      // This is for demo mode only
-      // In production, branches should only be created by HQ
+      setLoading(true);
+      setError(null);
+
       const newBranch: Branch = {
         id: Date.now().toString(),
         branch_code: branchCode.toUpperCase(),
@@ -149,7 +140,7 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
 
       await saveBranch(newBranch);
       onLoginSuccess(newBranch);
-    } catch (err) {
+    } catch {
       Alert.alert('エラー', '登録に失敗しました');
     } finally {
       setLoading(false);
@@ -158,8 +149,8 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
 
   if (checking) {
     return (
-      <SafeAreaView className="flex-1 bg-gray-50 justify-center items-center">
-        <Text className="text-gray-500">読み込み中...</Text>
+      <SafeAreaView className="flex-1 justify-center items-center">
+        <Text>読み込み中...</Text>
       </SafeAreaView>
     );
   }
@@ -168,10 +159,7 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
     <SafeAreaView className="flex-1 bg-gray-50">
       <View className="flex-1 justify-center p-6">
         <Card className="p-6">
-          <Text className="text-2xl font-bold text-center text-gray-900 mb-2">模擬店ログイン</Text>
-          <Text className="text-gray-500 text-center mb-6">
-            本部から発行された支店番号を入力してください
-          </Text>
+          <Text className="text-2xl font-bold text-center mb-2">模擬店ログイン</Text>
 
           {!foundBranch && !isNewBranch && (
             <>
@@ -180,19 +168,14 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
                 value={branchCode}
                 onChangeText={(text) => {
                   setBranchCode(text);
-                  setError('');
+                  if (submitted) setError(null);
                 }}
-                placeholder="例: S001 または 001"
-                error={error}
+                placeholder="例: S001"
+                error={submitted ? error ?? undefined : undefined}
               />
 
               <View className="mt-4 gap-3">
-                <Button
-                  title="確認"
-                  onPress={handleCheckBranchCode}
-                  loading={loading}
-                  disabled={!branchCode.trim()}
-                />
+                <Button title="確認" onPress={handleCheckBranchCode} loading={loading} />
                 <Button title="戻る" onPress={onBackToHome} variant="secondary" />
               </View>
             </>
@@ -200,38 +183,33 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
 
           {foundBranch && (
             <>
-              <View className="bg-blue-50 p-4 rounded-lg mb-4">
-                <Text className="text-blue-600 font-semibold text-center">
-                  {foundBranch.branch_code}
-                </Text>
-                <Text className="text-xl font-bold text-center text-gray-900 mt-1">
-                  {foundBranch.branch_name}
-                </Text>
-              </View>
+              <Text className="text-center font-bold mb-2">
+                {foundBranch.branch_name}
+              </Text>
 
               <Input
                 label="パスワード"
                 value={password}
                 onChangeText={(text) => {
                   setPassword(text);
-                  setError('');
+                  if (submitted) setError(null);
                 }}
-                placeholder="パスワードを入力"
-                secureTextEntry={true}
-                error={error}
+                secureTextEntry
+                error={submitted ? error ?? undefined : undefined}
               />
 
               <View className="mt-4 gap-3">
-                <Button title="この模擬店でログイン" onPress={handleLogin} disabled={!password.trim()} />
+                <Button title="ログイン" onPress={handleLogin} />
                 <Button
                   title="別の番号を入力"
+                  variant="secondary"
                   onPress={() => {
                     setFoundBranch(null);
                     setBranchCode('');
                     setPassword('');
-                    setError('');
+                    setSubmitted(false);
+                    setError(null);
                   }}
-                  variant="secondary"
                 />
               </View>
             </>
@@ -239,51 +217,23 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
 
           {isNewBranch && (
             <>
-              <View className="bg-yellow-50 p-4 rounded-lg mb-4">
-                <Text className="text-yellow-700 text-center">
-                  支店番号: {branchCode}
-                </Text>
-                <Text className="text-gray-600 text-center text-sm mt-1">
-                  新規登録（デモモード）
-                </Text>
-              </View>
-
               <Input
                 label="模擬店名"
                 value={branchName}
                 onChangeText={(text) => {
                   setBranchName(text);
-                  setError('');
+                  if (submitted) setError(null);
                 }}
-                placeholder="例: 焼きそば屋"
-                error={error}
+                error={submitted ? error ?? undefined : undefined}
               />
 
               <View className="mt-4 gap-3">
-                <Button
-                  title="登録してログイン"
-                  onPress={handleRegisterNewBranch}
-                  loading={loading}
-                  disabled={!branchName.trim()}
-                />
-                <Button
-                  title="別の番号を入力"
-                  onPress={() => {
-                    setIsNewBranch(false);
-                    setBranchCode('');
-                    setBranchName('');
-                  }}
-                  variant="secondary"
-                />
+                <Button title="登録してログイン" onPress={handleRegisterNewBranch} />
+                <Button title="戻る" variant="secondary" onPress={onBackToHome} />
               </View>
             </>
           )}
         </Card>
-
-        <Text className="text-center text-gray-400 text-xs mt-6">
-          デモ用支店番号: S001（焼きそば屋）、S002（たこ焼き屋）{'\n'}
-          デモ用パスワード: 1234
-        </Text>
       </View>
     </SafeAreaView>
   );

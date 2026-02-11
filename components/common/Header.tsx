@@ -15,7 +15,7 @@ export const Header = ({ title, subtitle, showBack = false, onBack, rightElement
         <View className="flex-row items-center flex-1">
           {showBack && (
             <TouchableOpacity onPress={onBack} className="mr-3 p-1">
-              <Text className="text-blue-600 text-lg">{'<'} </Text>
+              <Text className="text-blue-600 text-lg">{'<'}</Text>
             </TouchableOpacity>
           )}
           <View className="flex-1">
