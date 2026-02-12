@@ -66,11 +66,11 @@ export const MenuSalesSummary =({
           <Card className="mb-3">
             <View className="flex-row justify-between items-center">
               <View>
-
                 <Text className="text-gray-900 font-medium">
                   {item.menu_name}
                 </Text>
-                <Text className="text-gray-500 text-sm">
+
+                <Text className="text-gray-500">
                   販売個数：{item.quantity}個
                 </Text>
               </View>

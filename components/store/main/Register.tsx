@@ -12,9 +12,15 @@ interface RegisterProps {
   branch: Branch;
   onBack: () => void;
   onNavigateToHistory: () => void;
+  onNavigateToMenus:()=>void;
 }
 
-export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps) => {
+export const Register = ({ 
+  branch, 
+  onBack, 
+  onNavigateToHistory,
+  onNavigateToMenus
+ }: RegisterProps) => {
   const [menus, setMenus] = useState<Menu[]>([]);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -33,7 +39,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
   const [showDiscountModal, setShowDiscountModal] = useState(false);
   const [discountTargetMenuId, setDiscountTargetMenuId] = useState<string | null>(null);
   const [discountAmount, setDiscountAmount] = useState('');
-
+  const [showHint, setShowHint] = useState(false);
 
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
@@ -450,7 +456,7 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
               if (uncategorized.length === 0) return null;
               return (
                 <View className="mb-3">
-                  <View className="bg-gray-100 px-3 py-2 rounded-lg mb-1">
+                  <View className="bg-gray-300 px-3 py-2 rounded-lg mb-1">
                     <Text className="text-gray-700 font-bold">その他</Text>
                   </View>
                   {renderMenuCards(uncategorized)}
@@ -464,12 +470,24 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
       </View>
 
       {menus.length === 0 && !loading && (
+        <View>
         <View className="items-center py-12">
           <Text className="text-gray-500">メニューが登録されていません</Text>
           <Text className="text-gray-400 text-sm mt-2">
             メニュー登録画面で追加してください
           </Text>
         </View>
+        <Card
+          className='bg-blue-400  items-center justify-center rounded-xl'
+        >
+          <TouchableOpacity
+            onPress={onNavigateToMenus}
+          >
+            <Text className='text-white font-bold'> メニュー登録</Text>
+          </TouchableOpacity>
+        </Card>
+      </View>
+
       )}
 
       {/* Spacer for floating cart button on mobile */}
@@ -482,6 +500,23 @@ export const Register = ({ branch, onBack, onNavigateToHistory }: RegisterProps)
     <View className={`bg-white ${isMobile ? 'flex-1' : 'flex-1 border-l border-gray-200'}`}>
       <View className="p-3 border-b border-gray-200 flex-row items-center justify-between">
         <Text className="text-lg font-bold text-gray-900">注文内容</Text>
+        <TouchableOpacity
+          onPress={() => setShowHint(prev => !prev)}
+          className="w-6 h-6 items-center justify-center rounded-full bg-gray-200"
+          activeOpacity={0.7}
+        >
+          <Text className="text-xs text-gray-600 font-bold">?</Text>
+        </TouchableOpacity>
+        <Modal
+          visible={showHint}
+          onClose={() => setShowHint(false)}
+          title="メニューの割引について"
+        >
+          <Text className="text-gray-700">
+            割引を設定したい商品を、カート内で長押ししてください。
+          </Text>
+      </Modal>
+
         {isMobile && (
           <TouchableOpacity onPress={() => setShowCart(false)} className="p-2">
             <Text className="text-gray-500 text-2xl">×</Text>

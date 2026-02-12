@@ -132,7 +132,8 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
 
       setMenus(data || []);
       await saveMenus(data || []);
-    } catch (error) {
+    } catch (error:any) {
+      if (error?.name === 'AbortError') return;
       console.error('Error fetching menus:', error);
       // Use local data as fallback
       const localMenus = await getMenus();

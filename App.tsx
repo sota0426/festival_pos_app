@@ -4,16 +4,16 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import './global.css';
 
-import { Home } from './components/Home';
 import { HQLogin, HQDashboard, BranchManagement } from './components/hq';
 import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, VisitorCounter, OrderBoard, BudgetManager } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 import { HQHome } from 'components/hq/HQHome';
 import {isSupabaseConfigured} from "./lib/supabase"
+import { AutomaticCounterScreen } from 'components/store/sub/VisitorCounter/AutomaticCounter+Screen';
+import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
 import { MissingEnvScreen } from 'components/MissingEnvScreen';
-import { AutomaticCounterScreen } from 'components/store/sub/VisitorCounter/Screen+AutoCounter';
-import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/Screen+ManualCounter';
+import { Home } from 'components/Home';
 
 type Screen =
   | 'home'
@@ -32,7 +32,7 @@ type Screen =
   | 'store_budget';
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState<Screen>('home');
+  const [currentScreen, setCurrentScreen] = useState<Screen>("store_autocounter");
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
 
   // Initialize sync
@@ -144,6 +144,7 @@ export default function App() {
             branch={currentBranch}
             onBack={() => setCurrentScreen('store_home')}
             onNavigateToHistory={() => setCurrentScreen('store_history')}
+            onNavigateToMenus={()=>setCurrentScreen("store_menus")}
           />
         );
 

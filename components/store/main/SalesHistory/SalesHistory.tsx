@@ -1,21 +1,27 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl, ActivityIndicator, Platform, ScrollView } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl, ActivityIndicator} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Card, Header, Modal, Button } from '../../common';
-import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
-import { getPendingTransactions, getMenus, saveMenus } from '../../../lib/storage';
-import { alertConfirm, alertNotify } from '../../../lib/alertUtils';
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-import type { Branch, Transaction, TransactionItem, PendingTransaction } from '../../../types/database';
+import { Card, Header, Modal, Button } from '../../../common';
+import { supabase, isSupabaseConfigured } from '../../../../lib/supabase';
+import { getPendingTransactions, getMenus, saveMenus } from '../../../../lib/storage';
+import { alertConfirm, alertNotify } from '../../../../lib/alertUtils';
+import type { Branch, Transaction, TransactionItem } from '../../../../types/database';
 import { MenuSalesSummary } from './MenuSalesSummary';
+import { handleExportCSV } from './ExportCSV';
+import { CancelModal } from './CancelModal';
+import { TransactionCard } from './TransactionCard';
 
 interface SalesHistoryProps {
   branch: Branch;
   onBack: () => void;
 }
 
-interface TransactionWithItems extends Transaction {
+export const formatDate = (dateString: string): string => {
+  const date = new Date(dateString);
+  return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+};
+
+export interface TransactionWithItems extends Transaction {
   items: TransactionItem[];
 }
 
@@ -254,171 +260,6 @@ export const SalesHistory = ({
     );
   };
 
-  // CSV export
-  const generateCSV = (): string => {
-    const completedTrans = transactions.filter((t) => t.status === 'completed');
-
-    // Header
-    const headers = [
-      '取引番号',
-      '日時',
-      '支払い方法',
-      'メニュー名',
-      '単価',
-      '数量',
-      '小計',
-      '取引合計',
-    ];
-
-    const rows: string[][] = [];
-
-    completedTrans.forEach((t) => {
-      const dateStr = new Date(t.created_at).toLocaleString('ja-JP');
-      const methodLabel =
-        t.payment_method === 'paypay' ? 'キャッシュレス' : t.payment_method === 'cash' ? '現金' : '金券';
-
-      t.items.forEach((item) => {
-        rows.push([
-          t.transaction_code,
-          dateStr,
-          methodLabel,
-          item.menu_name,
-          item.unit_price.toString(),
-          item.quantity.toString(),
-          item.subtotal.toString(),
-          t.total_amount.toString(),
-        ]);
-      });
-    });
-
-    // Menu summary section
-    const menuMap = new Map<string, { name: string; qty: number; total: number }>();
-    completedTrans.forEach((t) => {
-      t.items.forEach((item) => {
-        const existing = menuMap.get(item.menu_id);
-        if (existing) {
-          existing.qty += item.quantity;
-          existing.total += item.subtotal;
-        } else {
-          menuMap.set(item.menu_id, {
-            name: item.menu_name,
-            qty: item.quantity,
-            total: item.subtotal,
-          });
-        }
-      });
-    });
-
-    const totalSalesAmount = completedTrans.reduce((sum, t) => sum + t.total_amount, 0);
-
-    let csv = '\uFEFF'; // BOM for Excel UTF-8
-    csv += headers.join(',') + '\n';
-    rows.forEach((row) => {
-      csv += row.map((cell) => `"${cell}"`).join(',') + '\n';
-    });
-
-    csv += '\n';
-    csv += '"メニュー別集計"\n';
-    csv += '"メニュー名","販売数量","売上合計"\n';
-    Array.from(menuMap.values()).forEach((m) => {
-      csv += `"${m.name}","${m.qty}","${m.total}"\n`;
-    });
-
-    csv += '\n';
-    csv += `"総売上","","${totalSalesAmount}"\n`;
-    csv += `"取引件数","","${completedTrans.length}"\n`;
-
-    return csv;
-  };
-
-  const handleExportCSV = async () => {
-    const csv = generateCSV();
-    const filename = `sales_${branch.branch_code}_${new Date().toISOString().split('T')[0]}.csv`;
-
-    if (Platform.OS === 'web') {
-      // Web: Blob download
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      link.click();
-      URL.revokeObjectURL(url);
-      alertNotify('完了', 'CSVファイルをダウンロードしました');
-    } else {
-      // Native: expo-file-system (new API) + expo-sharing
-      try {
-        const file = new File(Paths.cache, filename);
-        file.create();
-        file.write(csv);
-        await Sharing.shareAsync(file.uri, {
-          mimeType: 'text/csv',
-          dialogTitle: '売上データCSV',
-          UTI: 'public.comma-separated-values-text',
-        });
-      } catch (error) {
-        console.error('Error exporting CSV:', error);
-        alertNotify('エラー', 'CSV出力に失敗しました');
-      }
-    }
-  };
-
-  const formatDate = (dateString: string): string => {
-    const date = new Date(dateString);
-    return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-  };
-
-  const renderTransaction = ({ item }: { item: TransactionWithItems }) => {
-    const isCancelled = item.status === 'cancelled';
-
-    return (
-      <TouchableOpacity
-        onPress={() => {
-          setSelectedTransaction(item);
-          setShowDetailModal(true);
-        }}
-        activeOpacity={0.7}
-      >
-        <Card className={`mb-3 ${isCancelled ? 'opacity-60' : ''}`}>
-          <View className="flex-row items-center justify-between">
-            <View className="flex-1">
-              <View className="flex-row items-center gap-2">
-                <Text className="text-gray-500 text-sm">{formatDate(item.created_at)}</Text>
-                {isCancelled && (
-                  <View className="bg-red-100 px-2 py-0.5 rounded">
-                    <Text className="text-red-600 text-xs font-medium">取消済</Text>
-                  </View>
-                )}
-              </View>
-              <Text className="text-gray-700 text-xs mt-0.5">{item.transaction_code}</Text>
-              <Text className="text-gray-900 mt-1" numberOfLines={1}>
-                {item.items.map((i) => `${i.menu_name} x${i.quantity}`).join(', ')}
-              </Text>
-            </View>
-            <View className="items-end">
-              <Text className={`text-lg font-bold ${isCancelled ? 'text-gray-400 line-through' : 'text-blue-600'}`}>
-                {item.total_amount.toLocaleString()}円
-              </Text>
-              <View className={`px-2 py-0.5 rounded mt-1 ${
-                item.payment_method === 'paypay' ? 'bg-blue-100'
-                  : item.payment_method === 'cash' ? 'bg-green-100'
-                  : 'bg-yellow-100'
-              }`}>
-                <Text className={`text-xs ${
-                  item.payment_method === 'paypay' ? 'text-blue-700'
-                    : item.payment_method === 'cash' ? 'text-green-700'
-                    : 'text-yellow-700'
-                }`}>
-                  {item.payment_method === 'paypay' ? 'キャッシュレス' : item.payment_method === 'cash' ? '現金' : '金券'}
-                </Text>
-              </View>
-            </View>
-          </View>
-        </Card>
-      </TouchableOpacity>
-    );
-  };
-
   // Calculate totals
   const completedTransactions = transactions.filter((t) => t.status === 'completed');
   const totalSales = completedTransactions.reduce((sum, t) => sum + t.total_amount, 0);
@@ -442,17 +283,18 @@ export const SalesHistory = ({
               />
             ) : (
                <Button
-                title="履歴"
+                title="販売履歴"
                 onPress={() => setView("history")}
                 size="sm"
               />
             )}
             <Button
-              title="CSV"
-              onPress={handleExportCSV}
+              title="CSVダウンロード"
+              onPress={()=>handleExportCSV({transactions,branch})}
               size="sm"
               variant="secondary"
             />
+
           </View>
         }
       />
@@ -488,7 +330,16 @@ export const SalesHistory = ({
       { !loading && view === "history" && (
       <FlatList
         data={transactions}
-        renderItem={renderTransaction}
+        renderItem={(renderTransaction)=>(
+            <TransactionCard
+              transaction={renderTransaction.item}
+              onPress={(t) => {
+                setSelectedTransaction(t);
+                setShowDetailModal(true);
+              }}
+              formatDate={formatDate}
+            />
+        )}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ padding: 16, paddingTop: 0 }}
         refreshControl={
@@ -505,69 +356,18 @@ export const SalesHistory = ({
       />
       )}
 
-      {/* Detail Modal */}
-      <Modal
+      <CancelModal
         visible={showDetailModal}
+        transaction={selectedTransaction}
+        cancelling={cancelling}
         onClose={() => {
           setShowDetailModal(false);
           setSelectedTransaction(null);
         }}
-        title="取引詳細"
-      >
-        {selectedTransaction && (
-          <>
-            <View className="mb-4">
-              <Text className="text-gray-500 text-sm">取引番号</Text>
-              <Text className="text-gray-900 font-medium">{selectedTransaction.transaction_code}</Text>
-            </View>
-
-            <View className="flex-row mb-4">
-              <View className="flex-1">
-                <Text className="text-gray-500 text-sm">日時</Text>
-                <Text className="text-gray-900">{formatDate(selectedTransaction.created_at)}</Text>
-              </View>
-              <View className="flex-1">
-                <Text className="text-gray-500 text-sm">支払い方法</Text>
-                <Text className="text-gray-900">
-                  {selectedTransaction.payment_method === 'paypay' ? 'キャッシュレス' : selectedTransaction.payment_method === 'cash' ? '現金' : '金券'}
-                </Text>
-              </View>
-            </View>
-
-            <View className="mb-4">
-              <Text className="text-gray-500 text-sm mb-2">注文内容</Text>
-              {selectedTransaction.items.map((item) => (
-                <View key={item.id} className="flex-row justify-between py-1 border-b border-gray-100">
-                  <Text className="text-gray-900">{item.menu_name} x {item.quantity}</Text>
-                  <Text className="text-gray-900">{item.subtotal.toLocaleString()}円</Text>
-                </View>
-              ))}
-              <View className="flex-row justify-between pt-2 mt-2">
-                <Text className="font-bold text-gray-900">合計</Text>
-                <Text className="font-bold text-blue-600">
-                  {selectedTransaction.total_amount.toLocaleString()}円
-                </Text>
-              </View>
-            </View>
-
-            {selectedTransaction.status === 'cancelled' ? (
-              <View className="bg-red-50 p-3 rounded-lg">
-                <Text className="text-red-600 text-center">
-                  この取引は {formatDate(selectedTransaction.cancelled_at!)} に取消されました
-                </Text>
-              </View>
-            ) : (
-              <Button
-                title="この取引を取消"
-                onPress={() => handleCancelTransaction(selectedTransaction)}
-                variant="danger"
-                loading={cancelling}
-              />
-            )}
-          </>
-        )}
-      </Modal>
-
+        onCancelTransaction={handleCancelTransaction}
+        formatDate={formatDate}
+      />
+      
     </SafeAreaView>
   );
 };
