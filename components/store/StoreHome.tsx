@@ -292,7 +292,7 @@ export const StoreHome = ({
             <TouchableOpacity onPress={onNavigateToCounter} activeOpacity={0.8}>
               <Card className="bg-purple-500 p-8">
                 <Text className="text-white text-3xl font-bold text-center">来客カウンター</Text>
-                <Text className="text-purple-100 text-center mt-2">タップして来場者数を記録</Text>
+                <Text className="text-purple-100 text-center mt-2">ボタンをタップして来場者数を記録</Text>
               </Card>
             </TouchableOpacity>
 

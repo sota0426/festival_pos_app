@@ -10,9 +10,10 @@ import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, Visitor
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 import { HQHome } from 'components/hq/HQHome';
-import { AutomaticCounter } from 'components/store/sub/AutoCounter';
 import {isSupabaseConfigured} from "./lib/supabase"
 import { MissingEnvScreen } from 'components/MissingEnvScreen';
+import { AutomaticCounterScreen } from 'components/store/sub/VisitorCounter/Screen+AutoCounter';
+import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/Screen+ManualCounter';
 
 type Screen =
   | 'home'
@@ -164,7 +165,7 @@ export default function App() {
           return null;
         }
         return (
-          <VisitorCounter
+          <ManualCounterScreen
             branch={currentBranch}
             onBack={() => setCurrentScreen('store_home')}
           />
@@ -177,7 +178,9 @@ export default function App() {
           return null;
         }
         return (
-          <AutomaticCounter
+          <AutomaticCounterScreen
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}   
           />
         );
 

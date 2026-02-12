@@ -157,9 +157,9 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
-      <View className="flex-1 justify-center p-6">
+      <View className="flex-1 justify-center p-6 items-center">
         <Card className="p-6">
-          <Text className="text-2xl font-bold text-center mb-2">模擬店ログイン</Text>
+          <Text className="text-2xl font-bold text-center mb-5">模擬店ログイン</Text>
 
           {!foundBranch && !isNewBranch && (
             <>
@@ -183,8 +183,8 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
 
           {foundBranch && (
             <>
-              <Text className="text-center font-bold mb-2">
-                {foundBranch.branch_name}
+              <Text className="text-center font-bold bg-green-100 px-10 py-2 mb-5 rounded-full ">
+               {foundBranch.branch_code} :  {foundBranch.branch_name}
               </Text>
 
               <Input

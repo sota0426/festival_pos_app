@@ -44,7 +44,7 @@ export const HQLogin = ({ onLoginSuccess, onBackToHome }: HQLoginProps) => {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
-      <View className="flex-1 justify-center p-6">
+      <View className="flex-1 justify-center p-6 items-center">
         <Card className="p-6">
           <Text className="text-2xl font-bold text-center text-gray-900 mb-2">
             本部ログイン
