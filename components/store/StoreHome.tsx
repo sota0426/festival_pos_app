@@ -18,6 +18,8 @@ interface StoreHomeProps {
   onNavigateToAutoCounter:()=>void;
   onNavigateToOrderBoard: () => void;
   onNavigateToBudget: () => void;
+  onNavigateToBudgetExpense: () => void;
+  onNavigateToBudgetBreakeven: () => void;
   onLogout: () => void;
 }
 
@@ -37,6 +39,8 @@ export const StoreHome = ({
   onNavigateToAutoCounter,
   onNavigateToOrderBoard,
   onNavigateToBudget,
+  onNavigateToBudgetExpense,
+  onNavigateToBudgetBreakeven,
   onLogout,
 }: StoreHomeProps) => {
   const [activeTab, setActiveTab] = useState<TabKey>('main');
@@ -265,21 +269,21 @@ export const StoreHome = ({
 
             <TouchableOpacity onPress={onNavigateToRegister} activeOpacity={0.8}>
               <Card className="bg-sky-400 p-8">
-                <Text className="text-white text-3xl font-bold text-center">レジ</Text>
+                <Text className="text-white text-2xl  font-bold text-center">レジ</Text>
                 <Text className="text-blue-100 text-center mt-2">注文・会計を行う</Text>
               </Card>
             </TouchableOpacity>
 
               <TouchableOpacity onPress={onNavigateToMenus} activeOpacity={0.8}>
                 <Card className="bg-green-400 p-6">
-                  <Text className="text-white text-3xl font-bold text-center">メニュー登録</Text>
+                  <Text className="text-white text-2xl  font-bold text-center">メニュー登録</Text>
                   <Text className="text-green-100 text-center mt-2">商品・在庫管理</Text>
                 </Card>
               </TouchableOpacity>
 
               <TouchableOpacity onPress={onNavigateToHistory} activeOpacity={0.8}>
                 <Card className="bg-orange-400 p-6">
-                  <Text className="text-white text-3xl font-bold text-center">販売履歴</Text>
+                  <Text className="text-white text-2xl  font-bold text-center">販売履歴</Text>
                   <Text className="text-orange-100 text-center mt-2">売上確認・取消</Text>
                 </Card>
               </TouchableOpacity>
@@ -289,29 +293,29 @@ export const StoreHome = ({
 
         {activeTab === 'sub' && (
           <View className="flex-1 gap-4">
-            <TouchableOpacity onPress={onNavigateToCounter} activeOpacity={0.8}>
-              <Card className="bg-purple-500 p-8">
-                <Text className="text-white text-3xl font-bold text-center">来客カウンター</Text>
-                <Text className="text-purple-100 text-center mt-2">ボタンをタップして来場者数を記録</Text>
-              </Card>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={onNavigateToAutoCounter} activeOpacity={0.8}>
-              <Card className="bg-slate-500 p-8">
-                <Text className="text-white text-3xl font-bold text-center">自動集計カウンター</Text>
-                <Text className="text-purple-100 text-center mt-2">カメラを起動して自動で来場者数を集計</Text>
-              </Card>
-            </TouchableOpacity>
-
-
-
 
             <TouchableOpacity onPress={onNavigateToOrderBoard} activeOpacity={0.8}>
-              <Card className="bg-amber-400 p-8">
-                <Text className="text-white text-3xl font-bold text-center">注文受付</Text>
+              <Card className="bg-orange-400 p-8">
+                <Text className="text-white text-2xl  font-bold text-center">注文受付</Text>
                 <Text className="text-amber-100 text-center mt-2">別端末で注文を表示・管理</Text>
               </Card>
             </TouchableOpacity>
+
+            <View className='flex-row justify-between'>
+              <TouchableOpacity onPress={onNavigateToCounter} activeOpacity={0.8}>
+                <Card className="bg-purple-500 px-12 py-8">
+                  <Text className="text-white text-2xl  font-bold text-center">来客カウンター</Text>
+                  <Text className="text-purple-100 text-center mt-2">ボタンをタップして来場者数を記録</Text>
+                </Card>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={onNavigateToAutoCounter} activeOpacity={0.8}>
+                <Card className="bg-slate-500 p-8">
+                  <Text className="text-white text-2xl  font-bold text-center">自動集計カウンター</Text>
+                  <Text className="text-purple-100 text-center mt-2">カメラを起動して自動で来場者数を集計</Text>
+                </Card>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
 
@@ -319,8 +323,22 @@ export const StoreHome = ({
           <View className="flex-1 gap-4">
             <TouchableOpacity onPress={onNavigateToBudget} activeOpacity={0.8}>
               <Card className="bg-indigo-500 p-8">
-                <Text className="text-white text-3xl font-bold text-center">予算管理</Text>
-                <Text className="text-indigo-100 text-center mt-2">支出記録・損益分岐点・報告書</Text>
+                <Text className="text-white text-2xl  font-bold text-center">予算管理</Text>
+                <Text className="text-indigo-100 text-center mt-2">予算設定・ダッシュボード・報告書</Text>
+              </Card>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={onNavigateToBudgetExpense} activeOpacity={0.8}>
+              <Card className="bg-emerald-500 p-8">
+                <Text className="text-white text-2xl  font-bold text-center">支出記録</Text>
+                <Text className="text-emerald-100 text-center mt-2">予算管理とは別担当が支出を入力</Text>
+              </Card>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={onNavigateToBudgetBreakeven} activeOpacity={0.8}>
+              <Card className="bg-violet-500 p-8">
+                <Text className="text-white text-2xl  font-bold text-center">損益分岐点の計算</Text>
+                <Text className="text-violet-100 text-center mt-2">価格・原価から必要販売数を試算</Text>
               </Card>
             </TouchableOpacity>
           </View>
@@ -353,7 +371,7 @@ export const StoreHome = ({
                 >
                   <Text
                     className={`font-medium ${
-                      branch.status === 'active' ? 'text-green-700' : 'text-gray-500'
+                      branch.status === 'active' ? 'text-green-600' : 'text-gray-500'
                     }`}
                   >
                     {branch.status === 'active' ? '稼働中' : '停止中'}

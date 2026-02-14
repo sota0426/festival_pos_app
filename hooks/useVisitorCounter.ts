@@ -1,152 +1,213 @@
-import { getPendingVisitorCounts, savePendingVisitorCount } from "lib/storage";
+import * as Crypto from "expo-crypto";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { HalfHourlyVisitors, PendingVisitorCount, VisitorGroup } from "types/database";
-import * as Crypto from 'expo-crypto';
+import {
+  clearPendingVisitorCountsByBranch,
+  clearPendingVisitorCountsByBranchAndDate,
+  getPendingVisitorCounts,
+  savePendingVisitorCount,
+} from "lib/storage";
 import { alertNotify, safeVibrate } from "lib/alertUtils";
-import { isSupabaseConfigured, supabase } from "lib/supabase";
+import type {
+  DailyVisitorTrend,
+  PendingVisitorCount,
+  QuarterHourlyGroupVisitors,
+  VisitorGroup,
+} from "types/database";
 
-const GROUPS:VisitorGroup[]=[
-  "group1",
-  "group2",
-  "group3",
-  "group4"
-]
+export const useVisitorCounter = (branchId: string) => {
+  const [branchCounts, setBranchCounts] = useState<PendingVisitorCount[]>([]);
+  const [lastCountTime, setLastCountTime] = useState<string | null>(null);
 
-export const useVisitorCounter = (branchId:string) =>{
+  const toLocalDateKey = (date: Date): string => {
+    const y = date.getFullYear();
+    const m = (date.getMonth() + 1).toString().padStart(2, "0");
+    const d = date.getDate().toString().padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  };
 
-  const [pendingCounts,setPendingCounts] = useState<PendingVisitorCount[]>([])
-  const [lastCountTime , setLastCountTime] = useState<string | null>(null);
+  const buildQuarterHourlyGroupData = (
+    counts: PendingVisitorCount[],
+  ): QuarterHourlyGroupVisitors[] => {
+    const map = new Map<string, QuarterHourlyGroupVisitors>();
 
-  //**initial loading */
-  const loadTodayCounts = useCallback(async()=>{
-    const all = await getPendingVisitorCounts();
-    const today = new Date().toDateString();
+    counts.forEach((count) => {
+      const d = new Date(count.timestamp);
+      const slotMinutes = Math.floor(d.getMinutes() / 15) * 15;
+      const key = `${d.getHours().toString().padStart(2, "0")}:${slotMinutes
+        .toString()
+        .padStart(2, "0")}`;
 
-    const todayCounts = all.filter(
-      (c) =>
-        c.branch_id === branchId &&
-        new Date(c.timestamp).toDateString() == today
-    );
+      const current = map.get(key) ?? {
+        time_slot: key,
+        count: 0,
+        group_counts: {},
+      };
 
-    setPendingCounts(todayCounts);
-
-    if(pendingCounts.length > 0){
-      setLastCountTime(todayCounts[todayCounts.length - 1].timestamp);
-    }
-  },[branchId]);
-
-  useEffect(()=>{
-    loadTodayCounts();
-  },[])
-
-  /** counts per Group */
-  const groupCounts = useMemo(()=>{
-    const map:Record<VisitorGroup,number> = {
-      group1:0,
-      group2:0,
-      group3:0,
-      group4:0,
-    };
-
-    pendingCounts.forEach((c)=>{
-      map[c.group] += c.count;
+      current.count += count.count;
+      current.group_counts[count.group] =
+        (current.group_counts[count.group] ?? 0) + count.count;
+      map.set(key, current);
     });
 
-    return map
-  },[pendingCounts])
+    return Array.from(map.values()).sort((a, b) =>
+      a.time_slot.localeCompare(b.time_slot),
+    );
+  };
 
-  /**sum */
-  const todayTotal = useMemo(()=>{
-    return Object.values(groupCounts).reduce((a,b) => a+b , 0)
-  },[groupCounts]);
+  const formatDateLabel = (dateKey: string): string => {
+    const [y, m, d] = dateKey.split("-").map(Number);
+    const date = new Date(y, (m ?? 1) - 1, d ?? 1);
+    const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+    return `${m}/${d} (${weekdays[date.getDay()]})`;
+  };
 
-  const handleCount = async(
-    group:VisitorGroup,
-    count:number
-  ) => {
-    if( count === 0) return;
+  const loadBranchCounts = useCallback(async () => {
+    const all = await getPendingVisitorCounts();
+    const currentBranchCounts = all
+      .filter((count) => count.branch_id === branchId)
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+    setBranchCounts(currentBranchCounts);
+
+    const todayKey = toLocalDateKey(new Date());
+    const todayCounts = currentBranchCounts.filter(
+      (count) => toLocalDateKey(new Date(count.timestamp)) === todayKey,
+    );
+    setLastCountTime(
+      todayCounts.length > 0 ? todayCounts[todayCounts.length - 1].timestamp : null,
+    );
+  }, [branchId]);
+
+  useEffect(() => {
+    loadBranchCounts();
+  }, [loadBranchCounts]);
+
+  const todayKey = toLocalDateKey(new Date());
+  const todayCounts = useMemo(
+    () =>
+      branchCounts.filter(
+        (count) => toLocalDateKey(new Date(count.timestamp)) === todayKey,
+      ),
+    [branchCounts, todayKey],
+  );
+
+  const groupCounts = useMemo(() => {
+    const map: Record<VisitorGroup, number> = {};
+    todayCounts.forEach((count) => {
+      map[count.group] = (map[count.group] ?? 0) + count.count;
+    });
+    return map;
+  }, [todayCounts]);
+
+  const todayTotal = useMemo(
+    () => Object.values(groupCounts).reduce((sum, value) => sum + value, 0),
+    [groupCounts],
+  );
+
+  const handleCount = async (group: VisitorGroup, count: number) => {
+    if (count === 0) return;
 
     const now = new Date().toISOString();
-    const id = Crypto.randomUUID();
+    const visitor: PendingVisitorCount = {
+      id: Crypto.randomUUID(),
+      branch_id: branchId,
+      group,
+      count,
+      timestamp: now,
+      synced: false,
+    };
 
     safeVibrate(40);
 
-    const visitor:PendingVisitorCount = {
-      id,
-      branch_id:branchId,
-      group,
-      count,
-      timestamp:now,
-      synced:false,
-    };
-
-    try{
+    try {
       await savePendingVisitorCount(visitor);
-
-      setPendingCounts((prev) => [...prev,visitor]);
+      setBranchCounts((prev) => [...prev, visitor]);
       setLastCountTime(now);
-
-      if(isSupabaseConfigured()){
-        await supabase.from("visitor_counts").insert({
-          id,
-          branch_id:branchId,
-          group,
-          count,
-          timestamp:now
-        })
-      }
-    }catch{
-      alertNotify("Error","カウント保存に失敗しました")
+    } catch {
+      alertNotify("Error", "カウント保存に失敗しました");
     }
-
-
-
-
-
-
-  }
-
-  const quarterHourlyData = useMemo(():HalfHourlyVisitors[] =>{
-    const map = new Map<string,number>();
-    
-    pendingCounts.forEach((v)=>{
-      const d = new Date(v.timestamp);
-      const minites = d.getMinutes();
-      const slotMinutes = Math.floor(minites / 15) * 15 ;
-
-      const h = d.getHours().toString().padStart(2,"0");
-      const m = slotMinutes.toString().padStart(2,"0")
-      const key = `${h}:${m}`
-
-      map.set(key,(map.get(key) || 0 ) + v.count);
-    })
-
-      return Array.from(map.entries())
-        .map(([time_slot,count]) => ({time_slot,count}))
-        .sort((a,b) => a.time_slot.localeCompare(b.time_slot))
-  },[pendingCounts])
-
-  const maxVisitorSlot = useMemo(()=>{
-    if(quarterHourlyData.length === 0) return 1;
-    return Math.max(...quarterHourlyData.map((s)=>s.count));
-  },[quarterHourlyData]);
-
-  const formatTime = (isoString:string | null) =>{
-    if(!isoString) return "--:--";
-    const date = new Date(isoString);
-    return `${date.getHours().toString().padStart(2,"0")}:${date.getMinutes().toString().padStart(2,"0")}`;
   };
 
-  return{
+  const quarterHourlyGroupData = useMemo((): QuarterHourlyGroupVisitors[] => {
+    return buildQuarterHourlyGroupData(todayCounts);
+  }, [todayCounts]);
+
+  const maxVisitorSlot = useMemo(() => {
+    if (quarterHourlyGroupData.length === 0) return 1;
+    return Math.max(...quarterHourlyGroupData.map((slot) => slot.count), 1);
+  }, [quarterHourlyGroupData]);
+
+  const pastDailyTrends = useMemo((): DailyVisitorTrend[] => {
+    const byDate = new Map<string, PendingVisitorCount[]>();
+
+    branchCounts.forEach((count) => {
+      const dateKey = toLocalDateKey(new Date(count.timestamp));
+      if (dateKey === todayKey) return;
+      const current = byDate.get(dateKey) ?? [];
+      current.push(count);
+      byDate.set(dateKey, current);
+    });
+
+    return Array.from(byDate.entries())
+      .map(([dateKey, counts]) => {
+        const slots = buildQuarterHourlyGroupData(counts);
+        const total = counts.reduce((sum, count) => sum + count.count, 0);
+        const maxSlot = Math.max(...slots.map((slot) => slot.count), 1);
+
+        return {
+          date_key: dateKey,
+          date_label: formatDateLabel(dateKey),
+          total,
+          max_slot: maxSlot,
+          slots,
+        };
+      })
+      .sort((a, b) => b.date_key.localeCompare(a.date_key));
+  }, [branchCounts, todayKey]);
+
+  const formatTime = (isoString: string | null) => {
+    if (!isoString) return "--:--";
+    const date = new Date(isoString);
+    return `${date.getHours().toString().padStart(2, "0")}:${date
+      .getMinutes()
+      .toString()
+      .padStart(2, "0")}`;
+  };
+
+  const resetTodayCounts = async () => {
+    try {
+      await clearPendingVisitorCountsByBranchAndDate(branchId, todayKey);
+      setBranchCounts((prev) =>
+        prev.filter(
+          (count) => toLocalDateKey(new Date(count.timestamp)) !== todayKey,
+        ),
+      );
+      setLastCountTime(null);
+    } catch {
+      alertNotify("Error", "本日の来客数リセットに失敗しました");
+    }
+  };
+
+  const resetAllCounts = async () => {
+    try {
+      await clearPendingVisitorCountsByBranch(branchId);
+      setBranchCounts([]);
+      setLastCountTime(null);
+    } catch {
+      alertNotify("Error", "来客数の全削除に失敗しました");
+    }
+  };
+
+  return {
     groupCounts,
     todayTotal,
     lastCountTime,
     handleCount,
     formatTime,
-    quarterHourlyData,
+    quarterHourlyGroupData,
     maxVisitorSlot,
-  }
-
-
-
-}
+    pastDailyTrends,
+    resetTodayCounts,
+    resetAllCounts,
+  };
+};

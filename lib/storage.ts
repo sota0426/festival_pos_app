@@ -1,5 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Branch, Menu, MenuCategory, PendingTransaction, LocalStorage, PendingVisitorCount, StoreSettings, PaymentMode, BudgetExpense, BudgetSettings } from '../types/database';
+import type {
+  Branch,
+  Menu,
+  MenuCategory,
+  PendingTransaction,
+  LocalStorage,
+  PendingVisitorCount,
+  StoreSettings,
+  PaymentMode,
+  BudgetExpense,
+  BudgetSettings,
+  VisitorCounterGroup,
+} from '../types/database';
 
 const STORAGE_KEYS = {
   BRANCH: '@festival_pos/branch',
@@ -15,6 +27,18 @@ const STORAGE_KEYS = {
   MENU_CATEGORIES: '@festival_pos/menu_categories',
   ADMIN_PASSWORD: '@festival_pos/admin_password',
 };
+const VISITOR_GROUPS_KEY_PREFIX = '@festival_pos/visitor_groups';
+const BREAKEVEN_DRAFT_KEY_PREFIX = '@festival_pos/breakeven_draft';
+
+export interface BreakevenDraft {
+  product_name: string;
+  selling_price: string;
+  variable_cost: string;
+  fixed_cost: string;
+  sim_quantity: string;
+  show_analysis: boolean;
+  show_simulation: boolean;
+}
 
 // Branch storage
 export const saveBranch = async (branch: Branch): Promise<void> => {
@@ -135,6 +159,14 @@ export const getPendingVisitorCounts = async (): Promise<PendingVisitorCount[]> 
   return data ? JSON.parse(data) : [];
 };
 
+const toLocalDateKey = (iso: string): string => {
+  const date = new Date(iso);
+  const y = date.getFullYear();
+  const m = (date.getMonth() + 1).toString().padStart(2, '0');
+  const d = date.getDate().toString().padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 export const clearSyncedVisitorCounts = async (): Promise<void> => {
   const counts = await getPendingVisitorCounts();
   const unsyncedCounts = counts.filter((c) => !c.synced);
@@ -147,6 +179,52 @@ export const markVisitorCountSynced = async (countId: string): Promise<void> => 
     c.id === countId ? { ...c, synced: true } : c
   );
   await AsyncStorage.setItem(STORAGE_KEYS.PENDING_VISITOR_COUNTS, JSON.stringify(updatedCounts));
+};
+
+export const markVisitorCountsSynced = async (countIds: string[]): Promise<void> => {
+  if (countIds.length === 0) return;
+  const idSet = new Set(countIds);
+  const counts = await getPendingVisitorCounts();
+  const updatedCounts = counts.map((count) =>
+    idSet.has(count.id) ? { ...count, synced: true } : count
+  );
+  await AsyncStorage.setItem(STORAGE_KEYS.PENDING_VISITOR_COUNTS, JSON.stringify(updatedCounts));
+};
+
+export const clearPendingVisitorCountsByBranch = async (branchId: string): Promise<void> => {
+  const counts = await getPendingVisitorCounts();
+  const remaining = counts.filter((count) => count.branch_id !== branchId);
+  await AsyncStorage.setItem(STORAGE_KEYS.PENDING_VISITOR_COUNTS, JSON.stringify(remaining));
+};
+
+export const clearPendingVisitorCountsByBranchAndDate = async (
+  branchId: string,
+  dateKey: string,
+): Promise<void> => {
+  const counts = await getPendingVisitorCounts();
+  const remaining = counts.filter((count) => {
+    if (count.branch_id !== branchId) return true;
+    return toLocalDateKey(count.timestamp) !== dateKey;
+  });
+  await AsyncStorage.setItem(STORAGE_KEYS.PENDING_VISITOR_COUNTS, JSON.stringify(remaining));
+};
+
+export const saveVisitorGroups = async (branchId: string, groups: VisitorCounterGroup[]): Promise<void> => {
+  await AsyncStorage.setItem(`${VISITOR_GROUPS_KEY_PREFIX}/${branchId}`, JSON.stringify(groups));
+};
+
+export const getVisitorGroups = async (branchId: string): Promise<VisitorCounterGroup[]> => {
+  const data = await AsyncStorage.getItem(`${VISITOR_GROUPS_KEY_PREFIX}/${branchId}`);
+  return data ? JSON.parse(data) : [];
+};
+
+export const saveBreakevenDraft = async (branchId: string, draft: BreakevenDraft): Promise<void> => {
+  await AsyncStorage.setItem(`${BREAKEVEN_DRAFT_KEY_PREFIX}/${branchId}`, JSON.stringify(draft));
+};
+
+export const getBreakevenDraft = async (branchId: string): Promise<BreakevenDraft | null> => {
+  const data = await AsyncStorage.getItem(`${BREAKEVEN_DRAFT_KEY_PREFIX}/${branchId}`);
+  return data ? JSON.parse(data) : null;
 };
 
 // Store settings storage

@@ -1,23 +1,20 @@
 import { Card, Header } from "components/common"
-import { useVisitorCounter } from "hooks/useVisitorCounter";
 import { Text, View } from "react-native"
 import { Branch } from "types/database";
 
 interface Props{
     branch: Branch;
-    onBack:()=>void
+    onBack:()=>void;
+    todayTotal: number;
+    lastCountLabel: string;
 }
 
 export const VisitorHeader =({
     branch,
-    onBack
-}:Props)=>{
-
-  const {
+    onBack,
     todayTotal,
-    lastCountTime,
-    formatTime,
-  } = useVisitorCounter(branch.id);
+    lastCountLabel,
+}:Props)=>{
   const now = new Date();
   const slotMinute = Math.floor(now.getMinutes() / 15) * 15;
   const currentTimeSlot = `${now.getHours().toString().padStart(2, "0")}:${slotMinute.toString().padStart(2, "0")}`;
@@ -39,7 +36,7 @@ export const VisitorHeader =({
         <Card className="flex-1 items-center py-4">
             <Text className="text-gray-500 text-sm">現在の時間帯</Text>
             <Text className="text-2xl font-bold text-gray-700">{currentTimeSlot}</Text>
-            <Text className="text-gray-400 text-xs">最終: {formatTime(lastCountTime)}</Text>
+            <Text className="text-gray-400 text-xs">最終: {lastCountLabel}</Text>
         </Card>
         </View>
         </>

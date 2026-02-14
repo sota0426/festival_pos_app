@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, PanResponder } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, PanResponder, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Card, Header, Modal } from '../../common';
@@ -7,6 +7,7 @@ import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings, getMenuCategories } from '../../../lib/storage';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
 import type { Branch, Menu, MenuCategory, CartItem, PendingTransaction, PaymentMethodSettings } from '../../../types/database';
+import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
 
 interface RegisterProps {
   branch: Branch;
@@ -40,15 +41,23 @@ export const Register = ({
   const [discountTargetMenuId, setDiscountTargetMenuId] = useState<string | null>(null);
   const [discountAmount, setDiscountAmount] = useState('');
   const [showHint, setShowHint] = useState(false);
+  const [quickOrderInput, setQuickOrderInput] = useState('');
+  const [showQuickOrder, setShowQuickOrder] = useState(true);
+
+  const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
+
+  const scrollRef = useRef<ScrollView>(null)
+  const scrollY = useRef(0);
+  const quickOrderInputRef = useRef<TextInput>(null);
 
   const fetchMenus = useCallback(async () => {
     try {
       const localMenus = await getMenus();
       const branchMenus = localMenus.filter((m) => m.branch_id === branch.id && m.is_active);
-      setMenus(branchMenus);
+      setMenus(sortMenus(branchMenus));
 
       const localCategories = await getMenuCategories();
       const branchCategories = localCategories.filter((c) => c.branch_id === branch.id);
@@ -58,7 +67,7 @@ export const Register = ({
     } finally {
       setLoading(false);
     }
-  }, [branch.id]);
+  }, [branch.id, sortMenus]);
 
   useEffect(() => {
     fetchMenus();
@@ -70,6 +79,21 @@ export const Register = ({
     };
     loadSettings();
   }, [fetchMenus]);
+
+  const { orderedCategories, categoryMetaMap } = useMemo(() => getCategoryMetaMap(categories), [categories]);
+  const menuCodeMap = useMemo(() => buildMenuCodeMap(menus, categories), [menus, categories]);
+  const menuNumberMap = useMemo(() => {
+    const map = new Map<number, Menu>();
+    menus.forEach((menu) => {
+      const code = menuCodeMap.get(menu.id);
+      if (!code) return;
+      const numberPart = parseInt(code.replace(/\D/g, ''), 10);
+      if (!Number.isNaN(numberPart)) {
+        map.set(numberPart, menu);
+      }
+    });
+    return map;
+  }, [menus, menuCodeMap]);
 
   const totalAmount = cart.reduce((sum, item) => sum + item.subtotal, 0);
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -128,7 +152,42 @@ export const Register = ({
         },
       ];
     });
+
+    requestAnimationFrame(()=>{
+      scrollRef.current?.scrollTo({
+        y:scrollY.current,
+        animated:false,
+      })
+    })
   };
+
+  const addToCartByNumber = () => {
+    const numberPart = parseInt(quickOrderInput.replace(/\D/g, ''), 10);
+    if (Number.isNaN(numberPart)) {
+      alertNotify('入力エラー', 'メニュー番号を入力してください');
+      requestAnimationFrame(() => {
+        quickOrderInputRef.current?.focus();
+      });
+      return;
+    }
+
+    const targetMenu = menuNumberMap.get(numberPart);
+    if (!targetMenu) {
+      alertNotify('未登録', `メニュー番号 ${numberPart} は見つかりません`);
+      requestAnimationFrame(() => {
+        quickOrderInputRef.current?.focus();
+      });
+      return;
+    }
+
+    addToCart(targetMenu);
+    setQuickOrderInput('');
+    requestAnimationFrame(() => {
+      quickOrderInputRef.current?.focus();
+    });
+  };
+
+
 
   const updateCartItemQuantity = (menuId: string, change: number) => {
     setCart((prevCart) => {
@@ -363,6 +422,26 @@ export const Register = ({
     }
   };
 
+  const clearDiscount = () => {
+    if (!discountTargetMenuId) return;
+
+    setCart((prev) =>
+      prev.map((item) =>
+        item.menu_id === discountTargetMenuId
+          ? {
+              ...item,
+              discount: 0,
+              subtotal: item.quantity * item.unit_price,
+            }
+          : item,
+      ),
+    );
+
+    setDiscountAmount('');
+    setShowDiscountModal(false);
+    setDiscountTargetMenuId(null);
+  };
+
   const receivedNum = parseInt(receivedAmount, 10) || 0;
   const changeNum = receivedNum - totalAmount >= 0 ? receivedNum - totalAmount : -1 ;
 
@@ -380,12 +459,21 @@ export const Register = ({
   };
 
   // Helper to render a group of menu cards
-  const renderMenuCards = (menuList: Menu[]) => (
+  const renderMenuCards = (
+    menuList: Menu[],
+    categoryVisual: {
+      cardBgClass: string;
+      cardBorderClass: string;
+      chipBgClass: string;
+      chipTextClass: string;
+    }
+  ) => (
     <View className="flex-row flex-wrap">
       {menuList.map((menu) => {
         const stockStatus = getStockStatus(menu);
         const isDisabled = menu.stock_management && menu.stock_quantity === 0;
         const cartItem = cart.find((item) => item.menu_id === menu.id);
+        const menuCode = menuCodeMap.get(menu.id) ?? 'M---';
 
         return (
           <View key={menu.id} className={isMobile ? 'w-1/2 p-1' : 'w-1/3 p-1'}>
@@ -395,8 +483,13 @@ export const Register = ({
               activeOpacity={0.7}
             >
               <Card
-                className={`items-center py-4 ${isDisabled ? 'opacity-50 bg-gray-200' : ''} ${cartItem ? 'border-2 border-blue-800' : ''}`}
+                className={`items-center py-4 border ${categoryVisual.cardBgClass} ${categoryVisual.cardBorderClass} ${isDisabled ? 'opacity-50 bg-gray-200' : ''} ${cartItem ? 'border-2 border-blue-800' : ''}`}
               >
+                <View className="absolute top-1 left-1 flex-row gap-1">
+                  <View className={`px-1.5 py-0.5 rounded ${categoryVisual.chipBgClass}`}>
+                    <Text className={`text-[10px] font-bold ${categoryVisual.chipTextClass}`}>{menuCode}</Text>
+                  </View>
+                </View>
                 <Text
                   className={`text-lg font-semibold text-center ${isDisabled ? 'text-gray-400' : 'text-gray-900'}`}
                   numberOfLines={2}
@@ -430,83 +523,149 @@ export const Register = ({
   const hasCategories = categories.length > 0 && menus.some((m) => m.category_id !== null);
 
   // Menu Grid Component
-  const MenuGrid = () => (
-    <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
-      <View className="p-2">
+  const MenuGrid = React.memo(() => {
+    return(
+      <ScrollView 
+        ref={scrollRef}
+        onScroll={(e) => {
+          scrollY.current = e.nativeEvent.contentOffset.y;
+        }}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+        className="flex-1"
+        keyboardShouldPersistTaps="always"
+      >
         {hasCategories ? (
           <>
             {/* Render menus grouped by category */}
-            {categories.map((category) => {
-              const categoryMenus = menus.filter((m) => m.category_id === category.id);
+            {orderedCategories.map((category) => {
+              const categoryMenus = sortMenus(menus.filter((m) => m.category_id === category.id));
               if (categoryMenus.length === 0) return null;
+
+              const categoryMeta = categoryMetaMap.get(category.id);
+              const visual = categoryMeta?.visual ?? UNCATEGORIZED_VISUAL;
+
               return (
-                <View key={category.id} className="mb-3">
-                  <View className="bg-purple-100 px-3 py-2 rounded-lg mb-1">
-                    <Text className="text-purple-800 font-bold">{category.category_name}</Text>
-                  </View>
-                  {renderMenuCards(categoryMenus)}
+                <View key={category.id} className="mb-4">
+                  <Text className="text-lg font-bold mb-2 px-4 text-gray-700">
+                    {category.category_name}
+                  </Text>
+                  {renderMenuCards(categoryMenus, visual)}
                 </View>
               );
             })}
+
             {/* Render uncategorized menus */}
             {(() => {
               const uncategorized = menus.filter(
                 (m) => !m.category_id || !categories.find((c) => c.id === m.category_id)
               );
-              if (uncategorized.length === 0) return null;
+              const sortedUncategorized = sortMenus(uncategorized);
+              if (sortedUncategorized.length === 0) return null;
+
               return (
-                <View className="mb-3">
-                  <View className="bg-gray-300 px-3 py-2 rounded-lg mb-1">
-                    <Text className="text-gray-700 font-bold">その他</Text>
-                  </View>
-                  {renderMenuCards(uncategorized)}
+                <View key="uncategorized" className="mb-4">
+                  <Text className="text-lg font-bold mb-2 px-4 text-gray-700">
+                    C00 その他
+                  </Text>
+                  {renderMenuCards(sortedUncategorized, UNCATEGORIZED_VISUAL)}
                 </View>
               );
             })()}
           </>
         ) : (
-          renderMenuCards(menus)
+          renderMenuCards(sortMenus(menus), UNCATEGORIZED_VISUAL)
         )}
-      </View>
 
-      {menus.length === 0 && !loading && (
-        <View>
-        <View className="items-center py-12">
-          <Text className="text-gray-500">メニューが登録されていません</Text>
-          <Text className="text-gray-400 text-sm mt-2">
-            メニュー登録画面で追加してください
-          </Text>
-        </View>
-        <Card
-          className='bg-blue-400  items-center justify-center rounded-xl'
-        >
+        {menus.length === 0 && !loading && (
+          <View className="flex-1 items-center justify-center p-8">
+            <Text className="text-gray-400 text-center mb-4">
+              メニューが登録されていません{'\n'}メニュー登録画面で追加してください
+            </Text>
+            <TouchableOpacity
+              onPress={onNavigateToMenus}
+              className="bg-blue-500 px-6 py-3 rounded-xl"
+              activeOpacity={0.8}
+            >
+              <Text className="text-white font-bold">メニュー登録</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Spacer for floating cart button on mobile */}
+        {isMobile && cart.length > 0 && <View style={{ height: 100 }} />}
+      </ScrollView>
+    );
+  });
+
+  const toggleQuickOrder = () => {
+    setShowQuickOrder((prev) => {
+      const next = !prev;
+      if (next) {
+        requestAnimationFrame(() => {
+          quickOrderInputRef.current?.focus();
+        });
+      }
+      return next;
+    });
+  };
+
+  const quickOrderSection = (
+    <View className="px-4 pt-2 pb-1 bg-gray-100">
+      <Card className="px-3 py-2">
+        <View className="flex-row items-center justify-between mb-1">
+          <Text className="text-xs text-gray-500">番号で注文追加（例: 1, 12, 103）</Text>
           <TouchableOpacity
-            onPress={onNavigateToMenus}
+            onPress={toggleQuickOrder}
+            className={`px-2 py-1 rounded ${showQuickOrder ? 'bg-blue-100' : 'bg-gray-200'}`}
+            activeOpacity={0.8}
           >
-            <Text className='text-white font-bold'> メニュー登録</Text>
+            <Text className={`text-xs font-semibold ${showQuickOrder ? 'text-blue-700' : 'text-gray-700'}`}>
+              {showQuickOrder ? '非表示' : '表示'}
+            </Text>
           </TouchableOpacity>
-        </Card>
-      </View>
-
-      )}
-
-      {/* Spacer for floating cart button on mobile */}
-      {isMobile && cart.length > 0 && <View className="h-24" />}
-    </ScrollView>
+        </View>
+        {showQuickOrder && (
+          <View className="flex-row items-center gap-2">
+            <TextInput
+              ref={quickOrderInputRef}
+              value={quickOrderInput}
+              onChangeText={setQuickOrderInput}
+              keyboardType="numeric"
+              returnKeyType="done"
+              blurOnSubmit={false}
+              onSubmitEditing={addToCartByNumber}
+              placeholder="メニュー番号"
+              placeholderTextColor="#9CA3AF"
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-900"
+            />
+            <TouchableOpacity
+              onPress={addToCartByNumber}
+              className="px-4 py-2 rounded-lg bg-blue-500"
+              activeOpacity={0.8}
+            >
+              <Text className="text-white font-semibold">追加</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </Card>
+    </View>
   );
 
   // Cart Component
   const CartPanel = () => (
     <View className={`bg-white ${isMobile ? 'flex-1' : 'flex-1 border-l border-gray-200'}`}>
       <View className="p-3 border-b border-gray-200 flex-row items-center justify-between">
-        <Text className="text-lg font-bold text-gray-900">注文内容</Text>
-        <TouchableOpacity
-          onPress={() => setShowHint(prev => !prev)}
-          className="w-6 h-6 items-center justify-center rounded-full bg-gray-200"
-          activeOpacity={0.7}
-        >
-          <Text className="text-xs text-gray-600 font-bold">?</Text>
-        </TouchableOpacity>
+        <View className='flex-row justify-center items-center gap-1'> 
+          <Text className="text-lg font-bold text-gray-900">注文内容</Text>
+          <TouchableOpacity
+            onPress={() => setShowHint(prev => !prev)}
+            className="w-6 h-6 items-center justify-center rounded-full bg-yellow-200"
+            activeOpacity={0.7}
+          >
+            <Text className="text-xs text-yellow-600 font-bold">?</Text>
+          </TouchableOpacity>
+        </View>
         <Modal
           visible={showHint}
           onClose={() => setShowHint(false)}
@@ -817,7 +976,7 @@ export const Register = ({
     ['clear', '0', 'backspace'],
   ];
 
-  const onDiscountNumpadPress = (key: string) => {
+  const onDiscountNumpadPress = (key: string, itemPrice: number) => {
     if (key === 'clear') {
       setDiscountAmount('');
     } else if (key === 'backspace') {
@@ -825,6 +984,9 @@ export const Register = ({
     } else {
       setDiscountAmount((prev) => {
         const next = prev + key;
+        const nextNumber = Number(next);
+        if(isNaN(nextNumber)) return prev;
+        if(nextNumber > itemPrice ) return String(itemPrice);
         if (next.length > 5) return prev;
         return next;
       });
@@ -873,7 +1035,7 @@ export const Register = ({
                 {row.map((key) => (
                   <TouchableOpacity
                     key={key}
-                    onPress={() => onDiscountNumpadPress(key)}
+                    onPress={() => onDiscountNumpadPress(key,discountTargetItem.unit_price)}
                     activeOpacity={0.7}
                     className={`flex-1 py-3 rounded-xl items-center justify-center ${
                       key === 'clear' ? 'bg-red-100' : key === 'backspace' ? 'bg-gray-200' : 'bg-gray-100'
@@ -890,10 +1052,7 @@ export const Register = ({
 
           <View className="flex-row gap-2 mt-3">
             <TouchableOpacity
-              onPress={() => {
-                setDiscountAmount('');
-                applyDiscount();
-              }}
+              onPress={clearDiscount}
               activeOpacity={0.7}
               className="flex-1 py-3 bg-gray-200 rounded-xl items-center"
             >
@@ -901,10 +1060,10 @@ export const Register = ({
             </TouchableOpacity>
             <TouchableOpacity
               onPress={applyDiscount}
-              disabled={discountNum <= 0 || discountNum >= discountTargetItem.unit_price}
+              disabled={discountNum <= 0 || discountNum > discountTargetItem.unit_price}
               activeOpacity={0.8}
               className={`flex-1 py-3 rounded-xl items-center ${
-                discountNum > 0 && discountNum < discountTargetItem.unit_price ? 'bg-blue-500' : 'bg-gray-300'
+                discountNum > 0 && discountNum <= discountTargetItem.unit_price ? 'bg-blue-500' : 'bg-gray-300'
               }`}
             >
               <Text className="text-white text-lg font-bold">適用</Text>
@@ -933,6 +1092,7 @@ export const Register = ({
           <CartPanel />
         ) : (
           <>
+            {quickOrderSection}
             <MenuGrid />
 
             {/* Floating Cart Button */}
@@ -979,6 +1139,7 @@ export const Register = ({
       <View className="flex-1 flex-row">
         {/* Left: Menu List */}
         <View className="flex-1">
+          {quickOrderSection}
           <MenuGrid />
         </View>
 

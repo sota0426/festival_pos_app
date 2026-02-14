@@ -14,6 +14,7 @@ import { AutomaticCounterScreen } from 'components/store/sub/VisitorCounter/Auto
 import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
 import { MissingEnvScreen } from 'components/MissingEnvScreen';
 import { Home } from 'components/Home';
+import { BudgetExpenseRecorder } from 'components/store/budget/BudgetExpenseRecorder';
 
 type Screen =
   | 'home'
@@ -29,7 +30,9 @@ type Screen =
   | 'store_counter'
   | 'store_autocounter'
   | 'store_order_board'
-  | 'store_budget';
+  | 'store_budget'
+  | 'store_budget_expense'
+  | 'store_budget_breakeven';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>("store_autocounter");
@@ -118,6 +121,8 @@ export default function App() {
             onNavigateToAutoCounter={()=>setCurrentScreen('store_autocounter')}
             onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
             onNavigateToBudget={() => setCurrentScreen('store_budget')}
+            onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
+            onNavigateToBudgetBreakeven={() => setCurrentScreen('store_budget_breakeven')}
             onLogout={handleBranchLogout}
           />
         );
@@ -206,6 +211,29 @@ export default function App() {
           <BudgetManager
             branch={currentBranch}
             onBack={() => setCurrentScreen('store_home')}
+          />
+        );
+      case 'store_budget_expense':
+        if (!currentBranch) {
+          setCurrentScreen('store_login');
+          return null;
+        }
+        return (
+          <BudgetExpenseRecorder
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+          />
+        );
+      case 'store_budget_breakeven':
+        if (!currentBranch) {
+          setCurrentScreen('store_login');
+          return null;
+        }
+        return (
+          <BudgetManager
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+            mode="breakeven"
           />
         );
 

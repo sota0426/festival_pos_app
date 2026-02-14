@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
@@ -10,6 +10,8 @@ import {
   saveBudgetExpense,
   deleteBudgetExpense,
   getPendingTransactions,
+  getBreakevenDraft,
+  saveBreakevenDraft,
 } from '../../../lib/storage';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
@@ -21,18 +23,17 @@ import type {
 } from '../../../types/database';
 
 // ------- types -------
-type BudgetTab = 'dashboard' | 'expense' | 'breakeven' | 'report';
+type BudgetTab = 'dashboard' | 'report';
 
 interface BudgetManagerProps {
   branch: Branch;
   onBack: () => void;
+  mode?: 'summary' | 'breakeven';
 }
 
 // ------- constants -------
 const TABS: { key: BudgetTab; label: string }[] = [
   { key: 'dashboard', label: 'ダッシュボード' },
-  { key: 'expense', label: '支出記録' },
-  { key: 'breakeven', label: '損益分岐点' },
   { key: 'report', label: '報告書' },
 ];
 
@@ -58,14 +59,14 @@ const CATEGORY_COLORS: Record<ExpenseCategory, { bg: string; text: string }> = {
 };
 
 const BREAKEVEN_HINTS: Record<string, string> = {
-  product_name: '代表的な商品名を入力してください（例：コーヒー、焼きそば）',
+  product_name: '代表的な商品名の単価を入力してください（例：コーヒー、焼きそば）',
   selling_price: 'お客様に販売する1個あたりの価格です',
   variable_cost: '1個作るのにかかる材料費等の原価です',
   fixed_cost: '売上に関係なくかかる費用の合計です（装飾費、機材レンタル料等）',
 };
 
 // ------- component -------
-export const BudgetManager = ({ branch, onBack }: BudgetManagerProps) => {
+export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManagerProps) => {
   const [activeTab, setActiveTab] = useState<BudgetTab>('dashboard');
   const [loading, setLoading] = useState(true);
 
@@ -113,11 +114,12 @@ export const BudgetManager = ({ branch, onBack }: BudgetManagerProps) => {
   const [breakevenHintKey, setBreakevenHintKey] = useState('product_name');
 
   // Collapsible sections for breakeven tab
-  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [showAnalysis, setShowAnalysis] = useState(true);
   const [showSimulation, setShowSimulation] = useState(false);
 
   // Graph touch
   const [graphTouchQty, setGraphTouchQty] = useState<number | null>(null);
+  const breakevenDraftLoadedRef = useRef(false);
 
   // ------- load data -------
   const loadData = useCallback(async () => {
@@ -165,6 +167,50 @@ export const BudgetManager = ({ branch, onBack }: BudgetManagerProps) => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (mode !== 'breakeven') return;
+
+    const loadBreakevenDraft = async () => {
+      const draft = await getBreakevenDraft(branch.id);
+      if (draft) {
+        setBreakevenProductName(draft.product_name ?? '');
+        setBreakevenSellingPrice(draft.selling_price ?? '');
+        setBreakevenVariableCost(draft.variable_cost ?? '');
+        setBreakevenFixedCost(draft.fixed_cost ?? '');
+        setSimQuantity(draft.sim_quantity ?? '');
+        setShowAnalysis(draft.show_analysis ?? true);
+        setShowSimulation(draft.show_simulation ?? false);
+      }
+      breakevenDraftLoadedRef.current = true;
+    };
+    loadBreakevenDraft();
+  }, [branch.id, mode]);
+
+  useEffect(() => {
+    if (mode !== 'breakeven') return;
+    if (!breakevenDraftLoadedRef.current) return;
+
+    saveBreakevenDraft(branch.id, {
+      product_name: breakevenProductName,
+      selling_price: breakevenSellingPrice,
+      variable_cost: breakevenVariableCost,
+      fixed_cost: breakevenFixedCost,
+      sim_quantity: simQuantity,
+      show_analysis: showAnalysis,
+      show_simulation: showSimulation,
+    });
+  }, [
+    branch.id,
+    mode,
+    breakevenProductName,
+    breakevenSellingPrice,
+    breakevenVariableCost,
+    breakevenFixedCost,
+    simQuantity,
+    showAnalysis,
+    showSimulation,
+  ]);
 
   // ------- computed values -------
   const totalExpense = expenses.reduce((sum, e) => sum + e.amount, 0);
@@ -304,8 +350,14 @@ export const BudgetManager = ({ branch, onBack }: BudgetManagerProps) => {
     const selling_price = parseInt(breakevenSellingPrice, 10) || 0;
     const variable_cost = parseInt(breakevenVariableCost, 10) || 0;
     const fixed_cost = parseInt(breakevenFixedCost, 10) || 0;
-    if (!qty || !selling_price || !variable_cost || !fixed_cost) {
-      alertNotify('エラー', 'すべての項目を入力してください');
+    if (!qty || qty <= 0 || !selling_price || !variable_cost || fixed_cost < 0) {
+      alertNotify('エラー', '正しい数値を入力してください');
+      setSimResult(null);
+      return;
+    }
+    if (selling_price <= variable_cost) {
+      alertNotify('エラー', '販売価格は変動費より大きくしてください');
+      setSimResult(null);
       return;
     }
     const sales = qty * selling_price;
@@ -633,6 +685,199 @@ export const BudgetManager = ({ branch, onBack }: BudgetManagerProps) => {
   }
 
   // ======= MAIN RENDER =======
+  if (mode === 'breakeven') {
+    return (
+      <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
+        <Header
+          title="損益分岐点"
+          subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+          showBack
+          onBack={onBack}
+        />
+
+        <Modal visible={showBreakevenHint} onClose={() => setShowBreakevenHint(false)} title="入力のヒント">
+          <View className="gap-3">
+            <View className="bg-indigo-50 p-3 rounded-lg">
+              <Text className="text-indigo-700 font-bold text-sm">
+                {breakevenHintKey === 'product_name' ? '商品名' :
+                 breakevenHintKey === 'selling_price' ? '販売価格' :
+                 breakevenHintKey === 'variable_cost' ? '変動費（1個あたり）' : '固定費（総額）'}
+              </Text>
+            </View>
+            <Text className="text-gray-600 text-sm leading-5">
+              {BREAKEVEN_HINTS[breakevenHintKey]}
+            </Text>
+          </View>
+        </Modal>
+
+        <ScrollView className="flex-1 p-4" showsVerticalScrollIndicator={false}>
+          <Card className="mb-4">
+            <Text className="text-gray-900 text-lg font-bold mb-3">基本データ入力</Text>
+            <View className="gap-3">
+              <View>
+                <View className="flex-row items-center justify-between mb-1">
+                  <Text className="text-gray-600 text-sm">商品名</Text>
+                  <TouchableOpacity onPress={() => openBreakevenHint('product_name')}>
+                    <Text className="text-indigo-500 text-xs">? ヒント</Text>
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  value={breakevenProductName}
+                  onChangeText={setBreakevenProductName}
+                  placeholder="例：コーヒー"
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+                  placeholderTextColor="#9CA3AF"
+                />
+              </View>
+              <View className="flex-row gap-3">
+                <View className="flex-1">
+                  <View className="flex-row items-center justify-between mb-1">
+                    <Text className="text-gray-600 text-sm">販売価格（円）</Text>
+                    <TouchableOpacity onPress={() => openBreakevenHint('selling_price')}>
+                      <Text className="text-indigo-500 text-xs">? ヒント</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    value={breakevenSellingPrice}
+                    onChangeText={setBreakevenSellingPrice}
+                    keyboardType="numeric"
+                    placeholder="300"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+                    placeholderTextColor="#9CA3AF"
+                  />
+                </View>
+                <View className="flex-1">
+                  <View className="flex-row items-center justify-between mb-1">
+                    <Text className="text-gray-600 text-sm">変動費（円）</Text>
+                    <TouchableOpacity onPress={() => openBreakevenHint('variable_cost')}>
+                      <Text className="text-indigo-500 text-xs">? ヒント</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    value={breakevenVariableCost}
+                    onChangeText={setBreakevenVariableCost}
+                    keyboardType="numeric"
+                    placeholder="100"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+                    placeholderTextColor="#9CA3AF"
+                  />
+                </View>
+              </View>
+              <View>
+                <View className="flex-row items-center justify-between mb-1">
+                  <Text className="text-gray-600 text-sm">固定費（総額）</Text>
+                  <TouchableOpacity onPress={() => openBreakevenHint('fixed_cost')}>
+                    <Text className="text-indigo-500 text-xs">? ヒント</Text>
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  value={breakevenFixedCost}
+                  onChangeText={setBreakevenFixedCost}
+                  keyboardType="numeric"
+                  placeholder="10000"
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+                  placeholderTextColor="#9CA3AF"
+                />
+              </View>
+            </View>
+          </Card>
+
+          <Card className="mb-4">
+            <TouchableOpacity
+              onPress={() => setShowAnalysis(!showAnalysis)}
+              className="flex-row items-center justify-between"
+            >
+              <Text className="text-gray-900 text-lg font-bold">損益分岐点分析</Text>
+              <View className="bg-gray-100 rounded-full px-3 py-1">
+                <Text className="text-gray-500 text-sm font-bold">{showAnalysis ? '▲ 閉じる' : '▼ 開く'}</Text>
+              </View>
+            </TouchableOpacity>
+            {showAnalysis && (
+              <View className="mt-3">
+                <Button title="損益分岐点を計算" onPress={handleCalculateBreakeven} />
+                {breakevenResult && (
+                  <View className="mt-4 bg-indigo-50 rounded-xl p-4">
+                    <Text className="text-indigo-700 font-bold text-sm mb-2">分析結果</Text>
+                    <Text className="text-gray-600 text-sm">損益分岐点販売数量</Text>
+                    <Text className="text-indigo-600 text-4xl font-bold text-center my-2">
+                      {breakevenResult.quantity}個
+                    </Text>
+                  </View>
+                )}
+                <BreakevenChart />
+              </View>
+            )}
+          </Card>
+
+          <Card>
+            <TouchableOpacity
+              onPress={() => setShowSimulation(!showSimulation)}
+              className="flex-row items-center justify-between"
+            >
+              <Text className="text-gray-900 text-lg font-bold">シミュレーション</Text>
+              <View className="bg-gray-100 rounded-full px-3 py-1">
+                <Text className="text-gray-500 text-sm font-bold">{showSimulation ? '▲ 閉じる' : '▼ 開く'}</Text>
+              </View>
+            </TouchableOpacity>
+            {showSimulation && (
+              <View className="mt-3 gap-3">
+                <View>
+                  <Text className="text-gray-600 text-sm mb-1">予想販売数</Text>
+                  <TextInput
+                    value={simQuantity}
+                    onChangeText={setSimQuantity}
+                    keyboardType="numeric"
+                    placeholder="100"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+                    placeholderTextColor="#9CA3AF"
+                  />
+                </View>
+                <Button title="シミュレーション実行" onPress={handleSimulation} variant="thirdy" />
+
+                {simResult && (
+                  <View className="mt-2 gap-3">
+                    <View className="flex-row gap-3">
+                      <View className="flex-1 bg-blue-50 rounded-xl p-3">
+                        <Text className="text-gray-500 text-xs">売上</Text>
+                        <Text className="text-blue-700 text-lg font-bold">
+                          ¥{simResult.sales.toLocaleString()}
+                        </Text>
+                      </View>
+                      <View className="flex-1 bg-gray-50 rounded-xl p-3">
+                        <Text className="text-gray-500 text-xs">総コスト</Text>
+                        <Text className="text-gray-700 text-lg font-bold">
+                          ¥{simResult.cost.toLocaleString()}
+                        </Text>
+                      </View>
+                    </View>
+                    <View className="flex-row gap-3">
+                      <View className={`flex-1 rounded-xl p-3 ${simResult.profit >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                        <Text className="text-gray-500 text-xs">利益</Text>
+                        <Text
+                          className={`text-lg font-bold ${
+                            simResult.profit >= 0 ? 'text-green-700' : 'text-red-600'
+                          }`}
+                        >
+                          ¥{simResult.profit.toLocaleString()}
+                        </Text>
+                      </View>
+                      <View className="flex-1 bg-purple-50 rounded-xl p-3">
+                        <Text className="text-gray-500 text-xs">利益率</Text>
+                        <Text className="text-purple-700 text-lg font-bold">
+                          {simResult.margin.toFixed(1)}%
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+          </Card>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
       <Header
@@ -649,13 +894,13 @@ export const BudgetManager = ({ branch, onBack }: BudgetManagerProps) => {
             key={tab.key}
             onPress={() => setActiveTab(tab.key)}
             activeOpacity={0.7}
-            className={`flex-1 py-3 items-center border-b-2 ${
-              activeTab === tab.key ? 'border-indigo-500' : 'border-transparent'
+            className={`flex-1 py-3 items-center  ${
+              activeTab === tab.key ? 'bg-indigo-500 rounded-lg' : 'border-transparent'
             }`}
           >
             <Text
               className={`text-xs font-bold ${
-                activeTab === tab.key ? 'text-indigo-600' : 'text-gray-400'
+                activeTab === tab.key ? 'text-white' : 'text-gray-400'
               }`}
             >
               {tab.label}
@@ -664,48 +909,9 @@ export const BudgetManager = ({ branch, onBack }: BudgetManagerProps) => {
         ))}
       </View>
 
-      {/* Category Hint Modal */}
-      <Modal visible={showCategoryHint} onClose={() => setShowCategoryHint(false)} title={`${CATEGORY_LABELS[hintCategory]}について`}>
-        <View className="gap-3">
-          <View className={`p-3 rounded-lg ${CATEGORY_COLORS[hintCategory].bg}`}>
-            <Text className={`font-bold ${CATEGORY_COLORS[hintCategory].text}`}>{CATEGORY_LABELS[hintCategory]}</Text>
-          </View>
-          <Text className="text-gray-600 text-sm leading-5">
-            {CATEGORY_HINTS[hintCategory]}
-          </Text>
-          <Text className="text-gray-400 text-xs">このカテゴリに該当する支出を記録してください。</Text>
-        </View>
-      </Modal>
-
-      {/* Breakeven Hint Modal */}
-      <Modal visible={showBreakevenHint} onClose={() => setShowBreakevenHint(false)} title="入力のヒント">
-        <View className="gap-3">
-          <View className="bg-indigo-50 p-3 rounded-lg">
-            <Text className="text-indigo-700 font-bold text-sm">
-              {breakevenHintKey === 'product_name' ? '商品名' :
-               breakevenHintKey === 'selling_price' ? '販売価格' :
-               breakevenHintKey === 'variable_cost' ? '変動費（1個あたり）' : '固定費（総額）'}
-            </Text>
-          </View>
-          <Text className="text-gray-600 text-sm leading-5">
-            {BREAKEVEN_HINTS[breakevenHintKey]}
-          </Text>
-          {breakevenHintKey === 'variable_cost' && (
-            <View className="bg-amber-50 p-3 rounded-lg">
-              <Text className="text-amber-700 text-xs">例：コーヒー1杯あたり、豆代50円＋カップ代10円＝変動費60円</Text>
-            </View>
-          )}
-          {breakevenHintKey === 'fixed_cost' && (
-            <View className="bg-amber-50 p-3 rounded-lg">
-              <Text className="text-amber-700 text-xs">例：テント3,000円＋装飾5,000円＋チラシ2,000円＝固定費10,000円</Text>
-            </View>
-          )}
-        </View>
-      </Modal>
-
-      {/* Tab Content */}
       {activeTab === 'dashboard' && (
         <ScrollView className="flex-1 p-4" showsVerticalScrollIndicator={false}>
+          <Text className="text-gray-900 text-lg font-bold mb-3">ダッシュボード</Text>
           {/* Stats Grid */}
           <View className="gap-3 mb-4">
             <View className="flex-row gap-3">
@@ -793,306 +999,9 @@ export const BudgetManager = ({ branch, onBack }: BudgetManagerProps) => {
         </ScrollView>
       )}
 
-      {activeTab === 'expense' && (
-        <ScrollView className="flex-1 p-4" showsVerticalScrollIndicator={false}>
-          <Card className="mb-4">
-            <Text className="text-gray-900 text-lg font-bold mb-3">支出を記録</Text>
-
-            {/* Category Selector */}
-            <View className="mb-3">
-              <Text className="text-gray-600 text-sm mb-1">カテゴリ</Text>
-              <View className="flex-row flex-wrap gap-2">
-                {(['material', 'decoration', 'equipment', 'other'] as ExpenseCategory[]).map((cat) => (
-                  <TouchableOpacity
-                    key={cat}
-                    onPress={() => setExpCategory(cat)}
-                    onLongPress={() => openCategoryHint(cat)}
-                    style={{ width: '48%' }}
-                    className={`py-2 rounded-lg items-center border-2 ${
-                      expCategory === cat
-                        ? `${CATEGORY_COLORS[cat].bg} border-current`
-                        : 'bg-gray-50 border-gray-200'
-                    }`}
-                  >
-                    <Text
-                      className={`text-sm font-semibold ${
-                        expCategory === cat ? CATEGORY_COLORS[cat].text : 'text-gray-400'
-                      }`}
-                    >
-                      {CATEGORY_LABELS[cat]}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              {/* Hint for selected category */}
-              <TouchableOpacity onPress={() => openCategoryHint(expCategory)} className="mt-1 flex-row items-center">
-                <Text className="text-indigo-500 text-xs">💡  {CATEGORY_LABELS[expCategory]}の具体例 → 　{CATEGORY_HINTS[expCategory].substring(0, 30)}</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Amount */}
-            <View className="mb-3">
-              <Text className="text-gray-600 text-sm mb-1">金額（円）</Text>
-              <TextInput
-                value={expAmount}
-                onChangeText={setExpAmount}
-                keyboardType="numeric"
-                placeholder="1500"
-                className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-                placeholderTextColor="#9CA3AF"
-              />
-            </View>
-
-            {/* Memo */}
-            <View className="mb-3">
-              <Text className="text-gray-600 text-sm mb-1">メモ・品目</Text>
-              <TextInput
-                value={expMemo}
-                onChangeText={setExpMemo}
-                placeholder="例：紙コップ 100個"
-                className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-                placeholderTextColor="#9CA3AF"
-              />
-            </View>
-
-            <Button title="支出を記録" onPress={handleAddExpense} variant="success" />
-          </Card>
-
-          {/* Expense List */}
-          <Card>
-            <Text className="text-gray-900 text-lg font-bold mb-3">支出履歴</Text>
-            {expenses.length === 0 ? (
-              <Text className="text-gray-400 text-center py-4">支出データがありません</Text>
-            ) : (
-              <View className="gap-2">
-                {[...expenseWithNumbers].reverse().map((exp) => (
-                  <View
-                    key={exp.id}
-                    className="flex-row items-center justify-between py-3 border-b border-gray-100"
-                  >
-                    <View className="flex-1">
-                      <View className="flex-row items-center gap-2 mb-1">
-                        <View className="bg-gray-200 rounded px-1.5 py-0.5">
-                          <Text className="text-gray-600 text-xs font-bold">No.{exp.expenseNo}</Text>
-                        </View>
-                        <Text className="text-gray-400 text-xs">{exp.date}</Text>
-                        <CategoryBadge category={exp.category} />
-                      </View>
-                      {exp.memo ? (
-                        <Text className="text-gray-700 text-sm" numberOfLines={1}>
-                          {exp.memo}
-                        </Text>
-                      ) : null}
-                    </View>
-                    <View className="flex-row items-center gap-2">
-                      <Text className="text-gray-900 font-bold">¥{exp.amount.toLocaleString()}</Text>
-                      <TouchableOpacity
-                        onPress={() => handleDeleteExpense(exp.id)}
-                        className="bg-red-100 rounded-lg px-2 py-1"
-                      >
-                        <Text className="text-red-600 text-xs font-semibold">削除</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            )}
-          </Card>
-        </ScrollView>
-      )}
-
-      {activeTab === 'breakeven' && (
-        <ScrollView className="flex-1 p-4" showsVerticalScrollIndicator={false}>
-          {/* Input fields (always visible) */}
-          <Card className="mb-4">
-            <Text className="text-gray-900 text-lg font-bold mb-3">基本データ入力</Text>
-
-            <View className="gap-3">
-              <View>
-                <View className="flex-row items-center justify-between mb-1">
-                  <Text className="text-gray-600 text-sm">商品名</Text>
-                  <TouchableOpacity onPress={() => openBreakevenHint('product_name')}>
-                    <Text className="text-indigo-500 text-xs">? ヒント</Text>
-                  </TouchableOpacity>
-                </View>
-                <TextInput
-                  value={breakevenProductName}
-                  onChangeText={setBreakevenProductName}
-                  placeholder="例：コーヒー"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-                  placeholderTextColor="#9CA3AF"
-                />
-              </View>
-              <View className="flex-row gap-3">
-                <View className="flex-1">
-                  <View className="flex-row items-center justify-between mb-1">
-                    <Text className="text-gray-600 text-sm">販売価格（円）</Text>
-                    <TouchableOpacity onPress={() => openBreakevenHint('selling_price')}>
-                      <Text className="text-indigo-500 text-xs">?</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <TextInput
-                    value={breakevenSellingPrice}
-                    onChangeText={setBreakevenSellingPrice}
-                    keyboardType="numeric"
-                    placeholder="300"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-                    placeholderTextColor="#9CA3AF"
-                  />
-                </View>
-                <View className="flex-1">
-                  <View className="flex-row items-center justify-between mb-1">
-                    <Text className="text-gray-600 text-sm">変動費（円）</Text>
-                    <TouchableOpacity onPress={() => openBreakevenHint('variable_cost')}>
-                      <Text className="text-indigo-500 text-xs">?</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <TextInput
-                    value={breakevenVariableCost}
-                    onChangeText={setBreakevenVariableCost}
-                    keyboardType="numeric"
-                    placeholder="100"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-                    placeholderTextColor="#9CA3AF"
-                  />
-                </View>
-              </View>
-              <View>
-                <View className="flex-row items-center justify-between mb-1">
-                  <Text className="text-gray-600 text-sm">固定費（総額）</Text>
-                  <TouchableOpacity onPress={() => openBreakevenHint('fixed_cost')}>
-                    <Text className="text-indigo-500 text-xs">? ヒント</Text>
-                  </TouchableOpacity>
-                </View>
-                <TextInput
-                  value={breakevenFixedCost}
-                  onChangeText={setBreakevenFixedCost}
-                  keyboardType="numeric"
-                  placeholder="10000"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-                  placeholderTextColor="#9CA3AF"
-                />
-              </View>
-            </View>
-          </Card>
-
-          {/* Collapsible: Analysis */}
-          <Card className="mb-4">
-            <TouchableOpacity
-              onPress={() => setShowAnalysis(!showAnalysis)}
-              className="flex-row items-center justify-between"
-            >
-              <Text className="text-gray-900 text-lg font-bold">損益分岐点分析</Text>
-              <View className="bg-gray-100 rounded-full px-3 py-1">
-                <Text className="text-gray-500 text-sm font-bold">{showAnalysis ? '▲ 閉じる' : '▼ 開く'}</Text>
-              </View>
-            </TouchableOpacity>
-
-            {showAnalysis && (
-              <View className="mt-3">
-                <Button title="損益分岐点を計算" onPress={handleCalculateBreakeven} />
-
-                {breakevenResult && (
-                  <View className="mt-4 bg-indigo-50 rounded-xl p-4">
-                    <Text className="text-indigo-700 font-bold text-sm mb-2">分析結果</Text>
-                    <Text className="text-gray-600 text-sm">損益分岐点販売数量</Text>
-                    <Text className="text-indigo-600 text-4xl font-bold text-center my-2">
-                      {breakevenResult.quantity}個
-                    </Text>
-                    <Text className="text-gray-500 text-xs text-center mb-3">
-                      この数量を売れば赤字にならない
-                    </Text>
-                    <View className="bg-white rounded-lg p-3">
-                      <Text className="text-gray-600 text-sm">
-                        損益分岐点売上：
-                        <Text className="text-indigo-600 font-bold text-lg">
-                          ¥{breakevenResult.sales.toLocaleString()}
-                        </Text>
-                      </Text>
-                      <Text className="text-gray-400 text-xs mt-1">
-                        固定費 ÷ (販売価格 - 変動費) = 損益分岐点
-                      </Text>
-                    </View>
-                  </View>
-                )}
-
-                {/* Breakeven Chart */}
-                <BreakevenChart />
-              </View>
-            )}
-          </Card>
-
-          {/* Collapsible: Simulation */}
-          <Card>
-            <TouchableOpacity
-              onPress={() => setShowSimulation(!showSimulation)}
-              className="flex-row items-center justify-between"
-            >
-              <Text className="text-gray-900 text-lg font-bold">シミュレーション</Text>
-              <View className="bg-gray-100 rounded-full px-3 py-1">
-                <Text className="text-gray-500 text-sm font-bold">{showSimulation ? '▲ 閉じる' : '▼ 開く'}</Text>
-              </View>
-            </TouchableOpacity>
-
-            {showSimulation && (
-              <View className="mt-3 gap-3">
-                <View>
-                  <Text className="text-gray-600 text-sm mb-1">予想販売数</Text>
-                  <TextInput
-                    value={simQuantity}
-                    onChangeText={setSimQuantity}
-                    keyboardType="numeric"
-                    placeholder="100"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-                    placeholderTextColor="#9CA3AF"
-                  />
-                </View>
-                <Button title="シミュレーション実行" onPress={handleSimulation} variant="thirdy" />
-
-                {simResult && (
-                  <View className="mt-2 gap-3">
-                    <View className="flex-row gap-3">
-                      <View className="flex-1 bg-blue-50 rounded-xl p-3">
-                        <Text className="text-gray-500 text-xs">売上</Text>
-                        <Text className="text-blue-700 text-lg font-bold">
-                          ¥{simResult.sales.toLocaleString()}
-                        </Text>
-                      </View>
-                      <View className="flex-1 bg-gray-50 rounded-xl p-3">
-                        <Text className="text-gray-500 text-xs">総コスト</Text>
-                        <Text className="text-gray-700 text-lg font-bold">
-                          ¥{simResult.cost.toLocaleString()}
-                        </Text>
-                      </View>
-                    </View>
-                    <View className="flex-row gap-3">
-                      <View className={`flex-1 rounded-xl p-3 ${simResult.profit >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
-                        <Text className="text-gray-500 text-xs">利益</Text>
-                        <Text
-                          className={`text-lg font-bold ${
-                            simResult.profit >= 0 ? 'text-green-700' : 'text-red-600'
-                          }`}
-                        >
-                          ¥{simResult.profit.toLocaleString()}
-                        </Text>
-                      </View>
-                      <View className="flex-1 bg-purple-50 rounded-xl p-3">
-                        <Text className="text-gray-500 text-xs">利益率</Text>
-                        <Text className="text-purple-700 text-lg font-bold">
-                          {simResult.margin.toFixed(1)}%
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                )}
-              </View>
-            )}
-          </Card>
-        </ScrollView>
-      )}
-
       {activeTab === 'report' && (
         <ScrollView className="flex-1 p-4" showsVerticalScrollIndicator={false}>
+          <Text className="text-gray-900 text-lg font-bold mb-3">報告書</Text>
           {/* Basic Info */}
           <Card className="mb-4">
             <Text className="text-gray-900 text-lg font-bold mb-3 border-b-2 border-indigo-500 pb-2">

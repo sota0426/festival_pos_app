@@ -8,12 +8,11 @@ import {
   Platform,
   Alert,
 } from "react-native";
-import type { VisitorGroup } from "types/database";
-import { GroupOption } from "./ManualCounter+Screen";
+import type { VisitorCounterGroup, VisitorGroup } from "types/database";
 
 
 interface Props {
-  groups: GroupOption[];
+  groups: VisitorCounterGroup[];
   counts: Record<VisitorGroup, number>;
   onCount: (groupId: VisitorGroup, value: number) => void | Promise<void>;
   onRename:(groupId:VisitorGroup, name:string) =>void;
@@ -31,13 +30,13 @@ export const ManualCounter = ({
 }: Props) => {
 
   const [editGroup, setEditGroup] =
-    useState<GroupOption | null>(null);
+    useState<VisitorCounterGroup | null>(null);
 
   const [tempValue, setTempValue] = useState(0);
   const [renameMode, setRenameMode] = useState(false);
   const [renameText, setRenameText] = useState("");
     
-  const openEditor = (group: GroupOption) => {
+  const openEditor = (group: VisitorCounterGroup) => {
     setTempValue(0);
     setEditGroup(group);
     setRenameMode(false);
@@ -49,7 +48,8 @@ export const ManualCounter = ({
     if(!renameText.trim()) return;
 
     onRename(editGroup.id, renameText.trim())
-    setRenameMode(false);    
+    setRenameMode(false); 
+    setEditGroup(null);
   }
 
   const applyChange = () => {
@@ -63,11 +63,11 @@ export const ManualCounter = ({
   };
 
   return (
-    <View className="flex-1">
+    <View className="px-4">
 
       {/* グループボタン */}
       <View className="flex-row flex-wrap justify-center gap-20">
-        {groups.map((group,index) => (
+        {groups.map((group) => (
           <View 
             key={group.id}
             className="items-center mb-6"
@@ -76,7 +76,8 @@ export const ManualCounter = ({
               key={group.id}
               onPress={() => onCount(group.id, 1)}
               onLongPress={() => openEditor(group)}
-              className={`w-36 h-36 ${group.color} rounded-full items-center justify-center`}
+              className="w-36 h-36 rounded-full items-center justify-center"
+              style={{ backgroundColor: group.color }}
             >
               <Text className="text-white font-bold">
                 {group.name}
@@ -84,9 +85,12 @@ export const ManualCounter = ({
               <Text className="text-white text-4xl font-bold">
                 +1
               </Text>
-              <Text className="text-purple-200 mt-1">
+              {groups.length >= 2 &&(
+              <Text className="text-purple-200 font-bold mt-1 ">
                 {counts[group.id] || 0}
               </Text>
+              )}
+              
             </TouchableOpacity>
           </View>
         ))}
@@ -102,11 +106,12 @@ export const ManualCounter = ({
               {!renameMode ? (
                 <TouchableOpacity
                   onPress={()=>setRenameMode(true)}
+                  className="p-3 border-gray-300 rounded-lg"
                 >
                   <Text className="text-xl font-bold text-center">
                     {editGroup?.name}
                   </Text>
-                  <Text className="text-xs text-gray-400 text-center mt-2">
+                  <Text className="text-xs text-sky-400 text-center mt-2">
                     タップして名前変更
                   </Text>
                 </TouchableOpacity>
@@ -180,6 +185,7 @@ export const ManualCounter = ({
 
 
             {/**delete */}
+            {groups.length >= 2 &&(
             <TouchableOpacity
                 className="mt-4 py-3 bg-red-500 rounded-xl items-center"
                 onPress={() => {
@@ -215,6 +221,7 @@ export const ManualCounter = ({
                 グループ削除
               </Text>
             </TouchableOpacity>
+            ) }
 
               {/**cancel */}
             <TouchableOpacity
@@ -233,16 +240,6 @@ export const ManualCounter = ({
 
         </View>
       </Modal>
-
-      {/* 説明文 */}
-      <View className="mt-6">
-        <Text className="text-gray-600 text-center text-sm">
-          ※ 通常タップで +1 加算されます。
-          長押しで調整画面が現れます。
-        </Text>
-        
-      </View>
-
     </View>
   );
 };

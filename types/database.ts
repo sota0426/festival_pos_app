@@ -23,6 +23,7 @@ export interface Menu {
   branch_id: string;
   menu_name: string;
   price: number;
+  sort_order?: number;
   category_id: string | null;
   stock_management: boolean;
   stock_quantity: number;
@@ -177,7 +178,13 @@ export interface VisitorCount {
   timestamp: string; // ISO string
 }
 
-export type VisitorGroup = 'group1' | 'group2' | 'group3' | 'group4';
+export type VisitorGroup = string;
+
+export interface VisitorCounterGroup {
+  id: VisitorGroup;
+  name: string;
+  color: string;
+}
 
 export interface PendingVisitorCount {
   id: string;
@@ -191,6 +198,20 @@ export interface PendingVisitorCount {
 export interface HalfHourlyVisitors {
   time_slot: string; // "10:00", "10:30", "11:00" etc.
   count: number;
+}
+
+export interface QuarterHourlyGroupVisitors {
+  time_slot: string;
+  count: number;
+  group_counts: Record<VisitorGroup, number>;
+}
+
+export interface DailyVisitorTrend {
+  date_key: string;
+  date_label: string;
+  total: number;
+  max_slot: number;
+  slots: QuarterHourlyGroupVisitors[];
 }
 
 export interface BranchVisitors {

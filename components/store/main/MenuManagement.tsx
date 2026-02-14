@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, Switch, ActivityIndicator, ScrollView } from 'react-native';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { View, Text, FlatList, TouchableOpacity, Alert, Switch, ActivityIndicator, ScrollView, TextInput, PanResponder } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Input, Card, Header, Modal } from '../../common';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
-import { saveMenus, getMenus, saveMenuCategories, getMenuCategories } from '../../../lib/storage';
+import { saveMenus, getMenus, saveMenuCategories, getMenuCategories, verifyAdminPassword } from '../../../lib/storage';
 import { alertConfirm } from '../../../lib/alertUtils';
 import type { Branch, Menu, MenuCategory } from '../../../types/database';
+import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
 
 interface MenuManagementProps {
   branch: Branch;
@@ -36,6 +37,22 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const [editingCategory, setEditingCategory] = useState<MenuCategory | null>(null);
   const [categoryName, setCategoryName] = useState('');
   const [savingCategory, setSavingCategory] = useState(false);
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [deleteAllError, setDeleteAllError] = useState('');
+  const [deletingAll, setDeletingAll] = useState(false);
+
+  const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
+
+  const getNextSortOrder = useCallback(
+    (categoryId: string | null, targetMenus: Menu[]) => {
+      const sameCategory = targetMenus.filter((menu) => menu.category_id === categoryId);
+      if (sameCategory.length === 0) return 0;
+      const maxOrder = Math.max(...sameCategory.map((menu) => menu.sort_order ?? 0));
+      return maxOrder + 1;
+    },
+    [],
+  );
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -70,10 +87,11 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     try {
       // First try to get from local storage
       const localMenus = await getMenus();
+      const branchMenus = localMenus.filter((menu) => menu.branch_id === branch.id);
 
       if (!isSupabaseConfigured()) {
-        if (localMenus.length > 0 && localMenus[0].branch_id === branch.id) {
-          setMenus(localMenus);
+        if (branchMenus.length > 0) {
+          setMenus(sortMenus(branchMenus));
         } else {
           // Demo data
           const demoMenus: Menu[] = [
@@ -82,6 +100,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               branch_id: branch.id,
               menu_name: '焼きそば',
               price: 300,
+              sort_order: 0,
               category_id: null,
               stock_management: true,
               stock_quantity: 50,
@@ -94,6 +113,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               branch_id: branch.id,
               menu_name: 'フランクフルト',
               price: 200,
+              sort_order: 1,
               category_id: null,
               stock_management: true,
               stock_quantity: 30,
@@ -106,6 +126,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               branch_id: branch.id,
               menu_name: 'ジュース',
               price: 100,
+              sort_order: 2,
               category_id: null,
               stock_management: false,
               stock_quantity: 0,
@@ -114,8 +135,9 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               updated_at: new Date().toISOString(),
             },
           ];
-          setMenus(demoMenus);
-          await saveMenus(demoMenus);
+          const sortedDemoMenus = sortMenus(demoMenus);
+          setMenus(sortedDemoMenus);
+          await saveMenus(sortedDemoMenus);
         }
         setLoading(false);
         return;
@@ -126,22 +148,24 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         .from('menus')
         .select('*')
         .eq('branch_id', branch.id)
+        .order('sort_order', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: true });
 
       if (error) throw error;
 
-      setMenus(data || []);
-      await saveMenus(data || []);
+      const sortedMenus = sortMenus(data || []);
+      setMenus(sortedMenus);
+      await saveMenus(sortedMenus);
     } catch (error:any) {
       if (error?.name === 'AbortError') return;
       console.error('Error fetching menus:', error);
       // Use local data as fallback
       const localMenus = await getMenus();
-      setMenus(localMenus.filter((m) => m.branch_id === branch.id));
+      setMenus(sortMenus(localMenus.filter((m) => m.branch_id === branch.id)));
     } finally {
       setLoading(false);
     }
-  }, [branch.id]);
+  }, [branch.id, sortMenus]);
 
   useEffect(() => {
     fetchMenus();
@@ -170,6 +194,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         branch_id: branch.id,
         menu_name: menuName.trim(),
         price: parseInt(price, 10),
+        sort_order: getNextSortOrder(selectedCategoryId, menus),
         category_id: selectedCategoryId,
         stock_management: stockManagement,
         stock_quantity: stockManagement ? parseInt(stockQuantity, 10) || 0 : 0,
@@ -183,7 +208,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         if (error) throw error;
       }
 
-      const updatedMenus = [...menus, newMenu];
+      const updatedMenus = sortMenus([...menus, newMenu]);
       setMenus(updatedMenus);
       await saveMenus(updatedMenus);
 
@@ -206,11 +231,16 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     setSaving(true);
 
     try {
+      const previousCategoryId = editingMenu.category_id;
       const updatedMenu: Menu = {
         ...editingMenu,
         menu_name: menuName.trim(),
         price: parseInt(price, 10),
         category_id: selectedCategoryId,
+        sort_order:
+          previousCategoryId === selectedCategoryId
+            ? editingMenu.sort_order ?? getNextSortOrder(selectedCategoryId, menus)
+            : getNextSortOrder(selectedCategoryId, menus.filter((m) => m.id !== editingMenu.id)),
         stock_management: stockManagement,
         stock_quantity: stockManagement ? parseInt(stockQuantity, 10) || 0 : editingMenu.stock_quantity,
         updated_at: new Date().toISOString(),
@@ -224,7 +254,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         if (error) throw error;
       }
 
-      const updatedMenus = menus.map((m) => (m.id === editingMenu.id ? updatedMenu : m));
+      const updatedMenus = sortMenus(menus.map((m) => (m.id === editingMenu.id ? updatedMenu : m)));
       setMenus(updatedMenus);
       await saveMenus(updatedMenus);
 
@@ -255,6 +285,53 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         Alert.alert('エラー', 'メニューの削除に失敗しました');
       }
     }, '削除');
+  };
+
+  const executeDeleteAllMenus = async () => {
+    setDeletingAll(true);
+    try {
+      if (isSupabaseConfigured()) {
+        const { error } = await supabase
+          .from('menus')
+          .delete()
+          .eq('branch_id', branch.id);
+        if (error) throw error;
+      }
+
+      const localMenus = await getMenus();
+      const remaining = localMenus.filter((m) => m.branch_id !== branch.id);
+      await saveMenus(remaining);
+      setMenus([]);
+
+      setShowDeleteAllModal(false);
+      setAdminPasswordInput('');
+      setDeleteAllError('');
+    } catch (error) {
+      console.error('Error deleting all menus:', error);
+      setDeleteAllError('メニューの全削除に失敗しました');
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
+  const handleDeleteAllMenus = async () => {
+    if (!adminPasswordInput.trim()) {
+      setDeleteAllError('管理者パスワードを入力してください');
+      return;
+    }
+
+    const isValid = await verifyAdminPassword(adminPasswordInput);
+    if (!isValid) {
+      setDeleteAllError('パスワードが正しくありません');
+      return;
+    }
+
+    alertConfirm(
+      '最終確認',
+      'この店舗のメニューを全削除します。この操作は取り消せません。実行しますか？',
+      executeDeleteAllMenus,
+      '削除する',
+    );
   };
 
   const handleStockChange = async (menu: Menu, change: number) => {
@@ -290,10 +367,8 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     setShowEditModal(true);
   };
 
-  const getCategoryName = (categoryId: string | null): string | null => {
-    if (!categoryId) return null;
-    return categories.find((c) => c.id === categoryId)?.category_name ?? null;
-  };
+  const { orderedCategories, categoryMetaMap } = useMemo(() => getCategoryMetaMap(categories), [categories]);
+  const menuCodeMap = useMemo(() => buildMenuCodeMap(menus, categories), [menus, categories]);
 
   // Category CRUD handlers
   const handleAddCategory = async () => {
@@ -435,79 +510,193 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     }
   };
 
-  const renderMenuItem = ({ item }: { item: Menu }) => {
-    const catName = getCategoryName(item.category_id);
+  const moveMenuOrder = async (menu: Menu, direction: 'up' | 'down') => {
+    const sameCategoryMenus = sortMenus(menus.filter((m) => m.category_id === menu.category_id));
+    const idx = sameCategoryMenus.findIndex((m) => m.id === menu.id);
+    if (idx < 0) return;
+    if (direction === 'up' && idx === 0) return;
+    if (direction === 'down' && idx === sameCategoryMenus.length - 1) return;
+
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    const target = sameCategoryMenus[swapIdx];
+    const currentOrder = menu.sort_order ?? idx;
+    const targetOrder = target.sort_order ?? swapIdx;
+
+    const reordered = menus.map((m) => {
+      if (m.id === menu.id) return { ...m, sort_order: targetOrder };
+      if (m.id === target.id) return { ...m, sort_order: currentOrder };
+      return m;
+    });
+
+    const sorted = sortMenus(reordered);
+    setMenus(sorted);
+    await saveMenus(sorted);
+
+    if (isSupabaseConfigured()) {
+      await supabase.from('menus').update({ sort_order: targetOrder }).eq('id', menu.id);
+      await supabase.from('menus').update({ sort_order: currentOrder }).eq('id', target.id);
+    }
+  };
+
+  const menuSections = useMemo(() => {
+    const sections = orderedCategories
+      .map((category) => ({
+        id: category.id,
+        title: category.category_name,
+        categoryCode: categoryMetaMap.get(category.id)?.code ?? 'C--',
+        visual: categoryMetaMap.get(category.id)?.visual ?? UNCATEGORIZED_VISUAL,
+        menus: sortMenus(menus.filter((m) => m.category_id === category.id)),
+      }))
+      .filter((section) => section.menus.length > 0);
+
+    const uncategorized = sortMenus(
+      menus.filter((menu) => !menu.category_id || !categories.find((c) => c.id === menu.category_id)),
+    );
+    if (uncategorized.length > 0) {
+      sections.push({
+        id: 'uncategorized',
+        title: 'その他',
+        categoryCode: 'C00',
+        visual: UNCATEGORIZED_VISUAL,
+        menus: uncategorized,
+      });
+    }
+    return sections;
+  }, [orderedCategories, categoryMetaMap, categories, menus, sortMenus]);
+
+  const renderMenuItem = ({
+    item,
+    indexInSection,
+    sectionLength,
+    categoryCode,
+    categoryVisual,
+  }: {
+    item: Menu;
+    indexInSection: number;
+    sectionLength: number;
+    categoryCode: string;
+    categoryVisual: {
+      cardBgClass: string;
+      cardBorderClass: string;
+      chipBgClass: string;
+      chipTextClass: string;
+    };
+  }) => {
+    const menuCode = menuCodeMap.get(item.id) ?? 'M---';
+    const isTopInSection = indexInSection === 0;
+    const isBottomInSection = indexInSection === sectionLength - 1;
+    const dragResponder = PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 6,
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy < -20) {
+          moveMenuOrder(item, 'up');
+        } else if (gestureState.dy > 20) {
+          moveMenuOrder(item, 'down');
+        }
+      },
+    });
+
     return (
-    <Card className="mb-3">
-      <TouchableOpacity onPress={() => openEditModal(item)} activeOpacity={0.7}>
-        <View className="flex-row items-center justify-between">
-          <View className="flex-1">
-            <Text className="text-lg font-semibold text-gray-900">{item.menu_name}</Text>
-            {catName && (
-              <View className="bg-purple-100 px-2 py-0.5 rounded self-start mt-0.5">
-                <Text className="text-purple-700 text-xs">{catName}</Text>
+      <Card className={`mb-2 px-3 py-2 border ${categoryVisual.cardBgClass} ${categoryVisual.cardBorderClass}`}>
+        <View className="flex-row items-start justify-between">
+          <View className="flex-1 pr-2">
+            <View className="flex-row items-center gap-1 mb-1">
+              <View className={`px-2 py-0.5 rounded ${categoryVisual.chipBgClass}`}>
+                <Text className={`text-[10px] font-bold ${categoryVisual.chipTextClass}`}>{menuCode}</Text>
               </View>
-            )}
-            <Text className="text-blue-600 font-bold mt-1">{item.price.toLocaleString()}円</Text>
+            </View>
+            <Text className="text-base font-semibold text-gray-900" numberOfLines={1}>
+              {item.menu_name}
+            </Text>
+            <View className="flex-row items-center gap-2 mt-1">
+              <Text className="text-blue-600 font-bold">{item.price.toLocaleString()}円</Text>
+            </View>
+            <View className="flex-row items-center gap-2 mt-1">
+              {item.stock_management ? (
+                <>
+                  <Text className="text-gray-500 text-xs">在庫</Text>
+                  <View className="flex-row items-center">
+                    <TouchableOpacity
+                      onPress={() => handleStockChange(item, -1)}
+                      className="w-6 h-6 bg-gray-200 rounded-l items-center justify-center"
+                    >
+                      <Text className="text-base font-bold text-gray-600">-</Text>
+                    </TouchableOpacity>
+                    <View className="w-10 h-6 bg-gray-100 items-center justify-center">
+                      <Text
+                        className={`text-xs font-bold ${
+                          item.stock_quantity === 0
+                            ? 'text-red-500'
+                            : item.stock_quantity <= 5
+                              ? 'text-orange-500'
+                              : 'text-gray-900'
+                        }`}
+                      >
+                        {item.stock_quantity}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleStockChange(item, 1)}
+                      className="w-6 h-6 bg-gray-200 rounded-r items-center justify-center"
+                    >
+                      <Text className="text-base font-bold text-gray-600">+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : (
+                <View className="bg-green-100 px-2 py-0.5 rounded">
+                  <Text className="text-green-700 text-[11px]">在庫無制限</Text>
+                </View>
+              )}
+            </View>
           </View>
 
-          {item.stock_management && (
-            <View className="items-center">
-              <Text className="text-gray-500 text-xs mb-1">在庫</Text>
-              <View className="flex-row items-center">
-                <TouchableOpacity
-                  onPress={() => handleStockChange(item, -1)}
-                  className="w-8 h-8 bg-gray-200 rounded-l items-center justify-center"
-                >
-                  <Text className="text-lg font-bold text-gray-600">-</Text>
-                </TouchableOpacity>
-                <View className="w-12 h-8 bg-gray-100 items-center justify-center">
-                  <Text
-                    className={`font-bold ${
-                      item.stock_quantity === 0
-                        ? 'text-red-500'
-                        : item.stock_quantity <= 5
-                          ? 'text-orange-500'
-                          : 'text-gray-900'
-                    }`}
-                  >
-                    {item.stock_quantity}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => handleStockChange(item, 1)}
-                  className="w-8 h-8 bg-gray-200 rounded-r items-center justify-center"
-                >
-                  <Text className="text-lg font-bold text-gray-600">+</Text>
-                </TouchableOpacity>
+          <View className="items-end gap-1">
+            <View className="flex-row gap-1">
+              <TouchableOpacity
+                onPress={() => openEditModal(item)}
+                className="px-2 py-1 bg-blue-50 rounded"
+              >
+                <Text className="text-blue-600 text-xs font-medium">編集</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => handleDeleteMenu(item)}
+                className="px-2 py-1 bg-red-50 rounded"
+              >
+                <Text className="text-red-600 text-xs font-medium">削除</Text>
+              </TouchableOpacity>
+            </View>
+            <View className="flex-row gap-1 items-center">
+              <View
+                {...dragResponder.panHandlers}
+                className="w-7 h-7 items-center justify-center rounded bg-gray-200"
+              >
+                <Text className="text-gray-600 text-xs font-bold">⋮⋮</Text>
               </View>
+              <TouchableOpacity
+                onPress={() => moveMenuOrder(item, 'up')}
+                disabled={isTopInSection}
+                className={`w-7 h-7 items-center justify-center rounded ${
+                  isTopInSection ? 'bg-gray-200 opacity-40' : 'bg-gray-100'
+                }`}
+              >
+                <Text className="text-gray-600 font-bold">↑</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => moveMenuOrder(item, 'down')}
+                disabled={isBottomInSection}
+                className={`w-7 h-7 items-center justify-center rounded ${
+                  isBottomInSection ? 'bg-gray-200 opacity-40' : 'bg-gray-100'
+                }`}
+              >
+                <Text className="text-gray-600 font-bold">↓</Text>
+              </TouchableOpacity>
             </View>
-          )}
-
-          {!item.stock_management && (
-            <View className="bg-green-100 px-2 py-1 rounded">
-              <Text className="text-green-700 text-xs">在庫無制限</Text>
-            </View>
-          )}
+          </View>
         </View>
-      </TouchableOpacity>
-
-      <View className="flex-row mt-3 pt-3 border-t border-gray-100 gap-2">
-        <TouchableOpacity
-          onPress={() => openEditModal(item)}
-          className="flex-1 py-2 bg-blue-50 rounded items-center"
-        >
-          <Text className="text-blue-600 font-medium">編集</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => handleDeleteMenu(item)}
-          className="flex-1 py-2 bg-red-50 rounded items-center"
-        >
-          <Text className="text-red-600 font-medium">削除</Text>
-        </TouchableOpacity>
-      </View>
-    </Card>
-  );
+      </Card>
+    );
   };
 
   const renderMenuForm = (isEdit: boolean) => (
@@ -616,7 +805,19 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         onBack={onBack}
         rightElement={
           viewMode === 'menus' ? (
-            <Button title="+ 追加" onPress={() => setShowAddModal(true)} size="sm" />
+            <View className="flex-row gap-2">
+              <Button title="+ 追加" onPress={() => setShowAddModal(true)} size="sm" />
+              <Button
+                title="全削除"
+                onPress={() => {
+                  setAdminPasswordInput('');
+                  setDeleteAllError('');
+                  setShowDeleteAllModal(true);
+                }}
+                variant="danger"
+                size="sm"
+              />
+            </View>
           ) : (
             <Button title="+ カテゴリ追加" onPress={() => { setCategoryName(''); setShowCategoryModal(true); }} size="sm" />
           )
@@ -627,9 +828,9 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       <View className="flex-row border-b border-gray-200 bg-white">
         <TouchableOpacity
           onPress={() => setViewMode('menus')}
-          className={`flex-1 py-3 items-center ${viewMode === 'menus' ? 'border-b-2 border-blue-500' : ''}`}
+          className={`flex-1 py-3 items-center ${viewMode === 'menus' ? 'border-b-4 border-blue-500' : ''}`}
         >
-          <Text className={viewMode === 'menus' ? 'text-blue-600 font-semibold' : 'text-gray-500'}>
+          <Text className={viewMode === 'menus' ? 'text-blue-600 font-bold' : 'text-gray-500'}>
             メニュー
           </Text>
         </TouchableOpacity>
@@ -652,68 +853,116 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
 
       {/* Menu list */}
       {!loading && viewMode === 'menus' && (
-      <FlatList
-        data={menus}
-        renderItem={renderMenuItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 16 }}
-        ListEmptyComponent={
-          <View className="items-center py-12">
-            <Text className="text-gray-500 mb-4">メニューが登録されていません</Text>
-            <Button title="メニューを追加" onPress={() => setShowAddModal(true)} />
-          </View>
-        }
-      />
+        <ScrollView className="flex-1 px-4 pt-3" showsVerticalScrollIndicator={false}>
+          {menuSections.length === 0 ? (
+            <View className="items-center py-12">
+              <Text className="text-gray-500 mb-4">メニューが登録されていません</Text>
+              <Button title="メニューを追加" onPress={() => setShowAddModal(true)} />
+            </View>
+          ) : (
+            menuSections.map((section) => (
+              <View key={section.id} className="mb-4">
+                <View className={`px-3 py-2 rounded-lg mb-2 ${section.visual.headerBgClass}`}>
+                  <Text className={`font-bold ${section.visual.headerTextClass}`}>
+                    {section.categoryCode} {section.title}
+                  </Text>
+                </View>
+                {section.menus.map((menu, index) => (
+                  <View key={menu.id}>
+                    {renderMenuItem({
+                      item: menu,
+                      indexInSection: index,
+                      sectionLength: section.menus.length,
+                      categoryCode: section.categoryCode,
+                      categoryVisual: section.visual,
+                    })}
+                  </View>
+                ))}
+              </View>
+            ))
+          )}
+        </ScrollView>
       )}
 
       {/* Category list */}
       {!loading && viewMode === 'categories' && (
         <FlatList
-          data={categories}
+          data={orderedCategories}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: 16 }}
+          ListHeaderComponent={
+            <View className="mb-3">
+              <Card className="px-3 py-2">
+                <View className="flex-row items-center justify-between">
+                  <View>
+                    <Text className="text-gray-500 text-xs">カテゴリ数</Text>
+                    <Text className="text-lg font-bold text-gray-900">{categories.length}</Text>
+                  </View>
+                  <View className="items-end">
+                    <Text className="text-gray-500 text-xs">紐づくメニュー総数</Text>
+                    <Text className="text-lg font-bold text-blue-600">
+                      {menus.filter((menu) => !!menu.category_id).length}
+                    </Text>
+                  </View>
+                </View>
+                <Text className="text-[11px] text-gray-500 mt-2">
+                  矢印でカテゴリ順を並び替えできます。メニュー画面の表示順にも反映されます。
+                </Text>
+              </Card>
+            </View>
+          }
           renderItem={({ item, index }) => {
             const menuCount = menus.filter((m) => m.category_id === item.id).length;
+            const categoryMeta = categoryMetaMap.get(item.id);
+            const categoryCode = categoryMeta?.code ?? 'C--';
+            const visual = categoryMeta?.visual ?? UNCATEGORIZED_VISUAL;
             return (
-              <Card className="mb-3">
+              <Card className={`mb-2 px-3 py-2 border ${visual.cardBgClass} ${visual.cardBorderClass}`}>
                 <View className="flex-row items-center justify-between">
                   <View className="flex-1">
-                    <Text className="text-lg font-semibold text-gray-900">{item.category_name}</Text>
-                    <Text className="text-gray-500 text-sm mt-0.5">{menuCount}件のメニュー</Text>
+                    <View className="flex-row items-center gap-2">
+                      <View className={`px-2 py-0.5 rounded ${visual.chipBgClass}`}>
+                        <Text className={`text-[10px] font-bold ${visual.chipTextClass}`}>{categoryCode}</Text>
+                      </View>
+                      <Text className="text-base font-semibold text-gray-900">{item.category_name}</Text>
+                    </View>
+                    <View className="mt-1 self-start bg-white/80 px-2 py-0.5 rounded-full">
+                      <Text className="text-gray-700 text-xs">{menuCount}件のメニュー</Text>
+                    </View>
                   </View>
                   <View className="flex-row items-center gap-1">
                     <TouchableOpacity
                       onPress={() => moveCategoryOrder(item, 'up')}
                       disabled={index === 0}
-                      className={`w-8 h-8 items-center justify-center rounded ${index === 0 ? 'opacity-30' : ''}`}
+                      className={`w-7 h-7 items-center justify-center rounded bg-gray-100 ${index === 0 ? 'opacity-30' : ''}`}
                     >
                       <Text className="text-gray-600 font-bold">↑</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => moveCategoryOrder(item, 'down')}
-                      disabled={index === categories.length - 1}
-                      className={`w-8 h-8 items-center justify-center rounded ${index === categories.length - 1 ? 'opacity-30' : ''}`}
+                      disabled={index === orderedCategories.length - 1}
+                      className={`w-7 h-7 items-center justify-center rounded bg-gray-100 ${index === orderedCategories.length - 1 ? 'opacity-30' : ''}`}
                     >
                       <Text className="text-gray-600 font-bold">↓</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
-                <View className="flex-row mt-3 pt-3 border-t border-gray-100 gap-2">
+                <View className="flex-row mt-2 pt-2 border-t border-gray-100 gap-2">
                   <TouchableOpacity
                     onPress={() => {
                       setEditingCategory(item);
                       setCategoryName(item.category_name);
                       setShowEditCategoryModal(true);
                     }}
-                    className="flex-1 py-2 bg-blue-50 rounded items-center"
+                    className="flex-1 py-1.5 bg-blue-50 rounded items-center"
                   >
-                    <Text className="text-blue-600 font-medium">編集</Text>
+                    <Text className="text-blue-600 text-xs font-medium">編集</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => handleDeleteCategory(item)}
-                    className="flex-1 py-2 bg-red-50 rounded items-center"
+                    className="flex-1 py-1.5 bg-red-50 rounded items-center"
                   >
-                    <Text className="text-red-600 font-medium">削除</Text>
+                    <Text className="text-red-600 text-xs font-medium">削除</Text>
                   </TouchableOpacity>
                 </View>
               </Card>
@@ -825,6 +1074,57 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               loading={savingCategory}
               disabled={!categoryName.trim()}
             />
+          </View>
+        </View>
+      </Modal>
+
+      {/** Menu All Delete modal*/}
+      <Modal
+        visible={showDeleteAllModal}
+        onClose={() => {
+          setShowDeleteAllModal(false);
+          setAdminPasswordInput('');
+          setDeleteAllError('');
+        }}
+        title="メニュー全削除"
+      >
+        <View className="gap-3">
+          <Text className="text-gray-600 text-sm">
+            メニューを全削除するには管理者パスワードが必要です。
+            {"\n"}初期パスワードは「0000」です。設定タブで変更できます。
+          </Text>
+          <TextInput
+            value={adminPasswordInput}
+            onChangeText={(text) => {
+              setAdminPasswordInput(text);
+              setDeleteAllError('');
+            }}
+            secureTextEntry
+            placeholder="管理者パスワード"
+            className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+            placeholderTextColor="#9CA3AF"
+          />
+          {deleteAllError ? <Text className="text-red-500 text-sm">{deleteAllError}</Text> : null}
+          <View className="flex-row gap-3 mt-1">
+            <View className="flex-1">
+              <Button
+                title="キャンセル"
+                onPress={() => {
+                  setShowDeleteAllModal(false);
+                  setAdminPasswordInput('');
+                  setDeleteAllError('');
+                }}
+                variant="secondary"
+              />
+            </View>
+            <View className="flex-1">
+              <Button
+                title="次へ"
+                onPress={handleDeleteAllMenus}
+                loading={deletingAll}
+                variant="danger"
+              />
+            </View>
           </View>
         </View>
       </Modal>

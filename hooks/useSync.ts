@@ -3,7 +3,9 @@ import { AppState, AppStateStatus } from 'react-native';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {
   getPendingTransactions,
+  getPendingVisitorCounts,
   markTransactionSynced,
+  markVisitorCountsSynced,
   clearSyncedTransactions,
   saveLastSyncTime,
   getLastSyncTime,
@@ -11,10 +13,13 @@ import {
 import * as Crypto from 'expo-crypto';
 
 const SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
+const VISITOR_SYNC_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
 export const useSync = () => {
   const syncInProgress = useRef(false);
+  const visitorSyncInProgress = useRef(false);
   const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const visitorSyncTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const syncPendingTransactions = useCallback(async () => {
     if (!isSupabaseConfigured() || syncInProgress.current) {
@@ -109,6 +114,72 @@ export const useSync = () => {
     }
   }, []);
 
+  const syncPendingVisitorCounts = useCallback(async () => {
+    if (!isSupabaseConfigured() || visitorSyncInProgress.current) {
+      return;
+    }
+
+    visitorSyncInProgress.current = true;
+
+    try {
+      const pendingVisitorCounts = await getPendingVisitorCounts();
+      const unsynced = pendingVisitorCounts.filter((count) => !count.synced);
+
+      if (unsynced.length === 0) {
+        return;
+      }
+
+      const grouped = new Map<
+        string,
+        { branch_id: string; group_type: string; timestamp: string; count: number; sourceIds: string[] }
+      >();
+
+      unsynced.forEach((item) => {
+        const time = new Date(item.timestamp).getTime();
+        const floored = Math.floor(time / VISITOR_SYNC_INTERVAL) * VISITOR_SYNC_INTERVAL;
+        const slotTimestamp = new Date(floored).toISOString();
+        const groupType = item.group || 'unassigned';
+        const key = `${item.branch_id}|${groupType}|${slotTimestamp}`;
+        const current = grouped.get(key);
+
+        if (current) {
+          current.count += item.count;
+          current.sourceIds.push(item.id);
+          return;
+        }
+
+        grouped.set(key, {
+          branch_id: item.branch_id,
+          group_type: groupType,
+          timestamp: slotTimestamp,
+          count: item.count,
+          sourceIds: [item.id],
+        });
+      });
+
+      const payload = Array.from(grouped.values()).map((row) => ({
+        id: Crypto.randomUUID(),
+        branch_id: row.branch_id,
+        group_type: row.group_type,
+        count: row.count,
+        timestamp: row.timestamp,
+      }));
+
+      const { error } = await supabase.from('visitor_counts').insert(payload);
+      if (error) {
+        console.error('Error syncing visitor counts:', error);
+        return;
+      }
+
+      const syncedSourceIds = Array.from(grouped.values()).flatMap((row) => row.sourceIds);
+      await markVisitorCountsSynced(syncedSourceIds);
+    } catch (error) {
+      console.error('Visitor sync error:', error);
+    } finally {
+      visitorSyncInProgress.current = false;
+    }
+  }, []);
+
   const checkAndSync = useCallback(async () => {
     const lastSync = await getLastSyncTime();
 
@@ -137,10 +208,23 @@ export const useSync = () => {
       checkAndSync();
     }, SYNC_INTERVAL);
 
+    // Visitor counts sync every 15 minutes (aligned to quarter-hour boundary)
+    syncPendingVisitorCounts();
+    const now = Date.now();
+    const nextBoundaryDelay =
+      VISITOR_SYNC_INTERVAL - (now % VISITOR_SYNC_INTERVAL);
+    const boundaryTimeout = setTimeout(() => {
+      syncPendingVisitorCounts();
+      visitorSyncTimerRef.current = setInterval(() => {
+        syncPendingVisitorCounts();
+      }, VISITOR_SYNC_INTERVAL);
+    }, nextBoundaryDelay);
+
     // Sync when app comes to foreground
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
         checkAndSync();
+        syncPendingVisitorCounts();
       }
     };
 
@@ -150,12 +234,17 @@ export const useSync = () => {
       if (syncTimerRef.current) {
         clearInterval(syncTimerRef.current);
       }
+      if (visitorSyncTimerRef.current) {
+        clearInterval(visitorSyncTimerRef.current);
+      }
+      clearTimeout(boundaryTimeout);
       subscription.remove();
     };
-  }, [checkAndSync]);
+  }, [checkAndSync, syncPendingVisitorCounts]);
 
   return {
     syncNow: syncPendingTransactions,
+    syncVisitorNow: syncPendingVisitorCounts,
     checkAndSync,
   };
 };
