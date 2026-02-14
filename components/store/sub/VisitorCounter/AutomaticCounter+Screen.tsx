@@ -49,7 +49,7 @@ export const AutomaticCounterScreen = ({
           isRunning={isRunning}
           onStart={() => setIsRunning(true)}
           onStop={() => setIsRunning(false)}
-          onAutoCount={(count) => handleCount(count)}
+          onAutoCount={(count) => handleCount("group1", count)}
         />
       </View>
 

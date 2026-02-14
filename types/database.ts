@@ -177,9 +177,12 @@ export interface VisitorCount {
   timestamp: string; // ISO string
 }
 
+export type VisitorGroup = 'group1' | 'group2' | 'group3' | 'group4';
+
 export interface PendingVisitorCount {
   id: string;
   branch_id: string;
+  group:VisitorGroup;
   count: number;
   timestamp: string;
   synced: boolean;

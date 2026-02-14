@@ -5,7 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import './global.css';
 
 import { HQLogin, HQDashboard, BranchManagement } from './components/hq';
-import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, VisitorCounter, OrderBoard, BudgetManager } from './components/store';
+import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, BudgetManager } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 import { HQHome } from 'components/hq/HQHome';
@@ -48,7 +48,7 @@ export default function App() {
     setCurrentScreen('home');
   }, []);
 
-  if(!isSupabaseConfigured){
+  if(!isSupabaseConfigured()){
     return <MissingEnvScreen />
   }
 

@@ -1,118 +1,152 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { getPendingVisitorCounts, savePendingVisitorCount } from "lib/storage";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { HalfHourlyVisitors, PendingVisitorCount, VisitorGroup } from "types/database";
 import * as Crypto from 'expo-crypto';
-import { alertNotify, safeVibrate } from 'lib/alertUtils';
-import { getPendingVisitorCounts, savePendingVisitorCount } from 'lib/storage';
-import { isSupabaseConfigured, supabase } from 'lib/supabase';
-import { HalfHourlyVisitors, PendingVisitorCount } from 'types/database';
+import { alertNotify, safeVibrate } from "lib/alertUtils";
+import { isSupabaseConfigured, supabase } from "lib/supabase";
 
-export const useVisitorCounter = (branchId: string) => {
-  const [todayCount, setTodayCount] = useState(0);
-  const [lastCountTime, setLastCountTime] = useState<string | null>(null);
-  const [pendingCounts, setPendingCounts] = useState<PendingVisitorCount[]>([]);
+const GROUPS:VisitorGroup[]=[
+  "group1",
+  "group2",
+  "group3",
+  "group4"
+]
 
-  const loadTodayCount = useCallback(async () => {
+export const useVisitorCounter = (branchId:string) =>{
+
+  const [pendingCounts,setPendingCounts] = useState<PendingVisitorCount[]>([])
+  const [lastCountTime , setLastCountTime] = useState<string | null>(null);
+
+  //**initial loading */
+  const loadTodayCounts = useCallback(async()=>{
     const all = await getPendingVisitorCounts();
     const today = new Date().toDateString();
 
     const todayCounts = all.filter(
       (c) =>
         c.branch_id === branchId &&
-        new Date(c.timestamp).toDateString() === today
+        new Date(c.timestamp).toDateString() == today
     );
 
     setPendingCounts(todayCounts);
-    setTodayCount(todayCounts.reduce((sum, c) => sum + c.count, 0));
 
-    if (todayCounts.length > 0) {
+    if(pendingCounts.length > 0){
       setLastCountTime(todayCounts[todayCounts.length - 1].timestamp);
     }
-  }, [branchId]);
+  },[branchId]);
 
-  useEffect(() => {
-    loadTodayCount();
-  }, [loadTodayCount]);
+  useEffect(()=>{
+    loadTodayCounts();
+  },[])
 
-  const handleCount = async (count: number) => {
+  /** counts per Group */
+  const groupCounts = useMemo(()=>{
+    const map:Record<VisitorGroup,number> = {
+      group1:0,
+      group2:0,
+      group3:0,
+      group4:0,
+    };
+
+    pendingCounts.forEach((c)=>{
+      map[c.group] += c.count;
+    });
+
+    return map
+  },[pendingCounts])
+
+  /**sum */
+  const todayTotal = useMemo(()=>{
+    return Object.values(groupCounts).reduce((a,b) => a+b , 0)
+  },[groupCounts]);
+
+  const handleCount = async(
+    group:VisitorGroup,
+    count:number
+  ) => {
+    if( count === 0) return;
+
     const now = new Date().toISOString();
     const id = Crypto.randomUUID();
 
     safeVibrate(40);
 
-    const visitor: PendingVisitorCount = {
+    const visitor:PendingVisitorCount = {
       id,
-      branch_id: branchId,
+      branch_id:branchId,
+      group,
       count,
-      timestamp: now,
-      synced: false,
+      timestamp:now,
+      synced:false,
     };
 
-    try {
+    try{
       await savePendingVisitorCount(visitor);
-      setTodayCount((prev) => prev + count);
+
+      setPendingCounts((prev) => [...prev,visitor]);
       setLastCountTime(now);
-      setPendingCounts((prev) => [...prev, visitor]);
 
-      if (isSupabaseConfigured()) {
-        await supabase.from('visitor_counts').insert({
+      if(isSupabaseConfigured()){
+        await supabase.from("visitor_counts").insert({
           id,
-          branch_id: branchId,
+          branch_id:branchId,
+          group,
           count,
-          timestamp: now,
-        });
+          timestamp:now
+        })
       }
-    } catch {
-      alertNotify('エラー', 'カウント保存に失敗しました');
+    }catch{
+      alertNotify("Error","カウント保存に失敗しました")
     }
-  };
 
-  const formatTime = (isoString: string | null) => {
-    if (!isoString) return '--:--';
-    const date = new Date(isoString);
-    return `${date.getHours().toString().padStart(2, '0')}:${date
-      .getMinutes()
-      .toString()
-      .padStart(2, '0')}`;
-  };
 
-  const getCurrentTimeSlot = () => {
-    const now = new Date();
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-    const slotMinutes = Math.floor(minutes / 15) * 15;
 
-    return `${hours.toString().padStart(2, '0')}:${slotMinutes
-      .toString()
-      .padStart(2, '0')}`;
-  };
 
-  const halfHourlyData = useMemo((): HalfHourlyVisitors[] => {
-    const map = new Map<string, number>();
 
-    pendingCounts.forEach((v) => {
+
+  }
+
+  const quarterHourlyData = useMemo(():HalfHourlyVisitors[] =>{
+    const map = new Map<string,number>();
+    
+    pendingCounts.forEach((v)=>{
       const d = new Date(v.timestamp);
-      const h = d.getHours().toString().padStart(2, '0');
-      const m = d.getMinutes() < 15 ? '00' : '15';
-      const key = `${h}:${m}`;
-      map.set(key, (map.get(key) || 0) + v.count);
-    });
+      const minites = d.getMinutes();
+      const slotMinutes = Math.floor(minites / 15) * 15 ;
 
-    return Array.from(map.entries())
-      .map(([time_slot, count]) => ({ time_slot, count }))
-      .sort((a, b) => a.time_slot.localeCompare(b.time_slot));
-  }, [pendingCounts]);
+      const h = d.getHours().toString().padStart(2,"0");
+      const m = slotMinutes.toString().padStart(2,"0")
+      const key = `${h}:${m}`
 
-  const maxVisitorSlot = useMemo(() => {
-    if (halfHourlyData.length === 0) return 1;
-    return Math.max(...halfHourlyData.map((s) => s.count));
-  }, [halfHourlyData]);
+      map.set(key,(map.get(key) || 0 ) + v.count);
+    })
 
-  return {
-    todayCount,
+      return Array.from(map.entries())
+        .map(([time_slot,count]) => ({time_slot,count}))
+        .sort((a,b) => a.time_slot.localeCompare(b.time_slot))
+  },[pendingCounts])
+
+  const maxVisitorSlot = useMemo(()=>{
+    if(quarterHourlyData.length === 0) return 1;
+    return Math.max(...quarterHourlyData.map((s)=>s.count));
+  },[quarterHourlyData]);
+
+  const formatTime = (isoString:string | null) =>{
+    if(!isoString) return "--:--";
+    const date = new Date(isoString);
+    return `${date.getHours().toString().padStart(2,"0")}:${date.getMinutes().toString().padStart(2,"0")}`;
+  };
+
+  return{
+    groupCounts,
+    todayTotal,
     lastCountTime,
     handleCount,
     formatTime,
-    getCurrentTimeSlot,
-    halfHourlyData,
+    quarterHourlyData,
     maxVisitorSlot,
-  };
-};
+  }
+
+
+
+}

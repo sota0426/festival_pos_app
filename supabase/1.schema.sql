@@ -57,9 +57,15 @@ CREATE TABLE IF NOT EXISTS transaction_items (
 CREATE TABLE IF NOT EXISTS visitor_counts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
+
+  group_type TEXT NOT NULL CHECK (
+    group_type IN ('group1', 'group2', 'group3', 'group4')
+  ),
+
   count INTEGER NOT NULL DEFAULT 1,
   timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
 
 -- Indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_menus_branch_id ON menus(branch_id);

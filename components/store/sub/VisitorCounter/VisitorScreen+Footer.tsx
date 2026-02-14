@@ -11,13 +11,11 @@ interface Props{
 export const VisitorFooter =({branch}:Props)=>{
   const [showTrend, setShowTrend] = useState(true);
   const {
-    todayCount,
-    handleCount,
-    halfHourlyData,
+    quarterHourlyData,
     maxVisitorSlot,
   } = useVisitorCounter(branch.id);
     return(
-    <View className="px-4 pb-4 mt-auto">
+    <View className="px-4 pb-4 mt-auto bg-slate-50">
 
         {/* Toggle */}
         <TouchableOpacity
@@ -32,8 +30,8 @@ export const VisitorFooter =({branch}:Props)=>{
 
         {showTrend && (
             <Card className="mb-3">
-            {halfHourlyData.length > 0 ? (
-                halfHourlyData.map((slot) => (
+            {quarterHourlyData.length > 0 ? (
+                quarterHourlyData.map((slot) => (
                 <View
                     key={slot.time_slot}
                     className="flex-row items-center py-1.5 border-b border-gray-100"
