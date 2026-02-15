@@ -597,7 +597,7 @@ export const HQDashboard = ({ onNavigateToBranches, onNavigateToBranchInfo, onBa
         onBack={onBack}
         rightElement={
           <Button
-            title={exportingCsv ? '出力中...' : 'CSV出力'}
+            title={exportingCsv ? '出力中...' : 'CSV一括出力'}
             onPress={handleExportDashboardCsv}
             size="sm"
             disabled={exportingCsv}
