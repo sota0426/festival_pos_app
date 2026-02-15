@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, PanResponder, TextInput } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, PanResponder, TextInput, Keyboard, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Card, Header, Modal } from '../../common';
@@ -42,9 +42,10 @@ export const Register = ({
   const [discountAmount, setDiscountAmount] = useState('');
   const [showHint, setShowHint] = useState(false);
   const [quickOrderInput, setQuickOrderInput] = useState('');
-  const [showQuickOrder, setShowQuickOrder] = useState(true);
+  const [showQuickOrder, setShowQuickOrder] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
-  const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
+const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
@@ -81,6 +82,23 @@ export const Register = ({
     };
     loadSettings();
   }, [fetchMenus]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const { orderedCategories, categoryMetaMap } = useMemo(() => getCategoryMetaMap(categories), [categories]);
   const menuCodeMap = useMemo(() => buildMenuCodeMap(menus, categories), [menus, categories]);
@@ -612,21 +630,11 @@ export const Register = ({
   };
 
   const quickOrderSection = (
-    <View className="px-4 pt-2 pb-1 bg-gray-100">
+  <View className="px-4 pt-2 pb-1 bg-gray-100">
       <Card className="px-3 py-2">
-        <View className="flex-row items-center justify-between mb-1">
+        <View className="mb-1">
           <Text className="text-xs text-gray-500">番号で注文追加（例: 101, 203, 007）</Text>
-          <TouchableOpacity
-            onPress={toggleQuickOrder}
-            className={`px-2 py-1 rounded ${showQuickOrder ? 'bg-blue-100' : 'bg-gray-200'}`}
-            activeOpacity={0.8}
-          >
-            <Text className={`text-xs font-semibold ${showQuickOrder ? 'text-blue-700' : 'text-gray-700'}`}>
-              {showQuickOrder ? '非表示' : '表示'}
-            </Text>
-          </TouchableOpacity>
         </View>
-        {showQuickOrder && (
           <View className="flex-row items-center gap-2">
             <TextInput
               ref={quickOrderInputRef}
@@ -648,8 +656,19 @@ export const Register = ({
               <Text className="text-white font-semibold">追加</Text>
             </TouchableOpacity>
           </View>
-        )}
       </Card>
+    </View>
+  );
+
+  const registerHeaderRight = (
+    <View className="flex-row items-center gap-2">
+      <Button
+        title={showQuickOrder ? '番号入力:ON' : '番号入力:OFF'}
+        onPress={toggleQuickOrder}
+        size="sm"
+        variant={showQuickOrder ? 'primary' : 'secondary'}
+      />
+      <Button title="履歴" onPress={onNavigateToHistory} size="sm" variant="secondary" />
     </View>
   );
 
@@ -1084,23 +1103,22 @@ export const Register = ({
           subtitle={`${branch.branch_code} - ${branch.branch_name}`}
           showBack
           onBack={onBack}
-          rightElement={
-            <Button title="履歴" onPress={onNavigateToHistory} size="sm" variant="secondary" />
-          }
+          rightElement={registerHeaderRight}
         />
 
         {showCart ? (
           <CartPanel />
         ) : (
           <>
-            {quickOrderSection}
+          {showQuickOrder && quickOrderSection}
             <MenuGrid />
 
             {/* Floating Cart Button */}
             {cart.length > 0 && (
               <TouchableOpacity
                 onPress={() => setShowCart(true)}
-                className="absolute bottom-6 left-4 right-4 bg-blue-600 rounded-xl p-4 flex-row items-center justify-between shadow-lg"
+                className="absolute left-4 right-4 bg-blue-600 rounded-xl p-4 flex-row items-center justify-between shadow-lg"
+                style={{ bottom: keyboardHeight > 0 ? keyboardHeight + 8 : 24 }}
                 activeOpacity={0.9}
               >
                 <View className="flex-row items-center">
@@ -1132,9 +1150,7 @@ export const Register = ({
         subtitle={`${branch.branch_code} - ${branch.branch_name}`}
         showBack
         onBack={onBack}
-        rightElement={
-          <Button title="履歴" onPress={onNavigateToHistory} size="sm" variant="secondary" />
-        }
+        rightElement={registerHeaderRight}
       />
 
       <View className="flex-1 flex-row">

@@ -15,7 +15,6 @@ interface StoreHomeProps {
   onNavigateToMenus: () => void;
   onNavigateToHistory: () => void;
   onNavigateToCounter: () => void;
-  onNavigateToAutoCounter:()=>void;
   onNavigateToOrderBoard: () => void;
   onNavigateToBudget: () => void;
   onNavigateToBudgetExpense: () => void;
@@ -36,7 +35,6 @@ export const StoreHome = ({
   onNavigateToMenus,
   onNavigateToHistory,
   onNavigateToCounter,
-  onNavigateToAutoCounter,
   onNavigateToOrderBoard,
   onNavigateToBudget,
   onNavigateToBudgetExpense,
@@ -264,22 +262,12 @@ export const StoreHome = ({
               </Card>
             </TouchableOpacity>
 
-            <View className=''>
-              <TouchableOpacity onPress={onNavigateToCounter} activeOpacity={0.8}>
-                <Card className="bg-purple-500 px-12 py-8">
-                  <Text className="text-white text-2xl  font-bold text-center">来客カウンター</Text>
-                  <Text className="text-purple-100 text-center mt-2">ボタンをタップして来場者数を記録</Text>
-                </Card>
-              </TouchableOpacity>
-
-              {/** TODO */}
-              {/* <TouchableOpacity onPress={onNavigateToAutoCounter} activeOpacity={0.8}>
-                <Card className="bg-slate-500 p-8">
-                  <Text className="text-white text-2xl  font-bold text-center">自動集計カウンター</Text>
-                  <Text className="text-purple-100 text-center mt-2">カメラを起動して自動で来場者数を集計</Text>
-                </Card>
-              </TouchableOpacity> */}
-            </View>
+            <TouchableOpacity onPress={onNavigateToCounter} activeOpacity={0.8}>
+              <Card className="bg-purple-500 px-12 py-8">
+                <Text className="text-white text-2xl  font-bold text-center">来客カウンター</Text>
+                <Text className="text-purple-100 text-center mt-2">ボタンをタップして来場者数を記録</Text>
+              </Card>
+            </TouchableOpacity>
           </View>
         )}
 

@@ -10,7 +10,7 @@ import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 import { HQHome } from 'components/hq/HQHome';
 import { hasSupabaseEnvConfigured } from "./lib/supabase"
-import { AutomaticCounterScreen } from 'components/store/sub/VisitorCounter/AutomaticCounter+Screen';
+
 import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
 import { MissingEnvScreen } from 'components/MissingEnvScreen';
 import { Home } from 'components/Home';
@@ -30,14 +30,13 @@ type Screen =
   | 'store_register'
   | 'store_history'
   | 'store_counter'
-  | 'store_autocounter'
   | 'store_order_board'
   | 'store_budget'
   | 'store_budget_expense'
   | 'store_budget_breakeven';
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState<Screen>("store_autocounter");
+  const [currentScreen, setCurrentScreen] = useState<Screen>("home");
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [hqBranchInfoReturnScreen, setHqBranchInfoReturnScreen] = useState<'hq_home' | 'hq_dashboard'>('hq_home');
   const [hqBranchInfoFocusBranchId, setHqBranchInfoFocusBranchId] = useState<string | null>(null);
@@ -149,7 +148,7 @@ export default function App() {
             onNavigateToMenus={() => setCurrentScreen('store_menus')}
             onNavigateToHistory={() => setCurrentScreen('store_history')}
             onNavigateToCounter={() => setCurrentScreen('store_counter')}
-            onNavigateToAutoCounter={()=>setCurrentScreen('store_autocounter')}
+
             onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
             onNavigateToBudget={() => setCurrentScreen('store_budget')}
             onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
@@ -205,19 +204,6 @@ export default function App() {
           <ManualCounterScreen
             branch={currentBranch}
             onBack={() => setCurrentScreen('store_home')}
-          />
-        );
-
-        //TODO
-      case 'store_autocounter':
-        if (!currentBranch) {
-          setCurrentScreen('store_login');
-          return null;
-        }
-        return (
-          <AutomaticCounterScreen
-            branch={currentBranch}
-            onBack={() => setCurrentScreen('store_home')}   
           />
         );
 

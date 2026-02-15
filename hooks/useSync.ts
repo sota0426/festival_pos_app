@@ -14,6 +14,16 @@ import * as Crypto from 'expo-crypto';
 
 const SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
 const VISITOR_SYNC_INTERVAL = 15 * 60 * 1000; // 15 minutes
+const ALLOWED_VISITOR_GROUP_TYPES = new Set(['group1', 'group2', 'group3', 'group4']);
+
+const normalizeVisitorGroupType = (value?: string | null): string => {
+  if (value && ALLOWED_VISITOR_GROUP_TYPES.has(value)) {
+    return value;
+  }
+  // DB constraint visitor_counts_group_check allows only group1..group4.
+  // Legacy values like "unassigned" are folded into group1 on sync.
+  return 'group1';
+};
 
 export const useSync = () => {
   const syncInProgress = useRef(false);
@@ -75,10 +85,25 @@ export const useSync = () => {
           }
 
           // Insert transaction items
+          // Verify which menu_ids exist in the DB to avoid foreign key violations
+          const menuIds = transaction.items
+            .map((item) => item.menu_id)
+            .filter((id): id is string => !!id);
+          const existingMenuIds = new Set<string>();
+          if (menuIds.length > 0) {
+            const { data: existingMenus } = await supabase
+              .from('menus')
+              .select('id')
+              .in('id', menuIds);
+            if (existingMenus) {
+              existingMenus.forEach((m) => existingMenuIds.add(m.id));
+            }
+          }
+
           const transactionItems = transaction.items.map((item) => ({
             id: Crypto.randomUUID(),
             transaction_id: transaction.id,
-            menu_id: item.menu_id,
+            menu_id: item.menu_id && existingMenuIds.has(item.menu_id) ? item.menu_id : null,
             menu_name: item.menu_name,
             quantity: item.quantity,
             unit_price: item.unit_price,
@@ -138,7 +163,7 @@ export const useSync = () => {
         const time = new Date(item.timestamp).getTime();
         const floored = Math.floor(time / VISITOR_SYNC_INTERVAL) * VISITOR_SYNC_INTERVAL;
         const slotTimestamp = new Date(floored).toISOString();
-        const groupType = item.group || 'unassigned';
+        const groupType = normalizeVisitorGroupType(item.group);
         const key = `${item.branch_id}|${groupType}|${slotTimestamp}`;
         const current = grouped.get(key);
 

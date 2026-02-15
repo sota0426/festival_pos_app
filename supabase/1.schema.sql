@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
   transaction_code TEXT UNIQUE NOT NULL,
   total_amount INTEGER NOT NULL,
-  payment_method TEXT NOT NULL CHECK (payment_method IN ('paypay', 'voucher')),
+  payment_method TEXT NOT NULL CHECK (payment_method IN ('paypay', 'voucher', 'cash')),
   status TEXT DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
   fulfillment_status TEXT DEFAULT 'pending' CHECK (fulfillment_status IN ('pending', 'served')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
