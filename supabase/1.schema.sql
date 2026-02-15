@@ -21,9 +21,11 @@ CREATE TABLE IF NOT EXISTS menus (
   branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
   menu_name TEXT NOT NULL,
   price INTEGER NOT NULL,
+  menu_number INTEGER,
   stock_management BOOLEAN DEFAULT false,
   stock_quantity INTEGER DEFAULT 0,
   is_active BOOLEAN DEFAULT true,
+  is_show BOOLEAN DEFAULT true,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -69,6 +71,7 @@ CREATE TABLE IF NOT EXISTS visitor_counts (
 
 -- Indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_menus_branch_id ON menus(branch_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_menus_branch_menu_number_unique ON menus(branch_id, menu_number) WHERE menu_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_transactions_branch_id ON transactions(branch_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
 CREATE INDEX IF NOT EXISTS idx_transaction_items_transaction_id ON transaction_items(transaction_id);

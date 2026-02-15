@@ -21,6 +21,7 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
 
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
+  const canRemoteRefresh = isSupabaseConfigured();
 
     // Fetch active orders
   const fetchActiveOrders = useCallback(async (isRefresh = false) => {
@@ -189,14 +190,16 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
         showBack
         onBack={onBack}
         rightElement={
-          <Button
-            title={refreshing ? '更新中...' : '更新'}
-            onPress={handleRefresh}
-            variant="primary"
-            size="sm"
-            disabled={refreshing}
-            loading={refreshing}
-          />
+          canRemoteRefresh ? (
+            <Button
+              title={refreshing ? '更新中...' : '更新'}
+              onPress={handleRefresh}
+              variant="primary"
+              size="sm"
+              disabled={refreshing}
+              loading={refreshing}
+            />
+          ) : null
         }
       />
 
@@ -215,14 +218,18 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
       {orders.length === 0 ? (
         <View className="flex-1 items-center justify-center">
           <Text className="text-gray-400 text-xl">注文待ち...</Text>
-          <Text className="text-gray-300 mt-2">「更新」ボタンで最新の注文を取得できます</Text>
-          <TouchableOpacity
-            onPress={handleRefresh}
-            className="mt-6 bg-amber-400 rounded-xl px-8 py-4"
-            activeOpacity={0.7}
-          >
-            <Text className="text-white font-bold text-lg">更新する</Text>
-          </TouchableOpacity>
+          {canRemoteRefresh && (
+            <>
+              <Text className="text-gray-300 mt-2">「更新」ボタンで最新の注文を取得できます</Text>
+              <TouchableOpacity
+                onPress={handleRefresh}
+                className="mt-6 bg-amber-400 rounded-xl px-8 py-4"
+                activeOpacity={0.7}
+              >
+                <Text className="text-white font-bold text-lg">更新する</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       ) : (
         <ScrollView className="flex-1" contentContainerStyle={{ padding: 8 }}>

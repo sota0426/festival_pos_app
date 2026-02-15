@@ -6,11 +6,14 @@ import { Button, Card, Header, Modal } from "components/common";
 import { alertConfirm, alertNotify } from "lib/alertUtils";
 import {
   deleteBudgetExpense,
+  getDefaultExpenseRecorder,
   getBudgetExpenses,
+  saveBudgetExpenses,
+  saveDefaultExpenseRecorder,
   saveBudgetExpense,
 } from "lib/storage";
 import { isSupabaseConfigured, supabase } from "lib/supabase";
-import type { Branch, BudgetExpense, ExpenseCategory } from "types/database";
+import type { Branch, BudgetExpense, ExpenseCategory, ExpensePaymentMethod } from "types/database";
 
 interface Props {
   branch: Branch;
@@ -38,22 +41,122 @@ const CATEGORY_COLORS: Record<ExpenseCategory, { bg: string; text: string }> = {
   other: { bg: "bg-orange-100", text: "text-orange-700" },
 };
 
+const PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
+  cash: "現金",
+  online: "オンライン",
+  cashless: "キャッシュレス",
+};
+
+const PAYMENT_METHOD_COLORS: Record<ExpensePaymentMethod, { bg: string; text: string }> = {
+  cash: { bg: "bg-emerald-100", text: "text-emerald-700" },
+  online: { bg: "bg-sky-100", text: "text-sky-700" },
+  cashless: { bg: "bg-indigo-100", text: "text-indigo-700" },
+};
+
 export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
   const [expenses, setExpenses] = useState<BudgetExpense[]>([]);
   const [expCategory, setExpCategory] = useState<ExpenseCategory>("material");
   const [expAmount, setExpAmount] = useState("");
   const [expMemo, setExpMemo] = useState("");
+  const [expRecorder, setExpRecorder] = useState("");
+  const [expPaymentMethod, setExpPaymentMethod] = useState<ExpensePaymentMethod>("cash");
   const [showCategoryHint, setShowCategoryHint] = useState(false);
   const [hintCategory, setHintCategory] = useState<ExpenseCategory>("material");
+  const [syncing, setSyncing] = useState(false);
+
+  const syncExpenses = useCallback(async () => {
+    const allLocal = await getBudgetExpenses();
+    const branchLocal = allLocal.filter((expense) => expense.branch_id === branch.id);
+
+    if (!isSupabaseConfigured()) {
+      setExpenses(branchLocal);
+      return;
+    }
+
+    setSyncing(true);
+    try {
+      const unsynced = branchLocal.filter((expense) => !expense.synced);
+      const failedIds = new Set<string>();
+
+      for (const expense of unsynced) {
+        const { error } = await supabase.from("budget_expenses").upsert(
+          {
+            id: expense.id,
+            branch_id: expense.branch_id,
+            date: expense.date,
+            category: expense.category,
+            amount: expense.amount,
+            recorded_by: expense.recorded_by,
+            payment_method: expense.payment_method,
+            memo: expense.memo,
+            receipt_image: expense.receipt_image,
+            created_at: expense.created_at,
+          },
+          { onConflict: "id" },
+        );
+        if (error) {
+          failedIds.add(expense.id);
+        }
+      }
+
+      const { data: remoteExpenses, error: fetchError } = await supabase
+        .from("budget_expenses")
+        .select("*")
+        .eq("branch_id", branch.id)
+        .order("created_at", { ascending: true });
+
+      if (fetchError) {
+        setExpenses(branchLocal);
+        return;
+      }
+
+      const mergedBranchExpenses: BudgetExpense[] = [
+        ...(remoteExpenses ?? []).map((expense: any) => ({
+          ...expense,
+          synced: true,
+          payment_method:
+            expense.payment_method === "paypay"
+              ? "online"
+              : expense.payment_method === "amazon"
+                ? "cashless"
+                : expense.payment_method,
+          recorded_by: expense.recorded_by ?? "",
+        })),
+        ...branchLocal
+          .filter((expense) => failedIds.has(expense.id))
+          .map((expense) => ({ ...expense, synced: false })),
+      ];
+
+      const otherBranches = allLocal.filter((expense) => expense.branch_id !== branch.id);
+      await saveBudgetExpenses([...otherBranches, ...mergedBranchExpenses]);
+      setExpenses(mergedBranchExpenses);
+    } finally {
+      setSyncing(false);
+    }
+  }, [branch.id]);
 
   const loadExpenses = useCallback(async () => {
-    const all = await getBudgetExpenses();
-    setExpenses(all.filter((expense) => expense.branch_id === branch.id));
-  }, [branch.id]);
+    await syncExpenses();
+  }, [syncExpenses]);
 
   useEffect(() => {
     loadExpenses();
   }, [loadExpenses]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      syncExpenses();
+    }, 30 * 1000);
+    return () => clearInterval(timer);
+  }, [syncExpenses]);
+
+  useEffect(() => {
+    const loadDefaultRecorder = async () => {
+      const recorder = await getDefaultExpenseRecorder(branch.id);
+      setExpRecorder(recorder);
+    };
+    loadDefaultRecorder();
+  }, [branch.id]);
 
   const expenseWithNumbers = useMemo(() => {
     const sorted = [...expenses].sort(
@@ -68,6 +171,11 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
       alertNotify("エラー", "金額を入力してください");
       return;
     }
+    if (!expRecorder.trim()) {
+      alertNotify("エラー", "登録者名を入力してください");
+      return;
+    }
+    const recorderName = expRecorder.trim();
 
     const expense: BudgetExpense = {
       id: Crypto.randomUUID(),
@@ -75,33 +183,19 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
       date: new Date().toISOString().split("T")[0],
       category: expCategory,
       amount,
-      payment_method: "cash",
+      recorded_by: recorderName,
+      payment_method: expPaymentMethod,
       memo: expMemo,
       receipt_image: null,
       created_at: new Date().toISOString(),
       synced: false,
     };
 
+    await saveDefaultExpenseRecorder(branch.id, recorderName);
     await saveBudgetExpense(expense);
     setExpenses((prev) => [...prev, expense]);
 
-    if (isSupabaseConfigured()) {
-      try {
-        await supabase.from("budget_expenses").insert({
-          id: expense.id,
-          branch_id: expense.branch_id,
-          date: expense.date,
-          category: expense.category,
-          amount: expense.amount,
-          payment_method: expense.payment_method,
-          memo: expense.memo,
-          receipt_image: null,
-          created_at: expense.created_at,
-        });
-      } catch (e) {
-        console.log("Expense sync failed:", e);
-      }
-    }
+    await syncExpenses();
 
     setExpAmount("");
     setExpMemo("");
@@ -143,6 +237,11 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
         subtitle={`${branch.branch_code} - ${branch.branch_name}`}
         showBack
         onBack={onBack}
+        rightElement={
+          isSupabaseConfigured() ? (
+            <Button title={syncing ? "同期中..." : "同期"} onPress={syncExpenses} size="sm" disabled={syncing} />
+          ) : null
+        }
       />
 
       <Modal
@@ -190,6 +289,43 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
                     }`}
                   >
                     {CATEGORY_LABELS[cat]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View className="mb-3">
+            <Text className="text-gray-600 text-sm mb-1">登録者</Text>
+            <TextInput
+              value={expRecorder}
+              onChangeText={setExpRecorder}
+              placeholder="例：山田 太郎"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+              placeholderTextColor="#9CA3AF"
+            />
+            <Text className="text-gray-400 text-xs mt-1">
+              一度入力すると次回からこの端末では登録者が初期値になります
+            </Text>
+          </View>
+
+          <View className="mb-3">
+            <Text className="text-gray-600 text-sm mb-1">支払い方法</Text>
+            <View className="flex-row gap-2">
+              {(["cash", "online", "cashless"] as ExpensePaymentMethod[]).map((method) => (
+                <TouchableOpacity
+                  key={method}
+                  onPress={() => setExpPaymentMethod(method)}
+                  className={`flex-1 py-2 rounded-lg items-center border ${
+                    expPaymentMethod === method ? `${PAYMENT_METHOD_COLORS[method].bg} border-current` : "bg-gray-50 border-gray-200"
+                  }`}
+                >
+                  <Text
+                    className={`text-sm font-semibold ${
+                      expPaymentMethod === method ? PAYMENT_METHOD_COLORS[method].text : "text-gray-500"
+                    }`}
+                  >
+                    {PAYMENT_METHOD_LABELS[method]}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -246,6 +382,16 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
                         {expense.memo}
                       </Text>
                     ) : null}
+                    <View className="flex-row items-center gap-2 mt-0.5">
+                      <Text className="text-gray-400 text-xs">
+                        登録者: {expense.recorded_by || "未設定"}
+                      </Text>
+                      <View className={`px-1.5 py-0.5 rounded ${PAYMENT_METHOD_COLORS[expense.payment_method].bg}`}>
+                        <Text className={`text-[10px] font-semibold ${PAYMENT_METHOD_COLORS[expense.payment_method].text}`}>
+                          {PAYMENT_METHOD_LABELS[expense.payment_method]}
+                        </Text>
+                      </View>
+                    </View>
                   </View>
                   <View className="flex-row items-center gap-2">
                     <Text className="text-gray-900 font-bold">¥{expense.amount.toLocaleString()}</Text>

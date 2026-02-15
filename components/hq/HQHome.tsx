@@ -7,13 +7,17 @@ import { alertConfirm } from '../../lib/alertUtils';
 
 interface HQHomeProps {
   onNavigateSales: () => void;
+  onNavigateBranchInfo: () => void;
   onNavigateManagementStore: () => void;
+  onNavigatePresentation: () => void;
   onLogout: () => void;
 }
 
 export const HQHome = ({
   onNavigateSales,
+  onNavigateBranchInfo,
   onNavigateManagementStore,
+  onNavigatePresentation,
   onLogout,
 }: HQHomeProps) => {
 
@@ -43,11 +47,29 @@ export const HQHome = ({
           </Card>
         </TouchableOpacity>
 
+        <TouchableOpacity onPress={onNavigateBranchInfo}>
+          <Card className="bg-cyan-600 p-6">
+            <Text className="text-white text-xl font-bold text-center">各店舗情報</Text>
+            <Text className="text-cyan-100 text-center mt-1 text-sm">
+              各店舗の報告書を一覧表示
+            </Text>
+          </Card>
+        </TouchableOpacity>
+
         <TouchableOpacity onPress={onNavigateManagementStore}>
           <Card className="bg-purple-500 p-6">
             <Text className="text-white text-xl font-bold text-center">模擬店管理</Text>
             <Text className="text-purple-100 text-center mt-1 text-sm">
               模擬店の追加・パスワード設定
+            </Text>
+          </Card>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={onNavigatePresentation}>
+          <Card className="bg-rose-500 p-6">
+            <Text className="text-white text-xl font-bold text-center">プレゼンテーション</Text>
+            <Text className="text-rose-100 text-center mt-1 text-sm">
+              総合結果を発表モードで表示
             </Text>
           </Card>
         </TouchableOpacity>

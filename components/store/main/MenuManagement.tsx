@@ -1,13 +1,69 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, Switch, ActivityIndicator, ScrollView, TextInput, PanResponder } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Alert, Switch, ActivityIndicator, ScrollView, TextInput, PanResponder, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import * as DocumentPicker from 'expo-document-picker';
 import { Button, Input, Card, Header, Modal } from '../../common';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { saveMenus, getMenus, saveMenuCategories, getMenuCategories, verifyAdminPassword } from '../../../lib/storage';
-import { alertConfirm } from '../../../lib/alertUtils';
+import { alertConfirm, alertNotify } from '../../../lib/alertUtils';
 import type { Branch, Menu, MenuCategory } from '../../../types/database';
 import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
+
+const MENU_CSV_HEADER = 'menu_name,price,category,stock_management,stock_quantity,is_show';
+
+const toCsvCell = (value: string | number | boolean): string => {
+  const text = String(value ?? '');
+  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+};
+
+const parseCsvLine = (line: string): string[] => {
+  const cells: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        cells.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+};
+
+type CsvMenuImportRow = {
+  menu_name: string;
+  price: number;
+  category_name: string;
+  stock_management: boolean;
+  stock_quantity: number;
+  is_show: boolean;
+};
+
+type MenuImportPreview = {
+  rows: CsvMenuImportRow[];
+  newCategories: string[];
+  errors: string[];
+};
 
 interface MenuManagementProps {
   branch: Branch;
@@ -41,6 +97,15 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [deleteAllError, setDeleteAllError] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
+  const [showDeleteMenuModal, setShowDeleteMenuModal] = useState(false);
+  const [menuToDelete, setMenuToDelete] = useState<Menu | null>(null);
+  const [deleteMenuPasswordInput, setDeleteMenuPasswordInput] = useState('');
+  const [deleteMenuError, setDeleteMenuError] = useState('');
+  const [deletingMenu, setDeletingMenu] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importPreview, setImportPreview] = useState<MenuImportPreview | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
@@ -52,6 +117,57 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       return maxOrder + 1;
     },
     [],
+  );
+
+  const getNextMenuNumber = useCallback(
+    (categoryId: string | null, targetMenus: Menu[], targetCategories: MenuCategory[]) => {
+      const { categoryMetaMap } = getCategoryMetaMap(targetCategories);
+      const sameCategoryMenus = targetMenus.filter((menu) => menu.category_id === categoryId);
+      const existingCategoryDigits = sameCategoryMenus
+        .map((menu) => (typeof menu.menu_number === 'number' ? Math.floor(menu.menu_number / 100) : null))
+        .filter((value): value is number => value !== null);
+      const categoryDigit = categoryId
+        ? existingCategoryDigits[0] ?? categoryMetaMap.get(categoryId)?.digit ?? 0
+        : 0;
+      const usedSlots = new Set<number>();
+      sameCategoryMenus.forEach((menu) => {
+        if (typeof menu.menu_number !== 'number') return;
+        const slot = menu.menu_number % 100;
+        if (slot >= 1 && slot <= 99) usedSlots.add(slot);
+      });
+
+      let nextSlot = 1;
+      while (usedSlots.has(nextSlot) && nextSlot <= 99) {
+        nextSlot += 1;
+      }
+      if (nextSlot > 99) return null;
+      return categoryDigit * 100 + nextSlot;
+    },
+    [],
+  );
+
+  const getCategoryDigit = useCallback(
+    (categoryId: string | null, targetCategories: MenuCategory[]) => {
+      if (!categoryId) return 0;
+      const { categoryMetaMap } = getCategoryMetaMap(targetCategories);
+      return categoryMetaMap.get(categoryId)?.digit ?? 0;
+    },
+    [],
+  );
+
+  const resequenceCategoryMenus = useCallback(
+    (targetMenus: Menu[], categoryId: string | null, targetCategories: MenuCategory[]) => {
+      const categoryDigit = getCategoryDigit(categoryId, targetCategories);
+      const sameCategory = sortMenus(targetMenus.filter((menu) => menu.category_id === categoryId));
+      const reassigned = sameCategory.map((menu, index) => ({
+        ...menu,
+        sort_order: index,
+        menu_number: categoryDigit * 100 + (index + 1),
+      }));
+      const reassignedMap = new Map(reassigned.map((menu) => [menu.id, menu]));
+      return targetMenus.map((menu) => reassignedMap.get(menu.id) ?? menu);
+    },
+    [getCategoryDigit, sortMenus],
   );
 
   const fetchCategories = useCallback(async () => {
@@ -100,11 +216,13 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               branch_id: branch.id,
               menu_name: '焼きそば',
               price: 300,
+              menu_number: 1,
               sort_order: 0,
               category_id: null,
               stock_management: true,
               stock_quantity: 50,
               is_active: true,
+              is_show:true,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             },
@@ -113,11 +231,13 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               branch_id: branch.id,
               menu_name: 'フランクフルト',
               price: 200,
+              menu_number: 2,
               sort_order: 1,
               category_id: null,
               stock_management: true,
               stock_quantity: 30,
               is_active: true,
+              is_show:true,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             },
@@ -126,11 +246,13 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               branch_id: branch.id,
               menu_name: 'ジュース',
               price: 100,
+              menu_number: 3,
               sort_order: 2,
               category_id: null,
               stock_management: false,
               stock_quantity: 0,
               is_active: true,
+              is_show:true,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             },
@@ -189,16 +311,25 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     setSaving(true);
 
     try {
+      const generatedMenuNumber = getNextMenuNumber(selectedCategoryId, menus, categories);
+      if (generatedMenuNumber == null) {
+        Alert.alert('エラー', 'このカテゴリのメニュー番号が上限(99)に達しています');
+        setSaving(false);
+        return;
+      }
+
       const newMenu: Menu = {
         id: Crypto.randomUUID(),
         branch_id: branch.id,
         menu_name: menuName.trim(),
         price: parseInt(price, 10),
+        menu_number: generatedMenuNumber,
         sort_order: getNextSortOrder(selectedCategoryId, menus),
         category_id: selectedCategoryId,
         stock_management: stockManagement,
         stock_quantity: stockManagement ? parseInt(stockQuantity, 10) || 0 : 0,
         is_active: true,
+        is_show:true,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -232,6 +363,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
 
     try {
       const previousCategoryId = editingMenu.category_id;
+      const isCategoryChanged = previousCategoryId !== selectedCategoryId;
       const updatedMenu: Menu = {
         ...editingMenu,
         menu_name: menuName.trim(),
@@ -246,17 +378,43 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         updated_at: new Date().toISOString(),
       };
 
-      if (isSupabaseConfigured()) {
-        const { error } = await supabase
-          .from('menus')
-          .update(updatedMenu)
-          .eq('id', editingMenu.id);
-        if (error) throw error;
+      let updatedMenus = menus.map((m) => (m.id === editingMenu.id ? updatedMenu : m));
+      if (isCategoryChanged) {
+        updatedMenus = resequenceCategoryMenus(updatedMenus, previousCategoryId, categories);
+        updatedMenus = resequenceCategoryMenus(updatedMenus, selectedCategoryId, categories);
       }
+      const sortedUpdatedMenus = sortMenus(updatedMenus);
+      setMenus(sortedUpdatedMenus);
+      await saveMenus(sortedUpdatedMenus);
 
-      const updatedMenus = sortMenus(menus.map((m) => (m.id === editingMenu.id ? updatedMenu : m)));
-      setMenus(updatedMenus);
-      await saveMenus(updatedMenus);
+      if (isSupabaseConfigured()) {
+        if (!isCategoryChanged) {
+          const { error } = await supabase
+            .from('menus')
+            .update(updatedMenu)
+            .eq('id', editingMenu.id);
+          if (error) throw error;
+        } else {
+          const affectedCategoryIds = new Set<string | null>([previousCategoryId, selectedCategoryId]);
+          const affectedMenus = sortedUpdatedMenus.filter((menu) => affectedCategoryIds.has(menu.category_id));
+          for (const menu of affectedMenus) {
+            const { error } = await supabase
+              .from('menus')
+              .update({
+                menu_name: menu.menu_name,
+                price: menu.price,
+                category_id: menu.category_id,
+                sort_order: menu.sort_order,
+                menu_number: menu.menu_number,
+                stock_management: menu.stock_management,
+                stock_quantity: menu.stock_quantity,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', menu.id);
+            if (error) throw error;
+          }
+        }
+      }
 
       setShowEditModal(false);
       setEditingMenu(null);
@@ -269,23 +427,91 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     }
   };
 
-  const handleDeleteMenu = (menu: Menu) => {
-    alertConfirm('確認', `「${menu.menu_name}」を削除しますか？`, async () => {
-      try {
-        if (isSupabaseConfigured()) {
-          const { error } = await supabase.from('menus').delete().eq('id', menu.id);
-          if (error) throw error;
-        }
+  const handleVisible= async( menu:Menu) =>{
+    const newIsShow = !menu.is_show
+    setSaving(true);
 
-        const updatedMenus = menus.filter((m) => m.id !== menu.id);
-        setMenus(updatedMenus);
-        await saveMenus(updatedMenus);
-      } catch (error) {
-        console.error('Error deleting menu:', error);
-        Alert.alert('エラー', 'メニューの削除に失敗しました');
+    try{
+      if(isSupabaseConfigured()){
+        const {error} = await supabase
+         .from("menus")
+         .update({
+          is_show:newIsShow, 
+          updated_at: new Date().toISOString()})
+         .eq("id",menu.id);
+
+        if(error) throw error
       }
-    }, '削除');
+
+      const updatedMenus = menus.map((m)=>
+        m.id === menu.id ? {...m , is_show:newIsShow} : m
+      );
+
+      setMenus(updatedMenus);
+      await saveMenus(updatedMenus)
+
+    }catch(error){
+      console.error("Error updating item visible")
+      Alert.alert("Error","メニューの表示設定の更新を失敗しました")
+    }finally{
+      setSaving(false)
+    }
+  }
+
+  const executeDeleteMenu = async (menu: Menu) => {
+    setDeletingMenu(true);
+    try {
+      if (isSupabaseConfigured()) {
+        const { error } = await supabase.from('menus').delete().eq('id', menu.id);
+        if (error) throw error;
+      }
+
+      const updatedMenus = menus.filter((m) => m.id !== menu.id);
+      setMenus(updatedMenus);
+      await saveMenus(updatedMenus);
+
+      setShowDeleteMenuModal(false);
+      setMenuToDelete(null);
+      setDeleteMenuPasswordInput('');
+      setDeleteMenuError('');
+    } catch (error) {
+      console.error('Error deleting menu:', error);
+      setDeleteMenuError('メニューの削除に失敗しました');
+    } finally {
+      setDeletingMenu(false);
+    }
   };
+
+  const handleDeleteMenu = (menu: Menu) => {
+    setMenuToDelete(menu);
+    setDeleteMenuPasswordInput('');
+    setDeleteMenuError('');
+    setShowDeleteMenuModal(true);
+  };
+
+  const handleDeleteMenuWithPassword = async () => {
+    if (!menuToDelete) return;
+    if (!deleteMenuPasswordInput.trim()) {
+      setDeleteMenuError('管理者パスワードを入力してください');
+      return;
+    }
+
+    const isValid = await verifyAdminPassword(deleteMenuPasswordInput);
+    if (!isValid) {
+      setDeleteMenuError('パスワードが正しくありません');
+      return;
+    }
+
+    alertConfirm(
+      '最終確認',
+      `「${menuToDelete.menu_name}」を削除します。この操作は取り消せません。実行しますか？`,
+      () => executeDeleteMenu(menuToDelete),
+      '削除する',
+    );
+  };
+
+
+
 
   const executeDeleteAllMenus = async () => {
     setDeletingAll(true);
@@ -354,6 +580,271 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     } catch (error) {
       console.error('Error updating stock:', error);
       Alert.alert('エラー', '在庫数の更新に失敗しました');
+    }
+  };
+
+
+
+  // ─── CSV Export ───
+
+  const buildMenuCsv = (): string => {
+    const categoryMap = new Map(categories.map((c) => [c.id, c.category_name]));
+    const lines: string[] = [MENU_CSV_HEADER];
+    const sorted = sortMenus(menus);
+    sorted.forEach((m) => {
+      lines.push(
+        [
+          toCsvCell(m.menu_name),
+          toCsvCell(m.price),
+          toCsvCell(m.category_id ? (categoryMap.get(m.category_id) ?? '') : ''),
+          toCsvCell(m.stock_management ? 'true' : 'false'),
+          toCsvCell(m.stock_quantity),
+          toCsvCell(m.is_show ? 'true' : 'false'),
+        ].join(',')
+      );
+    });
+    return `\uFEFF${lines.join('\n')}`;
+  };
+
+  const handleExportMenuCsv = async () => {
+    if (menus.length === 0) {
+      alertNotify('CSV出力', '出力対象のメニューがありません');
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const csvContent = buildMenuCsv();
+      const filename = `menus_${branch.branch_code}_${new Date().toISOString().slice(0, 10)}.csv`;
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        alertNotify('CSV出力', 'メニューCSVをダウンロードしました');
+        return;
+      }
+
+      const baseDir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
+      if (!baseDir) throw new Error('保存先ディレクトリを取得できませんでした');
+      const fileUri = `${baseDir}${filename}`;
+      await FileSystem.writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'メニューCSVを共有' });
+      } else {
+        alertNotify('CSV出力', `CSVを保存しました: ${fileUri}`);
+      }
+    } catch (error: any) {
+      console.error('Menu CSV export error:', error);
+      alertNotify('エラー', `CSV出力に失敗しました: ${error?.message ?? ''}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // ─── CSV Import ───
+
+  const parseMenuImportCsv = (csvText: string): MenuImportPreview => {
+    const raw = csvText.replace(/^\uFEFF/, '');
+    const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    const errors: string[] = [];
+    const rows: CsvMenuImportRow[] = [];
+
+    if (lines.length < 2) {
+      errors.push('CSVにデータ行がありません');
+      return { rows, newCategories: [], errors };
+    }
+
+    const headerCells = parseCsvLine(lines[0]).map((h) => h.toLowerCase().trim());
+    const colIndex = {
+      menu_name: headerCells.indexOf('menu_name'),
+      price: headerCells.indexOf('price'),
+      category: headerCells.indexOf('category'),
+      stock_management: headerCells.indexOf('stock_management'),
+      stock_quantity: headerCells.indexOf('stock_quantity'),
+      is_show: headerCells.indexOf('is_show'),
+    };
+
+    if (colIndex.menu_name === -1) {
+      errors.push('ヘッダーに menu_name 列が必要です');
+      return { rows, newCategories: [], errors };
+    }
+    if (colIndex.price === -1) {
+      errors.push('ヘッダーに price 列が必要です');
+      return { rows, newCategories: [], errors };
+    }
+
+    const existingCategoryNames = new Set(categories.map((c) => c.category_name));
+    const newCategorySet = new Set<string>();
+
+    for (let i = 1; i < lines.length; i++) {
+      const cells = parseCsvLine(lines[i]);
+      const rowNum = i + 1;
+
+      const menuName = (cells[colIndex.menu_name] ?? '').trim();
+      const priceStr = (cells[colIndex.price] ?? '').trim();
+      const categoryName = colIndex.category >= 0 ? (cells[colIndex.category] ?? '').trim() : '';
+      const stockMgmtStr = colIndex.stock_management >= 0 ? (cells[colIndex.stock_management] ?? 'false').trim().toLowerCase() : 'false';
+      const stockQtyStr = colIndex.stock_quantity >= 0 ? (cells[colIndex.stock_quantity] ?? '0').trim() : '0';
+      const isShowStr = colIndex.is_show >= 0 ? (cells[colIndex.is_show] ?? 'true').trim().toLowerCase() : 'true';
+
+      if (!menuName) {
+        errors.push(`${rowNum}行目: メニュー名が空です`);
+        continue;
+      }
+
+      const price = parseInt(priceStr, 10);
+      if (isNaN(price) || price < 0) {
+        errors.push(`${rowNum}行目: 金額が不正です (${priceStr})`);
+        continue;
+      }
+
+      const stockManagement = stockMgmtStr === 'true' || stockMgmtStr === '1' || stockMgmtStr === 'yes';
+      const stockQuantity = parseInt(stockQtyStr, 10) || 0;
+      const isShow = isShowStr !== 'false' && isShowStr !== '0' && isShowStr !== 'no';
+
+      if (categoryName && !existingCategoryNames.has(categoryName)) {
+        newCategorySet.add(categoryName);
+      }
+
+      rows.push({
+        menu_name: menuName,
+        price,
+        category_name: categoryName,
+        stock_management: stockManagement,
+        stock_quantity: stockQuantity,
+        is_show: isShow,
+      });
+    }
+
+    return { rows, newCategories: Array.from(newCategorySet), errors };
+  };
+
+  const handlePickMenuCsv = async () => {
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.csv,text/csv';
+        input.onchange = async (e: any) => {
+          const file = e.target?.files?.[0];
+          if (!file) return;
+          const text: string = await file.text();
+          const preview = parseMenuImportCsv(text);
+          setImportPreview(preview);
+          setShowImportModal(true);
+        };
+        input.click();
+        return;
+      }
+
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/csv', 'text/comma-separated-values', '*/*'],
+      });
+      if (result.canceled) return;
+
+      const asset = result.assets?.[0];
+      if (!asset?.uri) return;
+
+      const text = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'utf8' });
+      const preview = parseMenuImportCsv(text);
+      setImportPreview(preview);
+      setShowImportModal(true);
+    } catch (error: any) {
+      console.error('Menu CSV pick error:', error);
+      alertNotify('エラー', `CSVファイルの読み込みに失敗しました: ${error?.message ?? ''}`);
+    }
+  };
+
+  const handleMenuImportConfirm = async () => {
+    if (!importPreview) return;
+
+    setImporting(true);
+    try {
+      // 1. Create new categories if needed
+      let currentCategories = [...categories];
+      for (const catName of importPreview.newCategories) {
+        const newCat: MenuCategory = {
+          id: Crypto.randomUUID(),
+          branch_id: branch.id,
+          category_name: catName,
+          sort_order: currentCategories.length,
+          created_at: new Date().toISOString(),
+        };
+
+        if (isSupabaseConfigured()) {
+          const { error } = await supabase.from('menu_categories').insert(newCat);
+          if (error) throw error;
+        }
+
+        currentCategories = [...currentCategories, newCat];
+      }
+
+      // Save updated categories
+      if (importPreview.newCategories.length > 0) {
+        setCategories(currentCategories);
+        const allCategories = await getMenuCategories();
+        const otherCategories = allCategories.filter((c) => c.branch_id !== branch.id);
+        await saveMenuCategories([...otherCategories, ...currentCategories]);
+      }
+
+      // 2. Build category name -> id map
+      const catNameToId = new Map(currentCategories.map((c) => [c.category_name, c.id]));
+
+      // 3. Create menus
+      let currentMenus = [...menus];
+      const newMenus: Menu[] = [];
+
+      for (const row of importPreview.rows) {
+        const categoryId = row.category_name ? (catNameToId.get(row.category_name) ?? null) : null;
+        const menuNumber = getNextMenuNumber(categoryId, [...currentMenus, ...newMenus], currentCategories);
+
+        const newMenu: Menu = {
+          id: Crypto.randomUUID(),
+          branch_id: branch.id,
+          menu_name: row.menu_name,
+          price: row.price,
+          menu_number: menuNumber ?? undefined,
+          sort_order: getNextSortOrder(categoryId, [...currentMenus, ...newMenus]),
+          category_id: categoryId,
+          stock_management: row.stock_management,
+          stock_quantity: row.stock_management ? row.stock_quantity : 0,
+          is_active: true,
+          is_show: row.is_show,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        if (isSupabaseConfigured()) {
+          const { error } = await supabase.from('menus').insert(newMenu);
+          if (error) throw error;
+        }
+
+        newMenus.push(newMenu);
+      }
+
+      const allMenus = sortMenus([...currentMenus, ...newMenus]);
+      setMenus(allMenus);
+      await saveMenus(allMenus);
+
+      setShowImportModal(false);
+      setImportPreview(null);
+      alertNotify(
+        'インポート完了',
+        `メニュー ${importPreview.rows.length}件${importPreview.newCategories.length > 0 ? `、新規カテゴリ ${importPreview.newCategories.length}件` : ''} を登録しました`
+      );
+    } catch (error: any) {
+      console.error('Menu import error:', error);
+      alertNotify('エラー', `インポートに失敗しました: ${error?.message ?? ''}`);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -510,6 +1001,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     }
   };
 
+
   const moveMenuOrder = async (menu: Menu, direction: 'up' | 'down') => {
     const sameCategoryMenus = sortMenus(menus.filter((m) => m.category_id === menu.category_id));
     const idx = sameCategoryMenus.findIndex((m) => m.id === menu.id);
@@ -528,22 +1020,33 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       return m;
     });
 
-    const sorted = sortMenus(reordered);
+    const resequenced = resequenceCategoryMenus(reordered, menu.category_id, categories);
+    const sorted = sortMenus(resequenced);
     setMenus(sorted);
     await saveMenus(sorted);
 
     if (isSupabaseConfigured()) {
-      await supabase.from('menus').update({ sort_order: targetOrder }).eq('id', menu.id);
-      await supabase.from('menus').update({ sort_order: currentOrder }).eq('id', target.id);
+      const sameCategoryUpdated = sorted.filter((m) => m.category_id === menu.category_id);
+      for (const m of sameCategoryUpdated) {
+        const { error } = await supabase
+          .from('menus')
+          .update({
+            sort_order: m.sort_order,
+            menu_number: m.menu_number,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', m.id);
+        if (error) throw error;
+      }
     }
   };
 
   const menuSections = useMemo(() => {
-    const sections = orderedCategories
+      const sections = orderedCategories
       .map((category) => ({
         id: category.id,
         title: category.category_name,
-        categoryCode: categoryMetaMap.get(category.id)?.code ?? 'C--',
+        categoryCode: categoryMetaMap.get(category.id)?.code ?? '-',
         visual: categoryMetaMap.get(category.id)?.visual ?? UNCATEGORIZED_VISUAL,
         menus: sortMenus(menus.filter((m) => m.category_id === category.id)),
       }))
@@ -556,7 +1059,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       sections.push({
         id: 'uncategorized',
         title: 'その他',
-        categoryCode: 'C00',
+        categoryCode: '0',
         visual: UNCATEGORIZED_VISUAL,
         menus: uncategorized,
       });
@@ -568,13 +1071,11 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     item,
     indexInSection,
     sectionLength,
-    categoryCode,
     categoryVisual,
   }: {
     item: Menu;
     indexInSection: number;
     sectionLength: number;
-    categoryCode: string;
     categoryVisual: {
       cardBgClass: string;
       cardBorderClass: string;
@@ -582,7 +1083,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       chipTextClass: string;
     };
   }) => {
-    const menuCode = menuCodeMap.get(item.id) ?? 'M---';
+    const menuCode = menuCodeMap.get(item.id) ?? '000';
     const isTopInSection = indexInSection === 0;
     const isBottomInSection = indexInSection === sectionLength - 1;
     const dragResponder = PanResponder.create({
@@ -598,7 +1099,13 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     });
 
     return (
-      <Card className={`mb-2 px-3 py-2 border ${categoryVisual.cardBgClass} ${categoryVisual.cardBorderClass}`}>
+      <Card 
+        className={`mb-2 px-3 py-2 border 
+          ${categoryVisual.cardBgClass} 
+          ${categoryVisual.cardBorderClass}
+          ${!item.is_show ? 'opacity-40 bg-gray-200' : ''}
+        `}
+      >
         <View className="flex-row items-start justify-between">
           <View className="flex-1 pr-2">
             <View className="flex-row items-center gap-1 mb-1">
@@ -660,6 +1167,19 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               >
                 <Text className="text-blue-600 text-xs font-medium">編集</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => handleVisible(item)}
+                className="px-2 py-1 bg-blue-50 rounded"
+              >
+              <Text
+                className={`text-xs font-medium ${
+                  !item.is_show ? 'text-orange-600' : 'text-green-600'
+                }`}
+              >
+              {item.is_show ? "表示": "※ メニュー非表示"}
+                </Text>
+              </TouchableOpacity>              
+
               <TouchableOpacity
                 onPress={() => handleDeleteMenu(item)}
                 className="px-2 py-1 bg-red-50 rounded"
@@ -805,8 +1325,22 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         onBack={onBack}
         rightElement={
           viewMode === 'menus' ? (
-            <View className="flex-row gap-2">
+            <View className="flex-row gap-1">
               <Button title="+ 追加" onPress={() => setShowAddModal(true)} size="sm" />
+              <Button
+                title={exporting ? '...' : 'CSV出力'}
+                onPress={handleExportMenuCsv}
+                size="sm"
+                variant="secondary"
+                disabled={exporting || menus.length === 0}
+                loading={exporting}
+              />
+              <Button
+                title="CSV登録"
+                onPress={handlePickMenuCsv}
+                size="sm"
+                variant="success"
+              />
               <Button
                 title="全削除"
                 onPress={() => {
@@ -873,7 +1407,6 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                       item: menu,
                       indexInSection: index,
                       sectionLength: section.menus.length,
-                      categoryCode: section.categoryCode,
                       categoryVisual: section.visual,
                     })}
                   </View>
@@ -914,7 +1447,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           renderItem={({ item, index }) => {
             const menuCount = menus.filter((m) => m.category_id === item.id).length;
             const categoryMeta = categoryMetaMap.get(item.id);
-            const categoryCode = categoryMeta?.code ?? 'C--';
+            const categoryCode = categoryMeta?.code ?? '-';
             const visual = categoryMeta?.visual ?? UNCATEGORIZED_VISUAL;
             return (
               <Card className={`mb-2 px-3 py-2 border ${visual.cardBgClass} ${visual.cardBorderClass}`}>
@@ -1080,6 +1613,63 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
 
       {/** Menu All Delete modal*/}
       <Modal
+        visible={showDeleteMenuModal}
+        onClose={() => {
+          setShowDeleteMenuModal(false);
+          setMenuToDelete(null);
+          setDeleteMenuPasswordInput('');
+          setDeleteMenuError('');
+        }}
+        title="メニュー削除"
+      >
+        <View className="gap-3">
+          <Text className="text-gray-600 text-sm">
+            メニュー削除には管理者パスワードが必要です。
+            {"\n"}初期パスワードは「0000」です。設定タブで変更できます。
+          </Text>
+          {menuToDelete ? (
+            <View className="bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+              <Text className="text-red-700 text-sm font-semibold">削除対象: {menuToDelete.menu_name}</Text>
+            </View>
+          ) : null}
+          <TextInput
+            value={deleteMenuPasswordInput}
+            onChangeText={(text) => {
+              setDeleteMenuPasswordInput(text);
+              setDeleteMenuError('');
+            }}
+            secureTextEntry
+            placeholder="管理者パスワード"
+            className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+            placeholderTextColor="#9CA3AF"
+          />
+          {deleteMenuError ? <Text className="text-red-500 text-sm">{deleteMenuError}</Text> : null}
+          <View className="flex-row gap-3 mt-1">
+            <View className="flex-1">
+              <Button
+                title="キャンセル"
+                onPress={() => {
+                  setShowDeleteMenuModal(false);
+                  setMenuToDelete(null);
+                  setDeleteMenuPasswordInput('');
+                  setDeleteMenuError('');
+                }}
+                variant="secondary"
+              />
+            </View>
+            <View className="flex-1">
+              <Button
+                title="次へ"
+                onPress={handleDeleteMenuWithPassword}
+                loading={deletingMenu}
+                variant="danger"
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
         visible={showDeleteAllModal}
         onClose={() => {
           setShowDeleteAllModal(false);
@@ -1127,6 +1717,98 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* CSVインポートプレビューモーダル */}
+      <Modal
+        visible={showImportModal}
+        onClose={() => {
+          setShowImportModal(false);
+          setImportPreview(null);
+        }}
+        title="メニューCSVインポート確認"
+      >
+        {importPreview && (
+          <ScrollView style={{ maxHeight: 400 }}>
+            {importPreview.errors.length > 0 && (
+              <View className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3">
+                <Text className="text-red-700 font-semibold mb-1">エラー ({importPreview.errors.length}件)</Text>
+                {importPreview.errors.map((err, i) => (
+                  <Text key={i} className="text-red-600 text-sm">{err}</Text>
+                ))}
+              </View>
+            )}
+
+            {importPreview.newCategories.length > 0 && (
+              <View className="mb-4 bg-purple-50 border border-purple-200 rounded-lg p-3">
+                <Text className="text-purple-700 font-semibold mb-1">
+                  新規カテゴリ ({importPreview.newCategories.length}件)
+                </Text>
+                <Text className="text-purple-600 text-xs mb-2">存在しないカテゴリ名が含まれているため自動作成します</Text>
+                {importPreview.newCategories.map((name, i) => (
+                  <Text key={i} className="text-purple-800 text-sm">- {name}</Text>
+                ))}
+              </View>
+            )}
+
+            {importPreview.rows.length > 0 && (
+              <View className="mb-4">
+                <Text className="text-green-700 font-semibold mb-2">
+                  登録メニュー ({importPreview.rows.length}件)
+                </Text>
+                {importPreview.rows.map((row, i) => (
+                  <View key={`menu-${i}`} className="flex-row items-center justify-between bg-green-50 rounded-lg px-3 py-2 mb-1">
+                    <View className="flex-1">
+                      <Text className="text-gray-900 font-medium">{row.menu_name}</Text>
+                      <View className="flex-row items-center gap-2">
+                        <Text className="text-blue-600 text-xs font-bold">{row.price.toLocaleString()}円</Text>
+                        {row.category_name ? (
+                          <Text className="text-gray-500 text-xs">{row.category_name}</Text>
+                        ) : null}
+                      </View>
+                    </View>
+                    <View className="items-end gap-0.5">
+                      {row.stock_management ? (
+                        <Text className="text-gray-500 text-xs">在庫: {row.stock_quantity}</Text>
+                      ) : (
+                        <Text className="text-green-600 text-xs">在庫無制限</Text>
+                      )}
+                      {!row.is_show && (
+                        <Text className="text-orange-500 text-xs">非表示</Text>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {importPreview.rows.length === 0 && importPreview.errors.length === 0 && (
+              <Text className="text-gray-500 text-center py-4">処理対象のデータがありません</Text>
+            )}
+
+            <View className="flex-row gap-3 mt-4">
+              <View className="flex-1">
+                <Button
+                  title="キャンセル"
+                  onPress={() => {
+                    setShowImportModal(false);
+                    setImportPreview(null);
+                  }}
+                  variant="secondary"
+                />
+              </View>
+              <View className="flex-1">
+                <Button
+                  title="インポート実行"
+                  onPress={handleMenuImportConfirm}
+                  loading={importing}
+                  disabled={importing || importPreview.rows.length === 0}
+                  variant="success"
+                />
+              </View>
+            </View>
+          </ScrollView>
+        )}
       </Modal>
     </SafeAreaView>
   );

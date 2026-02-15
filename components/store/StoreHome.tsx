@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button, Input, Modal } from '../common';
-import { clearBranch, getPendingTransactions, getStoreSettings, saveStoreSettings, getAdminPassword, saveAdminPassword, verifyAdminPassword, clearAllPendingTransactions } from '../../lib/storage';
+import { clearBranch, getStoreSettings, saveStoreSettings, getAdminPassword, saveAdminPassword, verifyAdminPassword, clearAllPendingTransactions } from '../../lib/storage';
 import { alertConfirm, alertNotify } from '../../lib/alertUtils';
 import type { Branch, PaymentMethodSettings } from '../../types/database';
 import { isSupabaseConfigured, supabase } from 'lib/supabase';
@@ -44,13 +44,12 @@ export const StoreHome = ({
   onLogout,
 }: StoreHomeProps) => {
   const [activeTab, setActiveTab] = useState<TabKey>('main');
-  const [currentSales, setCurrentSales] = useState(0);
-  const [loadingSales, setLoadingSales] = useState(true);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodSettings>({
     cash: false,
     cashless: true,
     voucher: true,
   });
+  const [syncEnabled, setSyncEnabled] = useState(true);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -70,49 +69,10 @@ export const StoreHome = ({
       if (settings.payment_methods) {
         setPaymentMethods(settings.payment_methods);
       }
+      setSyncEnabled(settings.sync_enabled ?? true);
     };
     loadSettings();
   }, []);
-
-  useEffect(() => {
-    const fetchSales = async () => {
-      try {
-        const pending = await getPendingTransactions();
-        const localSales = pending
-          .filter((t) => t.branch_id === branch.id)
-          .reduce((sum, t) => sum + t.total_amount, 0);
-
-        if (!isSupabaseConfigured()) {
-          setCurrentSales(localSales);
-          return;
-        }
-
-        const { data, error } = await supabase
-          .from('transactions')
-          .select('total_amount')
-          .eq('branch_id', branch.id)
-          .eq('status', 'completed');
-
-        if (error) throw error;
-
-        const remoteSales =
-          data?.reduce((sum, t) => sum + t.total_amount, 0) ?? 0;
-
-        setCurrentSales(remoteSales + localSales);
-      } catch (e) {
-        console.error('売上取得失敗', e);
-      } finally {
-        setLoadingSales(false);
-      }
-    };
-
-    fetchSales();
-  }, [branch.id]);
-
-  const achievementRate =
-    branch.sales_target > 0
-      ?  Math.floor((currentSales / branch.sales_target) * 100)
-      : 0 ;
 
   const handleTabChange = async (tab: TabKey) => {
     setActiveTab(tab);
@@ -127,6 +87,12 @@ export const StoreHome = ({
     setPaymentMethods(updated);
     const currentSettings = await getStoreSettings();
     await saveStoreSettings({ ...currentSettings, payment_methods: updated });
+  };
+
+  const handleSyncModeChange = async (enabled: boolean) => {
+    setSyncEnabled(enabled);
+    const currentSettings = await getStoreSettings();
+    await saveStoreSettings({ ...currentSettings, sync_enabled: enabled });
   };
 
   const resetPasswordForm = () => {
@@ -186,9 +152,6 @@ export const StoreHome = ({
 
       // Delete local pending transactions
       await clearAllPendingTransactions(branch.id);
-
-      // Reset current sales display
-      setCurrentSales(0);
 
       setShowResetModal(false);
       setAdminPasswordInput('');
@@ -301,7 +264,7 @@ export const StoreHome = ({
               </Card>
             </TouchableOpacity>
 
-            <View className='flex-row justify-between'>
+            <View className=''>
               <TouchableOpacity onPress={onNavigateToCounter} activeOpacity={0.8}>
                 <Card className="bg-purple-500 px-12 py-8">
                   <Text className="text-white text-2xl  font-bold text-center">来客カウンター</Text>
@@ -309,24 +272,19 @@ export const StoreHome = ({
                 </Card>
               </TouchableOpacity>
 
-              <TouchableOpacity onPress={onNavigateToAutoCounter} activeOpacity={0.8}>
+              {/** TODO */}
+              {/* <TouchableOpacity onPress={onNavigateToAutoCounter} activeOpacity={0.8}>
                 <Card className="bg-slate-500 p-8">
                   <Text className="text-white text-2xl  font-bold text-center">自動集計カウンター</Text>
                   <Text className="text-purple-100 text-center mt-2">カメラを起動して自動で来場者数を集計</Text>
                 </Card>
-              </TouchableOpacity>
+              </TouchableOpacity> */}
             </View>
           </View>
         )}
 
         {activeTab === 'budget' && (
           <View className="flex-1 gap-4">
-            <TouchableOpacity onPress={onNavigateToBudget} activeOpacity={0.8}>
-              <Card className="bg-indigo-500 p-8">
-                <Text className="text-white text-2xl  font-bold text-center">予算管理</Text>
-                <Text className="text-indigo-100 text-center mt-2">予算設定・ダッシュボード・報告書</Text>
-              </Card>
-            </TouchableOpacity>
 
             <TouchableOpacity onPress={onNavigateToBudgetExpense} activeOpacity={0.8}>
               <Card className="bg-emerald-500 p-8">
@@ -341,43 +299,52 @@ export const StoreHome = ({
                 <Text className="text-violet-100 text-center mt-2">価格・原価から必要販売数を試算</Text>
               </Card>
             </TouchableOpacity>
+
+            <TouchableOpacity onPress={onNavigateToBudget} activeOpacity={0.8}>
+              <Card className="bg-indigo-500 p-8">
+                <Text className="text-white text-2xl  font-bold text-center">会計処理</Text>
+                <Text className="text-indigo-100 text-center mt-2">予算設定・収支確認・報告書の作成</Text>
+              </Card>
+            </TouchableOpacity>
+
+
           </View>
         )}
 
         {activeTab === 'settings' && (
           <View className="gap-4">
-            {/* Sales Status */}
             <Card>
-              <Text className="text-gray-900 text-lg font-bold mb-3">売上状況</Text>
-              <View className="flex-row items-center justify-between">
-                <View>
-                  <Text className="text-gray-500 text-sm">売上目標</Text>
-                  <Text className="text-lg font-bold text-gray-900">
-                    {branch.sales_target > 0 ? `${branch.sales_target.toLocaleString()}円` : '未設定'}
-                  </Text>
-                  <Text className="text-sm text-gray-600 mt-1">
-                    現在売上：{currentSales.toLocaleString()}円
-                  </Text>
-                  {branch.sales_target > 0 && (
-                    <Text className="text-sm text-blue-600 font-medium">
-                      達成率：{achievementRate}%
-                    </Text>
-                  )}
-                </View>
-                <View
-                  className={`px-3 py-1 rounded-full ${
-                    branch.status === 'active' ? 'bg-green-100' : 'bg-gray-100'
+              <Text className="text-gray-900 text-lg font-bold mb-3">データ同期設定</Text>
+              <Text className="text-gray-500 text-sm mb-3">
+                非同期を選ぶとDB接続を停止し、端末内ローカルストレージのみで動作します。
+              </Text>
+              <View className="flex-row gap-3">
+                <TouchableOpacity
+                  onPress={() => handleSyncModeChange(true)}
+                  activeOpacity={0.7}
+                  className={`flex-1 p-3 rounded-xl border-2 ${
+                    syncEnabled ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'
                   }`}
                 >
-                  <Text
-                    className={`font-medium ${
-                      branch.status === 'active' ? 'text-green-600' : 'text-gray-500'
-                    }`}
-                  >
-                    {branch.status === 'active' ? '稼働中' : '停止中'}
+                  <Text className={`text-center font-semibold ${syncEnabled ? 'text-blue-700' : 'text-gray-500'}`}>
+                    同期
                   </Text>
-                </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => handleSyncModeChange(false)}
+                  activeOpacity={0.7}
+                  className={`flex-1 p-3 rounded-xl border-2 ${
+                    !syncEnabled ? 'border-orange-500 bg-orange-50' : 'border-gray-200 bg-white'
+                  }`}
+                >
+                  <Text className={`text-center font-semibold ${!syncEnabled ? 'text-orange-700' : 'text-gray-500'}`}>
+                    非同期
+                  </Text>
+                </TouchableOpacity>
               </View>
+              <Text className="text-gray-400 text-xs mt-3">
+                ※ 将来、同期機能は有料オプション化予定です（現時点では実装準備のみ）。
+              </Text>
             </Card>
 
             {/* Payment Method Settings */}

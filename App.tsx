@@ -4,12 +4,12 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import './global.css';
 
-import { HQLogin, HQDashboard, BranchManagement } from './components/hq';
+import { HQLogin, HQDashboard, BranchManagement, HQBranchReports, HQPresentation } from './components/hq';
 import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, BudgetManager } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 import { HQHome } from 'components/hq/HQHome';
-import {isSupabaseConfigured} from "./lib/supabase"
+import { hasSupabaseEnvConfigured } from "./lib/supabase"
 import { AutomaticCounterScreen } from 'components/store/sub/VisitorCounter/AutomaticCounter+Screen';
 import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
 import { MissingEnvScreen } from 'components/MissingEnvScreen';
@@ -21,7 +21,9 @@ type Screen =
   | 'hq_login'
   | 'hq_home'
   | 'hq_dashboard'
+  | 'hq_branch_info'
   | 'hq_branches'
+  | 'hq_presentation'
   | 'store_login'
   | 'store_home'
   | 'store_menus'
@@ -37,6 +39,8 @@ type Screen =
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>("store_autocounter");
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
+  const [hqBranchInfoReturnScreen, setHqBranchInfoReturnScreen] = useState<'hq_home' | 'hq_dashboard'>('hq_home');
+  const [hqBranchInfoFocusBranchId, setHqBranchInfoFocusBranchId] = useState<string | null>(null);
 
   // Initialize sync
   useSync();
@@ -51,7 +55,7 @@ export default function App() {
     setCurrentScreen('home');
   }, []);
 
-  if(!isSupabaseConfigured()){
+  if(!hasSupabaseEnvConfigured()){
     return <MissingEnvScreen />
   }
 
@@ -78,7 +82,13 @@ export default function App() {
         return(
           <HQHome
             onNavigateSales={() => setCurrentScreen('hq_dashboard')}
+            onNavigateBranchInfo={() => {
+              setHqBranchInfoReturnScreen('hq_home');
+              setHqBranchInfoFocusBranchId(null);
+              setCurrentScreen('hq_branch_info');
+            }}
             onNavigateManagementStore={()=>setCurrentScreen('hq_branches')}
+            onNavigatePresentation={() => setCurrentScreen('hq_presentation')}
             onLogout={() => setCurrentScreen('home')}
           />  
         );     
@@ -87,7 +97,21 @@ export default function App() {
         return (
           <HQDashboard
             onNavigateToBranches={() => setCurrentScreen('hq_branches')}
+            onNavigateToBranchInfo={(branchId?: string) => {
+              setHqBranchInfoReturnScreen('hq_dashboard');
+              setHqBranchInfoFocusBranchId(branchId ?? null);
+              setCurrentScreen('hq_branch_info');
+            }}
             onBack={() => setCurrentScreen('hq_home')}
+          />
+        );
+
+      case 'hq_branch_info':
+        return (
+          <HQBranchReports
+            focusBranchId={hqBranchInfoFocusBranchId}
+            onBack={() => setCurrentScreen(hqBranchInfoReturnScreen)}
+            onBackToHQ={() => setCurrentScreen('hq_home')}
           />
         );
 
@@ -96,6 +120,13 @@ export default function App() {
         <BranchManagement 
           onBack={() => setCurrentScreen('hq_home')} 
         />
+        );
+
+      case 'hq_presentation':
+        return (
+          <HQPresentation
+            onBack={() => setCurrentScreen('hq_home')}
+          />
         );
 
       // Store Screens

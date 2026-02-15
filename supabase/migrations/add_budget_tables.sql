@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS budget_expenses (
   date DATE NOT NULL DEFAULT CURRENT_DATE,
   category TEXT NOT NULL CHECK (category IN ('material', 'decoration', 'other')),
   amount INTEGER NOT NULL CHECK (amount > 0),
-  payment_method TEXT NOT NULL CHECK (payment_method IN ('cash', 'paypay', 'amazon')),
+  recorded_by TEXT NOT NULL DEFAULT '',
+  payment_method TEXT NOT NULL CHECK (payment_method IN ('cash', 'online', 'cashless')),
   memo TEXT DEFAULT '',
   receipt_image TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()

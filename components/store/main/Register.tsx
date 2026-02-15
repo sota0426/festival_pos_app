@@ -56,7 +56,9 @@ export const Register = ({
   const fetchMenus = useCallback(async () => {
     try {
       const localMenus = await getMenus();
-      const branchMenus = localMenus.filter((m) => m.branch_id === branch.id && m.is_active);
+      const branchMenus = localMenus.filter(
+        (m) => m.branch_id === branch.id && m.is_active && m.is_show !== false,
+      );
       setMenus(sortMenus(branchMenus));
 
       const localCategories = await getMenuCategories();
@@ -85,15 +87,12 @@ export const Register = ({
   const menuNumberMap = useMemo(() => {
     const map = new Map<number, Menu>();
     menus.forEach((menu) => {
-      const code = menuCodeMap.get(menu.id);
-      if (!code) return;
-      const numberPart = parseInt(code.replace(/\D/g, ''), 10);
-      if (!Number.isNaN(numberPart)) {
-        map.set(numberPart, menu);
+      if (typeof menu.menu_number === 'number') {
+        map.set(menu.menu_number, menu);
       }
     });
     return map;
-  }, [menus, menuCodeMap]);
+  }, [menus]);
 
   const totalAmount = cart.reduce((sum, item) => sum + item.subtotal, 0);
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -473,7 +472,7 @@ export const Register = ({
         const stockStatus = getStockStatus(menu);
         const isDisabled = menu.stock_management && menu.stock_quantity === 0;
         const cartItem = cart.find((item) => item.menu_id === menu.id);
-        const menuCode = menuCodeMap.get(menu.id) ?? 'M---';
+        const menuCode = menuCodeMap.get(menu.id) ?? '000';
 
         return (
           <View key={menu.id} className={isMobile ? 'w-1/2 p-1' : 'w-1/3 p-1'}>
@@ -547,9 +546,11 @@ export const Register = ({
 
               return (
                 <View key={category.id} className="mb-4">
-                  <Text className="text-lg font-bold mb-2 px-4 text-gray-700">
-                    {category.category_name}
-                  </Text>
+                  <View className={`mx-1 mb-2 px-3 py-2 rounded-lg ${visual.headerBgClass}`}>
+                    <Text className={`font-bold ${visual.headerTextClass}`}>
+                      {category.sort_order + 1} {category.category_name}
+                    </Text>
+                  </View>
                   {renderMenuCards(categoryMenus, visual)}
                 </View>
               );
@@ -565,9 +566,9 @@ export const Register = ({
 
               return (
                 <View key="uncategorized" className="mb-4">
-                  <Text className="text-lg font-bold mb-2 px-4 text-gray-700">
-                    C00 その他
-                  </Text>
+                  <View className={`mx-1 mb-2 px-3 py-2 rounded-lg ${UNCATEGORIZED_VISUAL.headerBgClass}`}>
+                    <Text className={`font-bold ${UNCATEGORIZED_VISUAL.headerTextClass}`}>0 その他</Text>
+                  </View>
                   {renderMenuCards(sortedUncategorized, UNCATEGORIZED_VISUAL)}
                 </View>
               );
@@ -614,7 +615,7 @@ export const Register = ({
     <View className="px-4 pt-2 pb-1 bg-gray-100">
       <Card className="px-3 py-2">
         <View className="flex-row items-center justify-between mb-1">
-          <Text className="text-xs text-gray-500">番号で注文追加（例: 1, 12, 103）</Text>
+          <Text className="text-xs text-gray-500">番号で注文追加（例: 101, 203, 007）</Text>
           <TouchableOpacity
             onPress={toggleQuickOrder}
             className={`px-2 py-1 rounded ${showQuickOrder ? 'bg-blue-100' : 'bg-gray-200'}`}

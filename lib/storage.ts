@@ -12,6 +12,7 @@ import type {
   BudgetSettings,
   VisitorCounterGroup,
 } from '../types/database';
+import { setSyncEnabled } from './syncMode';
 
 const STORAGE_KEYS = {
   BRANCH: '@festival_pos/branch',
@@ -29,6 +30,7 @@ const STORAGE_KEYS = {
 };
 const VISITOR_GROUPS_KEY_PREFIX = '@festival_pos/visitor_groups';
 const BREAKEVEN_DRAFT_KEY_PREFIX = '@festival_pos/breakeven_draft';
+const EXPENSE_RECORDER_KEY_PREFIX = '@festival_pos/expense_recorder';
 
 export interface BreakevenDraft {
   product_name: string;
@@ -229,6 +231,7 @@ export const getBreakevenDraft = async (branchId: string): Promise<BreakevenDraf
 
 // Store settings storage
 export const saveStoreSettings = async (settings: StoreSettings): Promise<void> => {
+  setSyncEnabled(settings.sync_enabled ?? true);
   await AsyncStorage.setItem(STORAGE_KEYS.STORE_SETTINGS, JSON.stringify(settings));
 };
 
@@ -238,18 +241,23 @@ export const getStoreSettings = async (): Promise<StoreSettings> => {
   const data = await AsyncStorage.getItem(STORAGE_KEYS.STORE_SETTINGS);
   if (data) {
     const parsed = JSON.parse(data);
+    const syncEnabled = parsed.sync_enabled ?? true;
+    setSyncEnabled(syncEnabled);
     return {
       payment_mode: parsed.payment_mode ?? 'cashless',
       payment_methods: { ...DEFAULT_PAYMENT_METHODS, ...parsed.payment_methods },
       order_board_enabled: parsed.order_board_enabled ?? false,
       sub_screen_mode: parsed.sub_screen_mode ?? false,
+      sync_enabled: syncEnabled,
     };
   }
+  setSyncEnabled(true);
   return {
     payment_mode: 'cashless',
     payment_methods: DEFAULT_PAYMENT_METHODS,
     order_board_enabled: false,
     sub_screen_mode: false,
+    sync_enabled: true,
   };
 };
 
@@ -283,6 +291,11 @@ export const clearAllData = async (): Promise<void> => {
     STORAGE_KEYS.STORE_SETTINGS,
     STORAGE_KEYS.ORDER_COUNTER,
   ]);
+  const allKeys = await AsyncStorage.getAllKeys();
+  const recorderKeys = allKeys.filter((key) => key.startsWith(`${EXPENSE_RECORDER_KEY_PREFIX}/`));
+  if (recorderKeys.length > 0) {
+    await AsyncStorage.multiRemove(recorderKeys);
+  }
 };
 
 // Budget settings storage
@@ -300,21 +313,51 @@ export const getBudgetSettings = async (branchId: string): Promise<BudgetSetting
 };
 
 // Budget expenses storage
+export const saveBudgetExpenses = async (expenses: BudgetExpense[]): Promise<void> => {
+  await AsyncStorage.setItem(STORAGE_KEYS.BUDGET_EXPENSES, JSON.stringify(expenses));
+};
+
 export const saveBudgetExpense = async (expense: BudgetExpense): Promise<void> => {
   const expenses = await getBudgetExpenses();
   expenses.push(expense);
-  await AsyncStorage.setItem(STORAGE_KEYS.BUDGET_EXPENSES, JSON.stringify(expenses));
+  await saveBudgetExpenses(expenses);
 };
 
 export const getBudgetExpenses = async (): Promise<BudgetExpense[]> => {
   const data = await AsyncStorage.getItem(STORAGE_KEYS.BUDGET_EXPENSES);
-  return data ? JSON.parse(data) : [];
+  if (!data) return [];
+  const parsed = JSON.parse(data) as BudgetExpense[];
+  return parsed.map((expense) => {
+    const legacyPaymentMethod = (expense as unknown as { payment_method?: string }).payment_method;
+    return {
+      ...expense,
+      payment_method:
+        legacyPaymentMethod === 'paypay'
+          ? 'online'
+          : legacyPaymentMethod === 'amazon'
+            ? 'cashless'
+            : expense.payment_method,
+      recorded_by: expense.recorded_by ?? '',
+    };
+  });
 };
 
 export const deleteBudgetExpense = async (expenseId: string): Promise<void> => {
   const expenses = await getBudgetExpenses();
   const filtered = expenses.filter((e) => e.id !== expenseId);
-  await AsyncStorage.setItem(STORAGE_KEYS.BUDGET_EXPENSES, JSON.stringify(filtered));
+  await saveBudgetExpenses(filtered);
+};
+
+export const saveDefaultExpenseRecorder = async (
+  branchId: string,
+  recorderName: string,
+): Promise<void> => {
+  await AsyncStorage.setItem(`${EXPENSE_RECORDER_KEY_PREFIX}/${branchId}`, recorderName);
+};
+
+export const getDefaultExpenseRecorder = async (branchId: string): Promise<string> => {
+  const data = await AsyncStorage.getItem(`${EXPENSE_RECORDER_KEY_PREFIX}/${branchId}`);
+  return data ?? '';
 };
 
 // Admin password storage

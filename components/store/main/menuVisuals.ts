@@ -14,6 +14,7 @@ export interface CategoryMeta {
   name: string;
   index: number;
   code: string;
+  digit: number;
   visual: CategoryVisual;
 }
 
@@ -90,11 +91,13 @@ export const getCategoryMetaMap = (categories: MenuCategory[]) => {
   const map = new Map<string, CategoryMeta>();
 
   orderedCategories.forEach((category, index) => {
+    const digit = (index % 9) + 1;
     map.set(category.id, {
       id: category.id,
       name: category.category_name,
       index,
-      code: `C${String(index + 1).padStart(2, '0')}`,
+      code: String(digit),
+      digit,
       visual: CATEGORY_PALETTE[index % CATEGORY_PALETTE.length],
     });
   });
@@ -102,28 +105,37 @@ export const getCategoryMetaMap = (categories: MenuCategory[]) => {
   return { orderedCategories, categoryMetaMap: map };
 };
 
-export const formatMenuCode = (menuNumber: number) => `M${String(menuNumber).padStart(3, '0')}`;
+export const formatMenuCode = (menuNumber: number) => String(menuNumber).padStart(3, '0');
 
 export const buildMenuCodeMap = (menus: Menu[], categories: MenuCategory[]) => {
-  const { orderedCategories } = getCategoryMetaMap(categories);
+  const { orderedCategories, categoryMetaMap } = getCategoryMetaMap(categories);
   const menuCodeMap = new Map<string, string>();
-  let menuNumber = 1;
+  const menusWithFixedNumber = menus.filter((menu) => typeof menu.menu_number === 'number');
+  menusWithFixedNumber.forEach((menu) => menuCodeMap.set(menu.id, formatMenuCode(menu.menu_number as number)));
 
-  orderedCategories.forEach((category) => {
-    const categoryMenus = sortMenusByDisplay(menus.filter((menu) => menu.category_id === category.id));
-    categoryMenus.forEach((menu) => {
-      menuCodeMap.set(menu.id, formatMenuCode(menuNumber));
-      menuNumber += 1;
+  const withoutFixedNumber = menus.filter((menu) => !menuCodeMap.has(menu.id));
+  if (withoutFixedNumber.length > 0) {
+    orderedCategories.forEach((category) => {
+      const categoryMenus = sortMenusByDisplay(withoutFixedNumber.filter((menu) => menu.category_id === category.id));
+      const digit = categoryMetaMap.get(category.id)?.digit ?? 0;
+      let slot = 1;
+      categoryMenus.forEach((menu) => {
+        menuCodeMap.set(menu.id, formatMenuCode(digit * 100 + slot));
+        slot += 1;
+      });
     });
-  });
 
-  const uncategorized = sortMenusByDisplay(
-    menus.filter((menu) => !menu.category_id || !categories.find((category) => category.id === menu.category_id)),
-  );
-  uncategorized.forEach((menu) => {
-    menuCodeMap.set(menu.id, formatMenuCode(menuNumber));
-    menuNumber += 1;
-  });
+    const uncategorized = sortMenusByDisplay(
+      withoutFixedNumber.filter(
+        (menu) => !menu.category_id || !categories.find((category) => category.id === menu.category_id),
+      ),
+    );
+    let uncategorizedSlot = 1;
+    uncategorized.forEach((menu) => {
+      menuCodeMap.set(menu.id, formatMenuCode(uncategorizedSlot));
+      uncategorizedSlot += 1;
+    });
+  }
 
   return menuCodeMap;
 };

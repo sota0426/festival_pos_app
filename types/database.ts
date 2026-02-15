@@ -23,11 +23,13 @@ export interface Menu {
   branch_id: string;
   menu_name: string;
   price: number;
+  menu_number?: number;
   sort_order?: number;
   category_id: string | null;
   stock_management: boolean;
   stock_quantity: number;
   is_active: boolean;
+  is_show:boolean
   created_at: string;
   updated_at: string;
 }
@@ -85,6 +87,7 @@ export interface StoreSettings {
   payment_methods: PaymentMethodSettings;
   order_board_enabled: boolean;
   sub_screen_mode: boolean;
+  sync_enabled: boolean;
 }
 
 export interface LocalStorage {
@@ -102,7 +105,7 @@ export interface OrderBoardItem {
 
 // Budget management types
 export type ExpenseCategory = 'material' | 'decoration' | 'equipment' | 'other';
-export type ExpensePaymentMethod = 'cash' | 'paypay' | 'amazon';
+export type ExpensePaymentMethod = 'cash' | 'online' | 'cashless';
 
 export interface BudgetExpense {
   id: string;
@@ -110,6 +113,7 @@ export interface BudgetExpense {
   date: string;
   category: ExpenseCategory;
   amount: number;
+  recorded_by: string;
   payment_method: ExpensePaymentMethod;
   memo: string;
   receipt_image: string | null;

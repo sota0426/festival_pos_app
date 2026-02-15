@@ -13,7 +13,8 @@
       "Bash(npx expo typescript:check:*)",
       "Bash(npx:*)",
       "Bash(wc:*)",
-      "Bash(git -C /Users/iimorisouta/Desktop/festival_pos_app log --oneline -10)"
+      "Bash(git -C /Users/iimorisouta/Desktop/festival_pos_app log --oneline -10)",
+      "Bash(grep:*)"
     ]
   }
 }

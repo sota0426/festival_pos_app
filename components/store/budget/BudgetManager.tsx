@@ -1,14 +1,19 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Dimensions } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Dimensions, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { Card, Header, Button, Modal } from '../../common';
 import {
   getBudgetSettings,
   saveBudgetSettings,
   getBudgetExpenses,
+  saveBudgetExpenses,
   saveBudgetExpense,
   deleteBudgetExpense,
+  getDefaultExpenseRecorder,
+  saveDefaultExpenseRecorder,
   getPendingTransactions,
   getBreakevenDraft,
   saveBreakevenDraft,
@@ -20,6 +25,7 @@ import type {
   BudgetExpense,
   BudgetSettings,
   ExpenseCategory,
+  ExpensePaymentMethod,
 } from '../../../types/database';
 
 // ------- types -------
@@ -58,6 +64,12 @@ const CATEGORY_COLORS: Record<ExpenseCategory, { bg: string; text: string }> = {
   other: { bg: 'bg-orange-100', text: 'text-orange-700' },
 };
 
+const PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
+  cash: '現金',
+  online: 'オンライン',
+  cashless: 'キャッシュレス',
+};
+
 const BREAKEVEN_HINTS: Record<string, string> = {
   product_name: '代表的な商品名の単価を入力してください（例：コーヒー、焼きそば）',
   selling_price: 'お客様に販売する1個あたりの価格です',
@@ -87,6 +99,13 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
   const [expCategory, setExpCategory] = useState<ExpenseCategory>('material');
   const [expAmount, setExpAmount] = useState('');
   const [expMemo, setExpMemo] = useState('');
+  const [expRecorder, setExpRecorder] = useState('');
+  const [expPaymentMethod, setExpPaymentMethod] = useState<ExpensePaymentMethod>('cash');
+  const [syncingExpenses, setSyncingExpenses] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
+  const [menuSalesRows, setMenuSalesRows] = useState<
+    { menu_name: string; quantity: number; subtotal: number }[]
+  >([]);
 
   // Category hint modal
   const [showCategoryHint, setShowCategoryHint] = useState(false);
@@ -121,52 +140,162 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
   const [graphTouchQty, setGraphTouchQty] = useState<number | null>(null);
   const breakevenDraftLoadedRef = useRef(false);
 
+  const syncExpenses = useCallback(async () => {
+    const allLocal = await getBudgetExpenses();
+    const branchLocal = allLocal.filter((expense) => expense.branch_id === branch.id);
+
+    if (!isSupabaseConfigured()) {
+      setExpenses(branchLocal);
+      return branchLocal;
+    }
+
+    setSyncingExpenses(true);
+    try {
+      const unsynced = branchLocal.filter((expense) => !expense.synced);
+      const failedIds = new Set<string>();
+
+      for (const expense of unsynced) {
+        const { error } = await supabase.from('budget_expenses').upsert(
+          {
+            id: expense.id,
+            branch_id: expense.branch_id,
+            date: expense.date,
+            category: expense.category,
+            amount: expense.amount,
+            recorded_by: expense.recorded_by,
+            payment_method: expense.payment_method,
+            memo: expense.memo,
+            receipt_image: expense.receipt_image,
+            created_at: expense.created_at,
+          },
+          { onConflict: 'id' },
+        );
+        if (error) {
+          failedIds.add(expense.id);
+        }
+      }
+
+      const { data: remoteExpenses, error: remoteError } = await supabase
+        .from('budget_expenses')
+        .select('*')
+        .eq('branch_id', branch.id)
+        .order('created_at', { ascending: true });
+
+      if (remoteError) {
+        setExpenses(branchLocal);
+        return branchLocal;
+      }
+
+      const normalizedRemote = (remoteExpenses ?? []).map((expense: any) => ({
+        ...expense,
+        synced: true,
+        payment_method:
+          expense.payment_method === 'paypay'
+            ? 'online'
+            : expense.payment_method === 'amazon'
+              ? 'cashless'
+              : expense.payment_method,
+        recorded_by: expense.recorded_by ?? '',
+      })) as BudgetExpense[];
+
+      const failedLocal = branchLocal
+        .filter((expense) => failedIds.has(expense.id))
+        .map((expense) => ({ ...expense, synced: false }));
+
+      const mergedBranchExpenses = [...normalizedRemote, ...failedLocal];
+      const otherBranches = allLocal.filter((expense) => expense.branch_id !== branch.id);
+      await saveBudgetExpenses([...otherBranches, ...mergedBranchExpenses]);
+      setExpenses(mergedBranchExpenses);
+      return mergedBranchExpenses;
+    } finally {
+      setSyncingExpenses(false);
+    }
+  }, [branch.id]);
+
+  const loadSalesDetails = useCallback(async () => {
+    const pending = await getPendingTransactions();
+    const localPending = pending.filter((transaction) => transaction.branch_id === branch.id);
+    const localSales = localPending.reduce((sum, transaction) => sum + transaction.total_amount, 0);
+
+    const summary = new Map<string, { menu_name: string; quantity: number; subtotal: number }>();
+    localPending.forEach((transaction) => {
+      transaction.items.forEach((item) => {
+        const current = summary.get(item.menu_name) ?? {
+          menu_name: item.menu_name,
+          quantity: 0,
+          subtotal: 0,
+        };
+        current.quantity += item.quantity;
+        current.subtotal += item.subtotal;
+        summary.set(item.menu_name, current);
+      });
+    });
+
+    if (!isSupabaseConfigured()) {
+      setTotalSales(localSales);
+      setMenuSalesRows(Array.from(summary.values()).sort((a, b) => b.subtotal - a.subtotal));
+      return;
+    }
+
+    try {
+      const { data: remoteTransactions } = await supabase
+        .from('transactions')
+        .select('id,total_amount')
+        .eq('branch_id', branch.id)
+        .eq('status', 'completed');
+
+      const transactionIds = (remoteTransactions ?? []).map((transaction) => transaction.id);
+      if (transactionIds.length > 0) {
+        const { data: remoteItems } = await supabase
+          .from('transaction_items')
+          .select('menu_name,quantity,subtotal,transaction_id')
+          .in('transaction_id', transactionIds);
+
+        (remoteItems ?? []).forEach((item) => {
+          const current = summary.get(item.menu_name) ?? {
+            menu_name: item.menu_name,
+            quantity: 0,
+            subtotal: 0,
+          };
+          current.quantity += item.quantity;
+          current.subtotal += item.subtotal;
+          summary.set(item.menu_name, current);
+        });
+      }
+
+      const remoteSales = (remoteTransactions ?? []).reduce((sum, transaction) => sum + transaction.total_amount, 0);
+      setTotalSales(remoteSales + localSales);
+      setMenuSalesRows(Array.from(summary.values()).sort((a, b) => b.subtotal - a.subtotal));
+    } catch {
+      setTotalSales(localSales);
+      setMenuSalesRows(Array.from(summary.values()).sort((a, b) => b.subtotal - a.subtotal));
+    }
+  }, [branch.id]);
+
   // ------- load data -------
   const loadData = useCallback(async () => {
     try {
-      const [budgetSettings, budgetExpenses] = await Promise.all([
+      const [budgetSettings, defaultRecorder] = await Promise.all([
         getBudgetSettings(branch.id),
-        getBudgetExpenses(),
+        getDefaultExpenseRecorder(branch.id),
       ]);
 
       setSettings(budgetSettings);
       setBudgetInput(budgetSettings.initial_budget > 0 ? String(budgetSettings.initial_budget) : '');
       setTargetInput(budgetSettings.target_sales > 0 ? String(budgetSettings.target_sales) : '');
-
-      const branchExpenses = budgetExpenses.filter((e) => e.branch_id === branch.id);
-      setExpenses(branchExpenses);
-
-      // Fetch sales
-      const pending = await getPendingTransactions();
-      const localSales = pending
-        .filter((t) => t.branch_id === branch.id)
-        .reduce((sum, t) => sum + t.total_amount, 0);
-
-      if (isSupabaseConfigured()) {
-        try {
-          const { data } = await supabase
-            .from('transactions')
-            .select('total_amount')
-            .eq('branch_id', branch.id)
-            .eq('status', 'completed');
-          const remoteSales = data?.reduce((sum, t) => sum + t.total_amount, 0) ?? 0;
-          setTotalSales(remoteSales + localSales);
-        } catch {
-          setTotalSales(localSales);
-        }
-      } else {
-        setTotalSales(localSales);
-      }
+      setExpRecorder(defaultRecorder);
+      await Promise.all([syncExpenses(), loadSalesDetails()]);
     } catch (error) {
       console.error('Budget data load error:', error);
     } finally {
       setLoading(false);
     }
-  }, [branch.id]);
+  }, [branch.id, loadSalesDetails, syncExpenses]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
 
   useEffect(() => {
     if (mode !== 'breakeven') return;
@@ -220,6 +349,10 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
     settings.initial_budget > 0
       ? ((remainingBudget / settings.initial_budget) * 100).toFixed(1)
       : '0';
+  const salesAchievementRate =
+    branch.sales_target > 0
+      ? Math.floor((totalSales / branch.sales_target) * 100)
+      : 0;
 
   const expenseByCategory = (['material', 'decoration', 'equipment', 'other'] as ExpenseCategory[]).map(
     (cat) => {
@@ -274,40 +407,30 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       alertNotify('エラー', '金額を入力してください');
       return;
     }
+    if (!expRecorder.trim()) {
+      alertNotify('エラー', '登録者名を入力してください');
+      return;
+    }
 
+    const recorderName = expRecorder.trim();
     const expense: BudgetExpense = {
       id: Crypto.randomUUID(),
       branch_id: branch.id,
       date: new Date().toISOString().split('T')[0],
       category: expCategory,
       amount,
-      payment_method: 'cash',
+      recorded_by: recorderName,
+      payment_method: expPaymentMethod,
       memo: expMemo,
       receipt_image: null,
       created_at: new Date().toISOString(),
       synced: false,
     };
 
+    await saveDefaultExpenseRecorder(branch.id, recorderName);
     await saveBudgetExpense(expense);
     setExpenses((prev) => [...prev, expense]);
-
-    if (isSupabaseConfigured()) {
-      try {
-        await supabase.from('budget_expenses').insert({
-          id: expense.id,
-          branch_id: expense.branch_id,
-          date: expense.date,
-          category: expense.category,
-          amount: expense.amount,
-          payment_method: expense.payment_method,
-          memo: expense.memo,
-          receipt_image: null,
-          created_at: expense.created_at,
-        });
-      } catch (e) {
-        console.log('Expense sync failed:', e);
-      }
-    }
+    await syncExpenses();
 
     setExpAmount('');
     setExpMemo('');
@@ -375,6 +498,88 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
   const openBreakevenHint = (key: string) => {
     setBreakevenHintKey(key);
     setShowBreakevenHint(true);
+  };
+
+  const toCsvCell = (value: string | number) => {
+    const text = String(value ?? '');
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+
+  const handleExportCsv = async () => {
+    try {
+      setExportingCsv(true);
+      const lines: string[] = [];
+      lines.push(['区分', '項目', '値'].map(toCsvCell).join(','));
+      lines.push(['サマリー', '総収入', totalSales].map(toCsvCell).join(','));
+      lines.push(['サマリー', '総支出', totalExpense].map(toCsvCell).join(','));
+      lines.push(['サマリー', '最終利益', profit].map(toCsvCell).join(','));
+      lines.push('');
+
+      lines.push(['販売商品', '商品名', '販売個数', '小計'].map(toCsvCell).join(','));
+      menuSalesRows.forEach((row) => {
+        lines.push(['収入', row.menu_name, row.quantity, row.subtotal].map(toCsvCell).join(','));
+      });
+      lines.push('');
+
+      lines.push(
+        ['支出明細', '日付', 'カテゴリ', '支払い方法', '登録者', '金額', 'メモ']
+          .map(toCsvCell)
+          .join(','),
+      );
+      expenseWithNumbers.forEach((expense) => {
+        lines.push(
+          [
+            '支出',
+            expense.date,
+            CATEGORY_LABELS[expense.category],
+            PAYMENT_METHOD_LABELS[expense.payment_method],
+            expense.recorded_by || '未設定',
+            expense.amount,
+            expense.memo || '',
+          ]
+            .map(toCsvCell)
+            .join(','),
+        );
+      });
+
+      const csvContent = `\uFEFF${lines.join('\n')}`;
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = window.URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `budget_report_${branch.branch_code}_${Date.now()}.csv`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        window.URL.revokeObjectURL(url);
+        alertNotify('CSV出力', 'CSVをダウンロードしました');
+        return;
+      }
+
+      const baseDir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
+      if (!baseDir) {
+        throw new Error('保存先ディレクトリを取得できませんでした');
+      }
+      const fileUri = `${baseDir}budget_report_${branch.branch_code}_${Date.now()}.csv`;
+      await FileSystem.writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'text/csv',
+          dialogTitle: '報告書CSVを共有',
+        });
+      } else {
+        alertNotify('CSV出力', `CSVを保存しました: ${fileUri}`);
+      }
+    } catch (error: any) {
+      console.error('CSV export error:', error);
+      alertNotify('エラー', `CSVの出力に失敗しました: ${error?.message ?? 'unknown error'}`);
+    } finally {
+      setExportingCsv(false);
+    }
   };
 
   // ------- sub-components -------
@@ -885,6 +1090,19 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
         subtitle={`${branch.branch_code} - ${branch.branch_name}`}
         showBack
         onBack={onBack}
+        rightElement={
+          isSupabaseConfigured() ? (
+            <Button
+              title={syncingExpenses ? '同期中...' : '同期'}
+              onPress={() => {
+                syncExpenses();
+                loadSalesDetails();
+              }}
+              size="sm"
+              disabled={syncingExpenses}
+            />
+          ) : null
+        }
       />
 
       {/* Tab Bar */}
@@ -977,31 +1195,49 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
             </View>
           </Card>
 
-          {/* Expense Breakdown */}
           <Card>
-            <Text className="text-gray-900 text-lg font-bold mb-3">支出内訳</Text>
-            {totalExpense === 0 ? (
-              <Text className="text-gray-400 text-center py-4">支出データがありません</Text>
-            ) : (
-              <View className="gap-2">
-                {expenseByCategory
-                  .filter((c) => c.total > 0)
-                  .map((c) => (
-                    <View key={c.category} className="flex-row items-center justify-between py-2 border-b border-gray-100">
-                      <CategoryBadge category={c.category} />
-                      <Text className="text-gray-900 font-semibold">¥{c.total.toLocaleString()}</Text>
-                      <Text className="text-gray-500 text-sm">{c.percent}%</Text>
-                    </View>
-                  ))}
+            <Text className="text-gray-900 text-lg font-bold mb-3">売上状況</Text>
+            <View className="flex-row items-center justify-between">
+              <View>
+                <Text className="text-gray-500 text-sm">売上目標</Text>
+                <Text className="text-lg font-bold text-gray-900">
+                  {branch.sales_target > 0 ? `${branch.sales_target.toLocaleString()}円` : '未設定'}
+                </Text>
+                <Text className="text-sm text-gray-600 mt-1">現在売上：{totalSales.toLocaleString()}円</Text>
+                {branch.sales_target > 0 && (
+                  <Text className="text-sm text-blue-600 font-medium">達成率：{salesAchievementRate}%</Text>
+                )}
               </View>
-            )}
+              <View
+                className={`px-3 py-1 rounded-full ${
+                  branch.status === 'active' ? 'bg-green-100' : 'bg-gray-100'
+                }`}
+              >
+                <Text
+                  className={`font-medium ${
+                    branch.status === 'active' ? 'text-green-600' : 'text-gray-500'
+                  }`}
+                >
+                  {branch.status === 'active' ? '稼働中' : '停止中'}
+                </Text>
+              </View>
+            </View>
           </Card>
+
         </ScrollView>
       )}
 
       {activeTab === 'report' && (
         <ScrollView className="flex-1 p-4" showsVerticalScrollIndicator={false}>
-          <Text className="text-gray-900 text-lg font-bold mb-3">報告書</Text>
+          <View className="flex-row items-center justify-between mb-3">
+            <Text className="text-gray-900 text-lg font-bold">報告書</Text>
+            <Button
+              title={exportingCsv ? '出力中...' : 'CSV出力'}
+              onPress={handleExportCsv}
+              size="sm"
+              disabled={exportingCsv}
+            />
+          </View>
           {/* Basic Info */}
           <Card className="mb-4">
             <Text className="text-gray-900 text-lg font-bold mb-3 border-b-2 border-indigo-500 pb-2">
@@ -1066,6 +1302,33 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
             </View>
           </Card>
 
+          {/* Income Detail */}
+          <Card className="mb-4">
+            <Text className="text-gray-900 text-lg font-bold mb-3 border-b-2 border-sky-500 pb-2">
+              収入明細（販売商品）
+            </Text>
+            {menuSalesRows.length === 0 ? (
+              <Text className="text-gray-400 text-center py-4">売上データがありません</Text>
+            ) : (
+              <View className="gap-1">
+                {menuSalesRows.map((row) => (
+                  <View
+                    key={row.menu_name}
+                    className="flex-row items-center justify-between py-2 border-b border-gray-100"
+                  >
+                    <Text className="text-gray-800 text-sm flex-1 mr-2" numberOfLines={1}>
+                      {row.menu_name}
+                    </Text>
+                    <Text className="text-gray-500 text-sm w-16 text-right">{row.quantity}個</Text>
+                    <Text className="text-sky-700 font-semibold w-24 text-right">
+                      ¥{row.subtotal.toLocaleString()}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </Card>
+
           {/* Expense Breakdown */}
           <Card className="mb-4">
             <Text className="text-gray-900 text-lg font-bold mb-3 border-b-2 border-indigo-500 pb-2">
@@ -1097,7 +1360,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
           {/* Expense Detail List */}
           <Card>
             <Text className="text-gray-900 text-lg font-bold mb-3 border-b-2 border-indigo-500 pb-2">
-              支出明細
+              支出明細（支払い方法）
             </Text>
             {expenses.length === 0 ? (
               <Text className="text-gray-400 text-center py-4">支出データがありません</Text>
@@ -1116,6 +1379,12 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
                     <Text className="text-gray-700 text-sm flex-1 mx-2" numberOfLines={1}>
                       {exp.memo || '-'}
                     </Text>
+                    <Text className="text-gray-500 text-xs w-16" numberOfLines={1}>
+                      {exp.recorded_by || '未設定'}
+                    </Text>
+                    <View className="bg-gray-100 rounded px-2 py-0.5 mr-1">
+                      <Text className="text-gray-600 text-[10px]">{PAYMENT_METHOD_LABELS[exp.payment_method]}</Text>
+                    </View>
                     <Text className="text-gray-900 font-semibold w-20 text-right">
                       ¥{exp.amount.toLocaleString()}
                     </Text>

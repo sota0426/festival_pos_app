@@ -228,9 +228,6 @@ export const ManualCounterScreen = ({ branch, onBack }: Props) => {
               <Text className="text-white font-bold text-xs">すべて削除</Text>
             </TouchableOpacity>
           </View>
-          <Text className="text-gray-500 text-[11px] mt-1">
-            リセットには管理者パスワードが必要です（初期: 0000）。設定タブから変更できます。
-          </Text>
           <View className="flex-row justify-end mb-2">
             {groups.length < MAX_GROUPS && (
               <TouchableOpacity

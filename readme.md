@@ -151,6 +151,7 @@
 - stock_management (BOOLEAN) // 在庫管理ON/OFF
 - stock_quantity (INTEGER) // 残数
 - is_active (BOOLEAN)
+- is_show (BOOLEAN)
 - created_at (TIMESTAMP)
 - updated_at (TIMESTAMP)
 ```
