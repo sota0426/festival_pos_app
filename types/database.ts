@@ -1,5 +1,61 @@
 // Database types for Supabase
 
+// SaaS types
+export type PlanType = 'free' | 'store' | 'organization';
+export type SubscriptionStatus = 'active' | 'trialing' | 'past_due' | 'canceled' | 'incomplete';
+export type OrgRole = 'owner' | 'admin' | 'member';
+
+export interface Profile {
+  id: string;
+  email: string;
+  display_name: string;
+  avatar_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  owner_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationMember {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  role: OrgRole;
+  created_at: string;
+}
+
+export interface Subscription {
+  id: string;
+  user_id: string;
+  organization_id: string | null;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  plan_type: PlanType;
+  status: SubscriptionStatus;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoginCode {
+  id: string;
+  code: string;
+  branch_id: string;
+  subscription_id: string;
+  created_by: string;
+  is_active: boolean;
+  created_at: string;
+  expires_at: string | null;
+}
+
 export interface Branch {
   id: string;
   branch_code: string;
@@ -8,6 +64,8 @@ export interface Branch {
   sales_target: number;
   status: 'active' | 'inactive';
   created_at: string;
+  organization_id?: string | null;
+  owner_id?: string | null;
 }
 
 export interface MenuCategory {

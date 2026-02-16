@@ -14,7 +14,8 @@
       "Bash(npx:*)",
       "Bash(wc:*)",
       "Bash(git -C /Users/iimorisouta/Desktop/festival_pos_app log --oneline -10)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(find:*)"
     ]
   }
 }

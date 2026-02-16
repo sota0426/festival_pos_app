@@ -9,5 +9,6 @@
       "hooks/*": ["hooks/*"],
       "types/*": ["types/*"]
     }
-  }
+  },
+  "exclude": ["supabase/functions"]
 }

@@ -1,22 +1,42 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ActivityIndicator, View } from 'react-native';
 
 import './global.css';
+
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { SubscriptionProvider } from './contexts/SubscriptionContext';
+import { DemoProvider } from './contexts/DemoContext';
 
 import { HQLogin, HQDashboard, BranchManagement, HQBranchReports, HQPresentation } from './components/hq';
 import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, BudgetManager } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 import { HQHome } from 'components/hq/HQHome';
-import { hasSupabaseEnvConfigured } from "./lib/supabase"
 
 import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
-import { MissingEnvScreen } from 'components/MissingEnvScreen';
 import { Home } from 'components/Home';
 import { BudgetExpenseRecorder } from 'components/store/budget/BudgetExpenseRecorder';
 
+// 新画面
+import { Landing } from './components/Landing';
+import { AuthSignIn } from './components/auth/AuthSignIn';
+import { LoginCodeEntry } from './components/auth/LoginCodeEntry';
+import { AccountDashboard } from './components/account/AccountDashboard';
+import { PricingScreen } from './components/account/PricingScreen';
+import { MyStores } from './components/account/MyStores';
+import { DemoBanner } from './components/common';
+
 type Screen =
+  // 新画面
+  | 'landing'
+  | 'auth_signin'
+  | 'login_code_entry'
+  | 'account_dashboard'
+  | 'pricing'
+  | 'my_stores'
+  // 既存画面
   | 'home'
   | 'hq_login'
   | 'hq_home'
@@ -35,8 +55,9 @@ type Screen =
   | 'store_budget_expense'
   | 'store_budget_breakeven';
 
-export default function App() {
-  const [currentScreen, setCurrentScreen] = useState<Screen>("home");
+function AppContent() {
+  const { authState, enterDemo } = useAuth();
+  const [currentScreen, setCurrentScreen] = useState<Screen>('landing');
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [hqBranchInfoReturnScreen, setHqBranchInfoReturnScreen] = useState<'hq_home' | 'hq_dashboard'>('hq_home');
   const [hqBranchInfoFocusBranchId, setHqBranchInfoFocusBranchId] = useState<string | null>(null);
@@ -51,90 +72,216 @@ export default function App() {
 
   const handleBranchLogout = useCallback(() => {
     setCurrentBranch(null);
-    setCurrentScreen('home');
-  }, []);
+    if (authState.status === 'authenticated') {
+      setCurrentScreen('account_dashboard');
+    } else if (authState.status === 'demo') {
+      setCurrentScreen('landing');
+    } else if (authState.status === 'login_code') {
+      setCurrentScreen('landing');
+    } else {
+      setCurrentScreen('landing');
+    }
+  }, [authState.status]);
 
-  if(!hasSupabaseEnvConfigured()){
-    return <MissingEnvScreen />
+  // render中のsetStateを避け、遷移はeffectで行う
+  useEffect(() => {
+    if (authState.status === 'authenticated') {
+      if (currentScreen === 'landing' || currentScreen === 'auth_signin') {
+        setCurrentScreen('account_dashboard');
+      }
+    }
+    if (authState.status === 'login_code' && currentScreen === 'landing') {
+      setCurrentBranch(authState.branch);
+      setCurrentScreen('store_home');
+    }
+  }, [authState, currentScreen]);
+
+  // ローディング中
+  if (authState.status === 'loading') {
+    return (
+      <View className="flex-1 justify-center items-center bg-gray-50">
+        <ActivityIndicator size="large" color="#22c55e" />
+      </View>
+    );
   }
 
   const renderScreen = () => {
     switch (currentScreen) {
-      case 'home':
+      // ===== 新画面 =====
+      case 'landing':
         return (
-          <Home
-            onNavigateToStore={() => setCurrentScreen('store_login')}
-            onNavigateToHQ={() => setCurrentScreen('hq_login')}
+          <Landing
+            onNavigateToDemo={() => {
+              enterDemo();
+              setCurrentScreen('home');
+            }}
+            onNavigateToAuth={() => setCurrentScreen('auth_signin')}
+            onNavigateToLoginCode={() => setCurrentScreen('login_code_entry')}
           />
         );
 
-      // HQ Screens
+      case 'auth_signin':
+        return (
+          <AuthSignIn
+            onBack={() => setCurrentScreen('landing')}
+          />
+        );
+
+      case 'login_code_entry':
+        return (
+          <LoginCodeEntry
+            onBack={() => setCurrentScreen('landing')}
+          />
+        );
+
+      case 'account_dashboard':
+        return (
+          <AccountDashboard
+            onNavigateToStore={() => setCurrentScreen('store_login')}
+            onNavigateToHQ={() => setCurrentScreen('hq_home')}
+            onNavigateToPricing={() => setCurrentScreen('pricing')}
+            onNavigateToMyStores={() => setCurrentScreen('my_stores')}
+            onLogout={() => setCurrentScreen('landing')}
+          />
+        );
+
+      case 'pricing':
+        return (
+          <PricingScreen
+            onBack={() => setCurrentScreen('account_dashboard')}
+          />
+        );
+
+      case 'my_stores':
+        return (
+          <MyStores
+            onBack={() => setCurrentScreen('account_dashboard')}
+            onEnterStore={handleBranchLogin}
+          />
+        );
+
+      // ===== 既存: Home画面 (デモモード用にも使用) =====
+      case 'home':
+        return (
+          <>
+            <DemoBanner />
+            <Home
+              onNavigateToStore={() => setCurrentScreen('store_login')}
+              onNavigateToHQ={() => setCurrentScreen('hq_login')}
+            />
+          </>
+        );
+
+      // ===== 既存: HQ画面 =====
       case 'hq_login':
         return (
-          <HQLogin
-            onLoginSuccess={() => setCurrentScreen('hq_home')}
-            onBackToHome={() => setCurrentScreen('home')}
-          />
+          <>
+            <DemoBanner />
+            <HQLogin
+              onLoginSuccess={() => setCurrentScreen('hq_home')}
+              onBackToHome={() => {
+                if (authState.status === 'authenticated') {
+                  setCurrentScreen('account_dashboard');
+                } else if (authState.status === 'demo') {
+                  setCurrentScreen('home');
+                } else {
+                  setCurrentScreen('landing');
+                }
+              }}
+            />
+          </>
         );
 
       case 'hq_home':
         return(
-          <HQHome
-            onNavigateSales={() => setCurrentScreen('hq_dashboard')}
-            onNavigateBranchInfo={() => {
-              setHqBranchInfoReturnScreen('hq_home');
-              setHqBranchInfoFocusBranchId(null);
-              setCurrentScreen('hq_branch_info');
-            }}
-            onNavigateManagementStore={()=>setCurrentScreen('hq_branches')}
-            onNavigatePresentation={() => setCurrentScreen('hq_presentation')}
-            onLogout={() => setCurrentScreen('home')}
-          />  
-        );     
+          <>
+            <DemoBanner />
+            <HQHome
+              onNavigateSales={() => setCurrentScreen('hq_dashboard')}
+              onNavigateBranchInfo={() => {
+                setHqBranchInfoReturnScreen('hq_home');
+                setHqBranchInfoFocusBranchId(null);
+                setCurrentScreen('hq_branch_info');
+              }}
+              onNavigateManagementStore={()=>setCurrentScreen('hq_branches')}
+              onNavigatePresentation={() => setCurrentScreen('hq_presentation')}
+              onLogout={() => {
+                if (authState.status === 'authenticated') {
+                  setCurrentScreen('account_dashboard');
+                } else {
+                  setCurrentScreen('landing');
+                }
+              }}
+            />
+          </>
+        );
 
       case 'hq_dashboard':
         return (
-          <HQDashboard
-            onNavigateToBranches={() => setCurrentScreen('hq_branches')}
-            onNavigateToBranchInfo={(branchId?: string) => {
-              setHqBranchInfoReturnScreen('hq_dashboard');
-              setHqBranchInfoFocusBranchId(branchId ?? null);
-              setCurrentScreen('hq_branch_info');
-            }}
-            onBack={() => setCurrentScreen('hq_home')}
-          />
+          <>
+            <DemoBanner />
+            <HQDashboard
+              onNavigateToBranches={() => setCurrentScreen('hq_branches')}
+              onNavigateToBranchInfo={(branchId?: string) => {
+                setHqBranchInfoReturnScreen('hq_dashboard');
+                setHqBranchInfoFocusBranchId(branchId ?? null);
+                setCurrentScreen('hq_branch_info');
+              }}
+              onBack={() => setCurrentScreen('hq_home')}
+            />
+          </>
         );
 
       case 'hq_branch_info':
         return (
-          <HQBranchReports
-            focusBranchId={hqBranchInfoFocusBranchId}
-            onBack={() => setCurrentScreen(hqBranchInfoReturnScreen)}
-            onBackToHQ={() => setCurrentScreen('hq_home')}
-          />
+          <>
+            <DemoBanner />
+            <HQBranchReports
+              focusBranchId={hqBranchInfoFocusBranchId}
+              onBack={() => setCurrentScreen(hqBranchInfoReturnScreen)}
+              onBackToHQ={() => setCurrentScreen('hq_home')}
+            />
+          </>
         );
 
       case 'hq_branches':
         return (
-        <BranchManagement 
-          onBack={() => setCurrentScreen('hq_home')} 
-        />
+          <>
+            <DemoBanner />
+            <BranchManagement
+              onBack={() => setCurrentScreen('hq_home')}
+            />
+          </>
         );
 
       case 'hq_presentation':
         return (
-          <HQPresentation
-            onBack={() => setCurrentScreen('hq_home')}
-          />
+          <>
+            <DemoBanner />
+            <HQPresentation
+              onBack={() => setCurrentScreen('hq_home')}
+            />
+          </>
         );
 
-      // Store Screens
+      // ===== 既存: Store画面 =====
       case 'store_login':
         return (
-          <BranchLogin
-            onLoginSuccess={handleBranchLogin}
-            onBackToHome={() => setCurrentScreen('home')}
-          />
+          <>
+            <DemoBanner />
+            <BranchLogin
+              onLoginSuccess={handleBranchLogin}
+              onBackToHome={() => {
+                if (authState.status === 'authenticated') {
+                  setCurrentScreen('account_dashboard');
+                } else if (authState.status === 'demo') {
+                  setCurrentScreen('home');
+                } else {
+                  setCurrentScreen('landing');
+                }
+              }}
+            />
+          </>
         );
 
       case 'store_home':
@@ -142,19 +289,21 @@ export default function App() {
           return null;
         }
         return (
-          <StoreHome
-            branch={currentBranch}
-            onNavigateToRegister={() => setCurrentScreen('store_register')}
-            onNavigateToMenus={() => setCurrentScreen('store_menus')}
-            onNavigateToHistory={() => setCurrentScreen('store_history')}
-            onNavigateToCounter={() => setCurrentScreen('store_counter')}
-
-            onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
-            onNavigateToBudget={() => setCurrentScreen('store_budget')}
-            onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
-            onNavigateToBudgetBreakeven={() => setCurrentScreen('store_budget_breakeven')}
-            onLogout={handleBranchLogout}
-          />
+          <>
+            <DemoBanner />
+            <StoreHome
+              branch={currentBranch}
+              onNavigateToRegister={() => setCurrentScreen('store_register')}
+              onNavigateToMenus={() => setCurrentScreen('store_menus')}
+              onNavigateToHistory={() => setCurrentScreen('store_history')}
+              onNavigateToCounter={() => setCurrentScreen('store_counter')}
+              onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
+              onNavigateToBudget={() => setCurrentScreen('store_budget')}
+              onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
+              onNavigateToBudgetBreakeven={() => setCurrentScreen('store_budget_breakeven')}
+              onLogout={handleBranchLogout}
+            />
+          </>
         );
 
       case 'store_menus':
@@ -163,10 +312,13 @@ export default function App() {
           return null;
         }
         return (
-          <MenuManagement
-            branch={currentBranch}
-            onBack={() => setCurrentScreen('store_home')}
-          />
+          <>
+            <DemoBanner />
+            <MenuManagement
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+            />
+          </>
         );
 
       case 'store_register':
@@ -175,12 +327,15 @@ export default function App() {
           return null;
         }
         return (
-          <Register
-            branch={currentBranch}
-            onBack={() => setCurrentScreen('store_home')}
-            onNavigateToHistory={() => setCurrentScreen('store_history')}
-            onNavigateToMenus={()=>setCurrentScreen("store_menus")}
-          />
+          <>
+            <DemoBanner />
+            <Register
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+              onNavigateToHistory={() => setCurrentScreen('store_history')}
+              onNavigateToMenus={()=>setCurrentScreen("store_menus")}
+            />
+          </>
         );
 
       case 'store_history':
@@ -189,10 +344,13 @@ export default function App() {
           return null;
         }
         return (
-          <SalesHistory
-            branch={currentBranch}
-            onBack={() => setCurrentScreen('store_home')}
-          />
+          <>
+            <DemoBanner />
+            <SalesHistory
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+            />
+          </>
         );
 
       case 'store_counter':
@@ -201,10 +359,13 @@ export default function App() {
           return null;
         }
         return (
-          <ManualCounterScreen
-            branch={currentBranch}
-            onBack={() => setCurrentScreen('store_home')}
-          />
+          <>
+            <DemoBanner />
+            <ManualCounterScreen
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+            />
+          </>
         );
 
       case 'store_order_board':
@@ -213,10 +374,13 @@ export default function App() {
           return null;
         }
         return (
-          <OrderBoard
-            branch={currentBranch}
-            onBack={() => setCurrentScreen('store_home')}
-          />
+          <>
+            <DemoBanner />
+            <OrderBoard
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+            />
+          </>
         );
 
       case 'store_budget':
@@ -225,49 +389,75 @@ export default function App() {
           return null;
         }
         return (
-          <BudgetManager
-            branch={currentBranch}
-            onBack={() => setCurrentScreen('store_home')}
-          />
+          <>
+            <DemoBanner />
+            <BudgetManager
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+            />
+          </>
         );
+
       case 'store_budget_expense':
         if (!currentBranch) {
           setCurrentScreen('store_login');
           return null;
         }
         return (
-          <BudgetExpenseRecorder
-            branch={currentBranch}
-            onBack={() => setCurrentScreen('store_home')}
-          />
+          <>
+            <DemoBanner />
+            <BudgetExpenseRecorder
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+            />
+          </>
         );
+
       case 'store_budget_breakeven':
         if (!currentBranch) {
           setCurrentScreen('store_login');
           return null;
         }
         return (
-          <BudgetManager
-            branch={currentBranch}
-            onBack={() => setCurrentScreen('store_home')}
-            mode="breakeven"
-          />
+          <>
+            <DemoBanner />
+            <BudgetManager
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+              mode="breakeven"
+            />
+          </>
         );
 
       default:
         return (
-          <Home
-            onNavigateToHQ={() => setCurrentScreen('hq_login')}
-            onNavigateToStore={() => setCurrentScreen('store_login')}
+          <Landing
+            onNavigateToDemo={() => setCurrentScreen('home')}
+            onNavigateToAuth={() => setCurrentScreen('auth_signin')}
+            onNavigateToLoginCode={() => setCurrentScreen('login_code_entry')}
           />
         );
     }
   };
 
   return (
-    <SafeAreaProvider>
+    <>
       {renderScreen()}
       <StatusBar style="auto" />
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AuthProvider>
+        <SubscriptionProvider>
+          <DemoProvider>
+            <AppContent />
+          </DemoProvider>
+        </SubscriptionProvider>
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }

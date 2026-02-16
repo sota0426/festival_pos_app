@@ -2,15 +2,23 @@
   "expo": {
     "name": "festival_pos",
     "slug": "festival_pos",
-    "version": "1.0.0",
-    "platforms": ["ios","android","web"],
+    "version": "2.0.0",
+    "scheme": "festival-pos",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "experiments": {
       "tsconfigPaths": true
     },
-    "plugins": [],
+    "plugins": [
+      "expo-apple-authentication",
+      "expo-web-browser"
+    ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -23,7 +31,8 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.festivalpos.app"
     },
     "android": {
       "adaptiveIcon": {
