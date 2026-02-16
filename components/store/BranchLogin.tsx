@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react';
 import { View, Text, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Input, Card } from '../common';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { saveBranch, getBranch } from '../../lib/storage';
+import { supabase, hasSupabaseEnvConfigured } from '../../lib/supabase';
+import { saveBranch, getBranch, clearBranch } from '../../lib/storage';
 import type { Branch } from '../../types/database';
 
 interface BranchLoginProps {
@@ -21,14 +21,49 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
   const [foundBranch, setFoundBranch] = useState<Branch | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const isUuid = (value: string): boolean =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
   // already logged in?
   useEffect(() => {
     const checkExistingBranch = async () => {
       const savedBranch = await getBranch();
-      if (savedBranch) {
-        onLoginSuccess(savedBranch);
+      if (!savedBranch) {
+        setChecking(false);
+        return;
       }
+
+      // Supabase接続時は branch.id に UUID が必要
+      if (!hasSupabaseEnvConfigured()) {
+        onLoginSuccess(savedBranch);
+        setChecking(false);
+        return;
+      }
+
+      if (isUuid(savedBranch.id)) {
+        onLoginSuccess(savedBranch);
+        setChecking(false);
+        return;
+      }
+
+      // 旧ローカル形式(id=S001等)のデータを補正
+      try {
+        const { data, error: fetchError } = await supabase
+          .from('branches')
+          .select('*')
+          .eq('branch_code', savedBranch.branch_code)
+          .single();
+
+        if (!fetchError && data) {
+          await saveBranch(data);
+          onLoginSuccess(data);
+        } else {
+          await clearBranch();
+        }
+      } catch {
+        await clearBranch();
+      }
+
       setChecking(false);
     };
     checkExistingBranch();
@@ -48,7 +83,7 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
     setError(null);
 
     try {
-      if (!isSupabaseConfigured()) {
+      if (!hasSupabaseEnvConfigured()) {
         if (formattedCode === 'S001' || formattedCode === 'S002') {
           const demoBranch: Branch = {
             id: formattedCode,

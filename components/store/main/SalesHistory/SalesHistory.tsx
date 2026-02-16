@@ -289,7 +289,7 @@ export const SalesHistory = ({
               />
             )}
             <Button
-              title="CSV 📄↓"
+              title="CSV出力"
               onPress={()=>handleExportCSV({transactions,branch})}
               size="sm"
               variant="secondary"

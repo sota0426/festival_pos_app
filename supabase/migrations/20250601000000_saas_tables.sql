@@ -14,13 +14,21 @@ CREATE TABLE IF NOT EXISTS profiles (
 
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own profile" ON profiles;
 CREATE POLICY "Users can view own profile"
   ON profiles FOR SELECT
   USING (auth.uid() = id);
 
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
 CREATE POLICY "Users can update own profile"
   ON profiles FOR UPDATE
   USING (auth.uid() = id)
+  WITH CHECK (auth.uid() = id);
+
+-- profiles に INSERT ポリシーを追加（トリガーは SECURITY DEFINER だが念のため）
+DROP POLICY IF EXISTS "Users can insert own profile" ON profiles;
+CREATE POLICY "Users can insert own profile"
+  ON profiles FOR INSERT
   WITH CHECK (auth.uid() = id);
 
 -- organizations: 団体アカウント
@@ -64,13 +72,21 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own subscriptions" ON subscriptions;
 CREATE POLICY "Users can view own subscriptions"
   ON subscriptions FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own subscriptions" ON subscriptions;
 CREATE POLICY "Users can update own subscriptions"
   ON subscriptions FOR UPDATE
   USING (auth.uid() = user_id);
+
+-- subscriptions に INSERT ポリシーを追加（トリガー経由での作成用）
+DROP POLICY IF EXISTS "Users can insert own subscriptions" ON subscriptions;
+CREATE POLICY "Users can insert own subscriptions"
+  ON subscriptions FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
 
 -- login_codes: 店舗共有ログインコード
 CREATE TABLE IF NOT EXISTS login_codes (
@@ -86,10 +102,12 @@ CREATE TABLE IF NOT EXISTS login_codes (
 
 ALTER TABLE login_codes ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own login codes" ON login_codes;
 CREATE POLICY "Users can view own login codes"
   ON login_codes FOR SELECT
   USING (auth.uid() = created_by);
 
+DROP POLICY IF EXISTS "Users can manage own login codes" ON login_codes;
 CREATE POLICY "Users can manage own login codes"
   ON login_codes FOR ALL
   USING (auth.uid() = created_by);
@@ -117,6 +135,7 @@ CREATE INDEX IF NOT EXISTS idx_branches_owner ON branches(owner_id);
 -- ============================================================
 -- RLS: organizations は メンバーのみアクセス可
 -- ============================================================
+DROP POLICY IF EXISTS "Org members can view organization" ON organizations;
 CREATE POLICY "Org members can view organization"
   ON organizations FOR SELECT
   USING (
@@ -127,11 +146,13 @@ CREATE POLICY "Org members can view organization"
     )
   );
 
+DROP POLICY IF EXISTS "Org owner can update organization" ON organizations;
 CREATE POLICY "Org owner can update organization"
   ON organizations FOR UPDATE
   USING (owner_id = auth.uid())
   WITH CHECK (owner_id = auth.uid());
 
+DROP POLICY IF EXISTS "Authenticated users can create organizations" ON organizations;
 CREATE POLICY "Authenticated users can create organizations"
   ON organizations FOR INSERT
   WITH CHECK (auth.uid() = owner_id);
@@ -139,6 +160,7 @@ CREATE POLICY "Authenticated users can create organizations"
 -- ============================================================
 -- RLS: organization_members
 -- ============================================================
+DROP POLICY IF EXISTS "Members can view their org memberships" ON organization_members;
 CREATE POLICY "Members can view their org memberships"
   ON organization_members FOR SELECT
   USING (
@@ -148,6 +170,7 @@ CREATE POLICY "Members can view their org memberships"
     )
   );
 
+DROP POLICY IF EXISTS "Org owner can manage members" ON organization_members;
 CREATE POLICY "Org owner can manage members"
   ON organization_members FOR ALL
   USING (

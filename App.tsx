@@ -18,6 +18,7 @@ import { HQHome } from 'components/hq/HQHome';
 import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
 import { Home } from 'components/Home';
 import { BudgetExpenseRecorder } from 'components/store/budget/BudgetExpenseRecorder';
+import { hasSupabaseEnvConfigured, supabase } from './lib/supabase';
 
 // 新画面
 import { Landing } from './components/Landing';
@@ -65,10 +66,42 @@ function AppContent() {
   // Initialize sync
   useSync();
 
-  const handleBranchLogin = useCallback((branch: Branch) => {
-    setCurrentBranch(branch);
+  const isUuid = useCallback(
+    (value: string): boolean =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value),
+    [],
+  );
+
+  const resolveBranchForStore = useCallback(
+    async (branch: Branch): Promise<Branch | null> => {
+      if (!hasSupabaseEnvConfigured() || isUuid(branch.id)) return branch;
+
+      const { data, error } = await supabase
+        .from('branches')
+        .select('*')
+        .eq('branch_code', branch.branch_code)
+        .maybeSingle();
+
+      if (error || !data) {
+        console.error('Failed to resolve branch id from branch_code:', error ?? 'not found');
+        return null;
+      }
+
+      return data;
+    },
+    [isUuid],
+  );
+
+  const handleBranchLogin = useCallback(async (branch: Branch) => {
+    const resolved = await resolveBranchForStore(branch);
+    if (!resolved) {
+      setCurrentBranch(null);
+      setCurrentScreen('store_login');
+      return;
+    }
+    setCurrentBranch(resolved);
     setCurrentScreen('store_home');
-  }, []);
+  }, [resolveBranchForStore]);
 
   const handleBranchLogout = useCallback(() => {
     setCurrentBranch(null);
@@ -85,16 +118,21 @@ function AppContent() {
 
   // render中のsetStateを避け、遷移はeffectで行う
   useEffect(() => {
+    const resolveLoginCodeBranch = async () => {
+      if (authState.status !== 'login_code' || currentScreen !== 'landing') return;
+      const resolved = await resolveBranchForStore(authState.branch);
+      if (!resolved) return;
+      setCurrentBranch(resolved);
+      setCurrentScreen('store_home');
+    };
+
     if (authState.status === 'authenticated') {
       if (currentScreen === 'landing' || currentScreen === 'auth_signin') {
         setCurrentScreen('account_dashboard');
       }
     }
-    if (authState.status === 'login_code' && currentScreen === 'landing') {
-      setCurrentBranch(authState.branch);
-      setCurrentScreen('store_home');
-    }
-  }, [authState, currentScreen]);
+    resolveLoginCodeBranch();
+  }, [authState, currentScreen, resolveBranchForStore]);
 
   // ローディング中
   if (authState.status === 'loading') {

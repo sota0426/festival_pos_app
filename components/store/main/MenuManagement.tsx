@@ -106,6 +106,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importPreview, setImportPreview] = useState<MenuImportPreview | null>(null);
   const [importing, setImporting] = useState(false);
+  const [showMenuActionsModal, setShowMenuActionsModal] = useState(false);
 
   const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
@@ -278,9 +279,14 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       const sortedMenus = sortMenus(data || []);
       setMenus(sortedMenus);
       await saveMenus(sortedMenus);
-    } catch (error:any) {
+    } catch (error: any) {
       if (error?.name === 'AbortError') return;
-      console.error('Error fetching menus:', error);
+      console.error('Error fetching menus:', {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details,
+        hint: error?.hint,
+      });
       // Use local data as fallback
       const localMenus = await getMenus();
       setMenus(sortMenus(localMenus.filter((m) => m.branch_id === branch.id)));
@@ -345,9 +351,15 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
 
       setShowAddModal(false);
       resetForm();
-    } catch (error) {
-      console.error('Error adding menu:', error);
-      Alert.alert('エラー', 'メニューの追加に失敗しました');
+    } catch (error: any) {
+      console.error('Error adding menu:', {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details,
+        hint: error?.hint,
+      });
+      const reason = error?.message ? `\n${error.message}` : '';
+      Alert.alert('エラー', `メニューの追加に失敗しました${reason}`);
     } finally {
       setSaving(false);
     }
@@ -1326,30 +1338,12 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         rightElement={
           viewMode === 'menus' ? (
             <View className="flex-row gap-1">
-              <Button title="+ 追加" onPress={() => setShowAddModal(true)} size="sm" />
+              <Button title="+ メニュー追加" onPress={() => setShowAddModal(true)} size="sm" />
               <Button
-                title={exporting ? '...' : 'CSV出力'}
-                onPress={handleExportMenuCsv}
+                title="▼"
+                onPress={() => setShowMenuActionsModal(true)}
                 size="sm"
                 variant="secondary"
-                disabled={exporting || menus.length === 0}
-                loading={exporting}
-              />
-              <Button
-                title="CSV登録"
-                onPress={handlePickMenuCsv}
-                size="sm"
-                variant="success"
-              />
-              <Button
-                title="全削除"
-                onPress={() => {
-                  setAdminPasswordInput('');
-                  setDeleteAllError('');
-                  setShowDeleteAllModal(true);
-                }}
-                variant="danger"
-                size="sm"
               />
             </View>
           ) : (
@@ -1809,6 +1803,43 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             </View>
           </ScrollView>
         )}
+      </Modal>
+
+      <Modal
+        visible={showMenuActionsModal}
+        onClose={() => setShowMenuActionsModal(false)}
+        title="メニュー操作"
+      >
+        <View className="gap-3">
+          <Button
+            title="CSV登録"
+            onPress={() => {
+              setShowMenuActionsModal(false);
+              handlePickMenuCsv();
+            }}
+            variant="success"
+          />
+          <Button
+            title={exporting ? 'CSV出力中...' : 'CSV出力'}
+            onPress={() => {
+              setShowMenuActionsModal(false);
+              handleExportMenuCsv();
+            }}
+            variant="secondary"
+            disabled={exporting || menus.length === 0}
+            loading={exporting}
+          />
+          <Button
+            title="メニュー全削除"
+            onPress={() => {
+              setShowMenuActionsModal(false);
+              setAdminPasswordInput('');
+              setDeleteAllError('');
+              setShowDeleteAllModal(true);
+            }}
+            variant="danger"
+          />
+        </View>
       </Modal>
     </SafeAreaView>
   );

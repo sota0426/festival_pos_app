@@ -109,12 +109,8 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
                   {p.name}
                 </Text>
                 <View className="flex-row items-baseline">
-                  <Text className="text-2xl font-bold text-gray-900">
-                    {p.price}
-                  </Text>
-                  {p.period && (
-                    <Text className="text-gray-500 text-sm">{p.period}</Text>
-                  )}
+                  <Text className="text-2xl font-bold text-gray-900">{p.price}</Text>
+                  {p.period ? <Text className="text-gray-500 text-sm">{p.period}</Text> : null}
                 </View>
               </View>
 

@@ -8,6 +8,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Button, Input, Card, Header, Modal } from '../common';
 import { alertNotify } from '../../lib/alertUtils';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import type { Branch } from '../../types/database';
 
 interface BranchManagementProps {
@@ -67,6 +68,11 @@ type ImportPreview = {
 };
 
 export const BranchManagement = ({ onBack }: BranchManagementProps) => {
+  const { authState } = useAuth();
+  const ownerId = authState.status === 'authenticated' ? authState.user.id : null;
+  const organizationId =
+    authState.status === 'authenticated' ? authState.subscription.organization_id : null;
+
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -88,12 +94,21 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
     setNewSalesTarget('');
   };
 
-  const generateBranchCode = (existingBranches: Branch[]): string => {
+  const generateBranchCode = (existingBranches: Array<Pick<Branch, 'branch_code'>>): string => {
     const maxNumber = existingBranches.reduce((max, branch) => {
       const num = parseInt(branch.branch_code.replace('S', ''), 10);
       return num > max ? num : max;
     }, 0);
     return `S${String(maxNumber + 1).padStart(3, '0')}`;
+  };
+
+  const fetchNextBranchCode = async (): Promise<string> => {
+    const { data, error } = await supabase
+      .from('branches')
+      .select('branch_code')
+      .order('branch_code', { ascending: true });
+    if (error) throw error;
+    return generateBranchCode((data ?? []) as Array<Pick<Branch, 'branch_code'>>);
   };
 
   const fetchBranches = useCallback(async () => {
@@ -123,13 +138,29 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
     }
 
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('branches')
         .select('*')
         .order('branch_code', { ascending: true });
+      if (ownerId && organizationId) {
+        query = query.or(`owner_id.eq.${ownerId},organization_id.eq.${organizationId}`);
+      } else if (ownerId) {
+        query = query.eq('owner_id', ownerId);
+      }
+      const { data, error } = await query;
 
       if (error) throw error;
-      setBranches(data || []);
+      if ((data?.length ?? 0) === 0 && ownerId) {
+        // 旧データ移行前でも画面上で管理できるようフォールバック
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('branches')
+          .select('*')
+          .order('branch_code', { ascending: true });
+        if (fallbackError) throw fallbackError;
+        setBranches(fallbackData || []);
+      } else {
+        setBranches(data || []);
+      }
     } catch (error) {
       console.error('Error fetching branches:', error);
       Alert.alert('エラー', '支店情報の取得に失敗しました');
@@ -137,7 +168,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [ownerId, organizationId]);
 
   useEffect(() => {
     fetchBranches();
@@ -157,14 +188,19 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
     setSaving(true);
 
     try {
+      const nextBranchCode = isSupabaseConfigured()
+        ? await fetchNextBranchCode()
+        : generateBranchCode(branches);
       const newBranch: Branch = {
         id: Crypto.randomUUID(),
-        branch_code: generateBranchCode(branches),
+        branch_code: nextBranchCode,
         branch_name: newBranchName.trim(),
         password: newPassword.trim(),
         sales_target: parseInt(newSalesTarget, 10) || 0,
         status: 'active',
         created_at: new Date().toISOString(),
+        owner_id: ownerId,
+        organization_id: organizationId,
       };
 
       if (isSupabaseConfigured()) {
@@ -178,7 +214,8 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
       Alert.alert('成功', `支店番号 ${newBranch.branch_code} を発行しました`);
     } catch (error) {
       console.error('Error adding branch:', error);
-      Alert.alert('エラー', '支店の追加に失敗しました');
+      const msg = error instanceof Error ? error.message : '支店の追加に失敗しました';
+      Alert.alert('エラー', msg);
     } finally {
       setSaving(false);
     }
@@ -452,6 +489,8 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
           sales_target: row.sales_target,
           status: row.status,
           created_at: new Date().toISOString(),
+          owner_id: ownerId,
+          organization_id: organizationId,
         };
 
         if (isSupabaseConfigured()) {

@@ -40,42 +40,139 @@ export const useAuth = (): AuthContextValue => {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [authState, setAuthState] = useState<AuthState>({ status: 'loading' });
 
+  const generateNextBranchCode = useCallback(async (): Promise<string> => {
+    const { data, error } = await supabase
+      .from('branches')
+      .select('branch_code')
+      .order('branch_code', { ascending: true });
+    if (error) throw error;
+
+    const maxNumber = (data ?? []).reduce((max, row) => {
+      const num = parseInt(String(row.branch_code ?? '').replace('S', ''), 10);
+      return Number.isFinite(num) && num > max ? num : max;
+    }, 0);
+    return `S${String(maxNumber + 1).padStart(3, '0')}`;
+  }, []);
+
+  const ensureUserBootstrapData = useCallback(async (user: User) => {
+    const profileFallback: Profile = {
+      id: user.id,
+      email: user.email ?? '',
+      display_name: user.user_metadata?.full_name ?? user.email ?? '',
+      avatar_url: user.user_metadata?.avatar_url ?? null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    let profile = existingProfile;
+    if (!profile) {
+      const { data: insertedProfile } = await supabase
+        .from('profiles')
+        .insert(profileFallback)
+        .select('*')
+        .single();
+      profile = insertedProfile ?? profileFallback;
+    }
+
+    const { data: existingSubscription } = await supabase
+      .from('subscriptions')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let subscription = existingSubscription;
+    if (!subscription) {
+      const { data: insertedSubscription } = await supabase
+        .from('subscriptions')
+        .insert({
+          user_id: user.id,
+          plan_type: 'free',
+          status: 'active',
+        })
+        .select('*')
+        .single();
+      subscription = insertedSubscription ?? null;
+    }
+
+    const { data: existingBranch } = await supabase
+      .from('branches')
+      .select('id')
+      .eq('owner_id', user.id)
+      .limit(1)
+      .maybeSingle();
+
+    let branchId = existingBranch?.id ?? null;
+    if (!branchId) {
+      const branchCode = await generateNextBranchCode();
+      const { data: insertedBranch } = await supabase
+        .from('branches')
+        .insert({
+          branch_code: branchCode,
+          branch_name: '店舗1',
+          password: '0000',
+          sales_target: 0,
+          status: 'active',
+          owner_id: user.id,
+        })
+        .select('id')
+        .single();
+      branchId = insertedBranch?.id ?? null;
+    }
+
+    if (branchId) {
+      const { data: menu } = await supabase
+        .from('menus')
+        .select('id')
+        .eq('branch_id', branchId)
+        .limit(1)
+        .maybeSingle();
+
+      if (!menu) {
+        await supabase.from('menus').insert({
+          branch_id: branchId,
+          menu_name: 'サンプルメニュー',
+          price: 500,
+          menu_number: 101,
+          stock_management: false,
+          stock_quantity: 0,
+          is_active: true,
+          is_show: true,
+        });
+      }
+    }
+
+    const normalizedSubscription: Subscription = subscription ?? {
+      id: '',
+      user_id: user.id,
+      organization_id: null,
+      stripe_customer_id: null,
+      stripe_subscription_id: null,
+      plan_type: 'free',
+      status: 'active',
+      current_period_start: null,
+      current_period_end: null,
+      cancel_at_period_end: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    return {
+      profile: (profile as Profile) ?? profileFallback,
+      subscription: normalizedSubscription,
+    };
+  }, [generateNextBranchCode]);
+
   const fetchProfileAndSubscription = useCallback(async (user: User) => {
     try {
-      const [profileRes, subRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', user.id).single(),
-        supabase
-          .from('subscriptions')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single(),
-      ]);
-
-      const profile: Profile = profileRes.data ?? {
-        id: user.id,
-        email: user.email ?? '',
-        display_name: user.user_metadata?.full_name ?? user.email ?? '',
-        avatar_url: user.user_metadata?.avatar_url ?? null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      const subscription: Subscription = subRes.data ?? {
-        id: '',
-        user_id: user.id,
-        organization_id: null,
-        stripe_customer_id: null,
-        stripe_subscription_id: null,
-        plan_type: 'free' as const,
-        status: 'active' as const,
-        current_period_start: null,
-        current_period_end: null,
-        cancel_at_period_end: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
+      const { profile, subscription } = await ensureUserBootstrapData(user);
 
       setAuthState({
         status: 'authenticated',
@@ -84,34 +181,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         subscription,
       });
     } catch {
-      setAuthState({
-        status: 'authenticated',
-        user,
-        profile: {
-          id: user.id,
-          email: user.email ?? '',
-          display_name: user.user_metadata?.full_name ?? user.email ?? '',
-          avatar_url: user.user_metadata?.avatar_url ?? null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        subscription: {
-          id: '',
-          user_id: user.id,
-          organization_id: null,
-          stripe_customer_id: null,
-          stripe_subscription_id: null,
-          plan_type: 'free',
-          status: 'active',
-          current_period_start: null,
-          current_period_end: null,
-          cancel_at_period_end: false,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      });
+      const { profile, subscription } = await ensureUserBootstrapData(user);
+      setAuthState({ status: 'authenticated', user, profile, subscription });
     }
-  }, []);
+  }, [ensureUserBootstrapData]);
 
   useEffect(() => {
     if (!hasSupabaseEnvConfigured()) {
@@ -209,13 +282,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .eq('user_id', authState.user.id)
       .order('created_at', { ascending: false })
       .limit(1)
-      .single();
-    if (data) {
+      .maybeSingle();
+    if (!data) {
+      const { subscription } = await ensureUserBootstrapData(authState.user);
       setAuthState((prev) =>
-        prev.status === 'authenticated' ? { ...prev, subscription: data } : prev
+        prev.status === 'authenticated' ? { ...prev, subscription } : prev
       );
+      return;
     }
-  }, [authState]);
+    setAuthState((prev) =>
+      prev.status === 'authenticated' ? { ...prev, subscription: data } : prev
+    );
+  }, [authState, ensureUserBootstrapData]);
 
   return (
     <AuthContext.Provider

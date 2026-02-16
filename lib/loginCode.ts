@@ -17,26 +17,31 @@ export const createLoginCode = async (
   subscriptionId: string,
   createdBy: string
 ): Promise<LoginCode | null> => {
-  const code = generateLoginCode();
+  for (let i = 0; i < 5; i++) {
+    const code = generateLoginCode();
+    const { data, error } = await supabase
+      .from('login_codes')
+      .insert({
+        code,
+        branch_id: branchId,
+        subscription_id: subscriptionId,
+        created_by: createdBy,
+        is_active: true,
+      })
+      .select()
+      .single();
 
-  const { data, error } = await supabase
-    .from('login_codes')
-    .insert({
-      code,
-      branch_id: branchId,
-      subscription_id: subscriptionId,
-      created_by: createdBy,
-      is_active: true,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    console.error('Failed to create login code:', error);
-    return null;
+    if (!error) {
+      return data;
+    }
+    if (error.code !== '23505') {
+      console.error('Failed to create login code:', error);
+      return null;
+    }
   }
 
-  return data;
+  console.error('Failed to create login code: retry limit reached');
+  return null;
 };
 
 export const validateLoginCode = async (

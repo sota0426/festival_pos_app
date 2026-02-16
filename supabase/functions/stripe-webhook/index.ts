@@ -7,6 +7,15 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY')!;
 const STRIPE_WEBHOOK_SECRET = Deno.env.get('STRIPE_WEBHOOK_SECRET')!;
+const LOGIN_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+const generateLoginCode = (): string => {
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += LOGIN_CODE_CHARS[Math.floor(Math.random() * LOGIN_CODE_CHARS.length)];
+  }
+  return code;
+};
 
 serve(async (req) => {
   const signature = req.headers.get('stripe-signature');
@@ -48,18 +57,106 @@ serve(async (req) => {
           );
           const stripeSub = await subRes.json();
 
+          let organizationId: string | null = null;
+          if (plan === 'organization') {
+            const { data: existingOrg } = await supabaseAdmin
+              .from('organizations')
+              .select('id')
+              .eq('owner_id', userId)
+              .limit(1)
+              .maybeSingle();
+
+            if (existingOrg?.id) {
+              organizationId = existingOrg.id;
+            } else {
+              const { data: createdOrg, error: createOrgError } = await supabaseAdmin
+                .from('organizations')
+                .insert({
+                  name: '団体1',
+                  owner_id: userId,
+                })
+                .select('id')
+                .single();
+
+              if (createOrgError) throw createOrgError;
+              organizationId = createdOrg.id;
+
+              await supabaseAdmin.from('organization_members').upsert(
+                {
+                  organization_id: createdOrg.id,
+                  user_id: userId,
+                  role: 'owner',
+                },
+                { onConflict: 'organization_id,user_id' }
+              );
+            }
+          }
+
           await supabaseAdmin
             .from('subscriptions')
             .update({
               stripe_subscription_id: subscriptionId,
               stripe_customer_id: session.customer,
               plan_type: plan,
+              organization_id: organizationId,
               status: 'active',
               current_period_start: new Date(stripeSub.current_period_start * 1000).toISOString(),
               current_period_end: new Date(stripeSub.current_period_end * 1000).toISOString(),
               updated_at: new Date().toISOString(),
             })
             .eq('user_id', userId);
+
+          // ユーザーが店舗を持っていなければデフォルト店舗+ログインコードを自動作成
+          const { data: existingBranches } = await supabaseAdmin
+            .from('branches')
+            .select('id')
+            .eq('owner_id', userId)
+            .limit(1);
+
+          if (!existingBranches || existingBranches.length === 0) {
+            const branchId = crypto.randomUUID();
+            await supabaseAdmin.from('branches').insert({
+              id: branchId,
+              branch_code: 'S001',
+              branch_name: '店舗1',
+              password: '0000',
+              sales_target: 0,
+              status: 'active',
+              owner_id: userId,
+              organization_id: organizationId,
+              created_at: new Date().toISOString(),
+            });
+
+            // ログインコード生成
+            const { data: subData } = await supabaseAdmin
+              .from('subscriptions')
+              .select('id')
+              .eq('user_id', userId)
+              .single();
+
+            if (subData) {
+              for (let i = 0; i < 5; i++) {
+                const loginCode = generateLoginCode();
+                const { error: loginCodeError } = await supabaseAdmin.from('login_codes').insert({
+                  code: loginCode,
+                  branch_id: branchId,
+                  subscription_id: subData.id,
+                  created_by: userId,
+                  is_active: true,
+                  created_at: new Date().toISOString(),
+                });
+
+                if (!loginCodeError) break;
+                if (loginCodeError.code !== '23505') throw loginCodeError;
+              }
+            }
+          } else if (organizationId) {
+            await supabaseAdmin
+              .from('branches')
+              .update({ organization_id: organizationId })
+              .eq('owner_id', userId)
+              .is('organization_id', null);
+          }
         }
         break;
       }

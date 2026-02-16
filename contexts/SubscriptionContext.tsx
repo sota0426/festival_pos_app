@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useEffect } from 'react';
-import { Linking, Platform } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
 import { useAuth } from './AuthContext';
 import { supabase } from '../lib/supabase';
 import { setSyncEnabled } from '../lib/syncMode';
@@ -57,11 +57,28 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
     if (authState.status !== 'authenticated') return;
 
     try {
+      // セッション確認
+      const { data: { session } } = await supabase.auth.getSession();
+      console.log('[Checkout] Session exists:', !!session);
+      console.log('[Checkout] Access token (first 20 chars):', session?.access_token?.substring(0, 20));
+      if (!session) {
+        Alert.alert('エラー', 'セッションが切れました。再度ログインしてください。');
+        return;
+      }
+
       const { data, error } = await supabase.functions.invoke('create-checkout-session', {
         body: { plan: targetPlan },
       });
 
-      if (error) throw error;
+      if (error) {
+        // FunctionsHttpError の場合、レスポンスボディを取得
+        const context = (error as { context?: { json?: () => Promise<unknown> } })?.context;
+        if (context?.json) {
+          const errorBody = await context.json();
+          console.error('Edge Function error detail:', errorBody);
+        }
+        throw error;
+      }
       if (data?.url) {
         if (Platform.OS === 'web') {
           window.location.href = data.url;
@@ -71,6 +88,10 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     } catch (e) {
       console.error('Failed to create checkout session:', e);
+      Alert.alert(
+        'エラー',
+        'プラン変更の処理に失敗しました。しばらくしてからもう一度お試しください。'
+      );
     }
   };
 
@@ -90,6 +111,10 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     } catch (e) {
       console.error('Failed to create portal session:', e);
+      Alert.alert(
+        'エラー',
+        'お支払い管理画面の表示に失敗しました。しばらくしてからもう一度お試しください。'
+      );
     }
   };
 

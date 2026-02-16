@@ -15,7 +15,11 @@
       "Bash(wc:*)",
       "Bash(git -C /Users/iimorisouta/Desktop/festival_pos_app log --oneline -10)",
       "Bash(grep:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(supabase functions logs:*)",
+      "Bash(supabase db push:*)",
+      "Bash(supabase functions deploy:*)",
+      "Bash(supabase functions list:*)"
     ]
   }
 }

@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button, Input, Modal } from '../common';
-import { clearBranch, getStoreSettings, saveStoreSettings, getAdminPassword, saveAdminPassword, verifyAdminPassword, clearAllPendingTransactions } from '../../lib/storage';
+import { getStoreSettings, saveStoreSettings, saveAdminPassword, verifyAdminPassword, clearAllPendingTransactions } from '../../lib/storage';
 import { alertConfirm, alertNotify } from '../../lib/alertUtils';
 import type { Branch, PaymentMethodSettings } from '../../types/database';
 import { isSupabaseConfigured, supabase } from 'lib/supabase';
@@ -47,7 +47,6 @@ export const StoreHome = ({
     cashless: true,
     voucher: true,
   });
-  const [syncEnabled, setSyncEnabled] = useState(true);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -67,7 +66,6 @@ export const StoreHome = ({
       if (settings.payment_methods) {
         setPaymentMethods(settings.payment_methods);
       }
-      setSyncEnabled(settings.sync_enabled ?? true);
     };
     loadSettings();
   }, []);
@@ -85,12 +83,6 @@ export const StoreHome = ({
     setPaymentMethods(updated);
     const currentSettings = await getStoreSettings();
     await saveStoreSettings({ ...currentSettings, payment_methods: updated });
-  };
-
-  const handleSyncModeChange = async (enabled: boolean) => {
-    setSyncEnabled(enabled);
-    const currentSettings = await getStoreSettings();
-    await saveStoreSettings({ ...currentSettings, sync_enabled: enabled });
   };
 
   const resetPasswordForm = () => {
@@ -184,11 +176,8 @@ export const StoreHome = ({
     );
   };
 
-  const handleLogout = () => {
-    alertConfirm('ログアウト', 'ログアウトしますか？', async () => {
-      await clearBranch();
+  const handleBackToTop = () => {
       onLogout();
-    }, 'ログアウト');
   };
 
   return (
@@ -197,7 +186,7 @@ export const StoreHome = ({
         title={branch.branch_name}
         subtitle={`支店番号: ${branch.branch_code}`}
         rightElement={
-          <Button title="ログアウト" onPress={handleLogout} variant="secondary" size="sm" />
+          <Button title="トップ画面" onPress={handleBackToTop} variant="secondary" size="sm" />
         }
       />
 
@@ -301,40 +290,6 @@ export const StoreHome = ({
 
         {activeTab === 'settings' && (
           <View className="gap-4">
-            <Card>
-              <Text className="text-gray-900 text-lg font-bold mb-3">データ同期設定</Text>
-              <Text className="text-gray-500 text-sm mb-3">
-                非同期を選ぶとDB接続を停止し、端末内ローカルストレージのみで動作します。
-              </Text>
-              <View className="flex-row gap-3">
-                <TouchableOpacity
-                  onPress={() => handleSyncModeChange(true)}
-                  activeOpacity={0.7}
-                  className={`flex-1 p-3 rounded-xl border-2 ${
-                    syncEnabled ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'
-                  }`}
-                >
-                  <Text className={`text-center font-semibold ${syncEnabled ? 'text-blue-700' : 'text-gray-500'}`}>
-                    同期
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => handleSyncModeChange(false)}
-                  activeOpacity={0.7}
-                  className={`flex-1 p-3 rounded-xl border-2 ${
-                    !syncEnabled ? 'border-orange-500 bg-orange-50' : 'border-gray-200 bg-white'
-                  }`}
-                >
-                  <Text className={`text-center font-semibold ${!syncEnabled ? 'text-orange-700' : 'text-gray-500'}`}>
-                    非同期
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              <Text className="text-gray-400 text-xs mt-3">
-                ※ 将来、同期機能は有料オプション化予定です（現時点では実装準備のみ）。
-              </Text>
-            </Card>
-
             {/* Payment Method Settings */}
             <Card>
               <Text className="text-gray-900 text-lg font-bold mb-3">支払い設定</Text>
