@@ -154,7 +154,7 @@
 ### 2-3. APIキーの取得
 
 1. Stripeダッシュボード > **開発者 > APIキー**
-2. **シークレットキー** を控える（`STRIPE_TEST_KEY_PREFIX` または `STRIPE_LIVE_KEY_PREFIX` で始まる文字列）
+2. **シークレットキー** を控える
 
 > シークレットキーは絶対にフロントエンドのコードや `.env` に含めない。Edge Functions の環境変数としてのみ設定する。
 
@@ -199,13 +199,6 @@ supabase link --project-ref <PROJECT_REF>
 
 ### 3-3. 環境変数の設定
 
-```bash
-supabase secrets set STRIPE_SECRET_KEY=REMOVED_STRIPE_TEST_KEY
-supabase secrets set STRIPE_STORE_PRICE_ID=price_xxxxxxxxxxxxx
-supabase secrets set STRIPE_ORG_PRICE_ID=price_xxxxxxxxxxxxx
-supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxx
-supabase secrets set APP_URL=https://your-app-domain.com
-```
 
 | 変数名 | 値 | 取得元 |
 |--------|-----|--------|
