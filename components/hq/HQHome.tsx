@@ -2,13 +2,10 @@
 import { View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button } from '../common';
-import { clearBranch } from '../../lib/storage';
-import { alertConfirm } from '../../lib/alertUtils';
 
 interface HQHomeProps {
   onNavigateSales: () => void;
   onNavigateBranchInfo: () => void;
-  onNavigateManagementStore: () => void;
   onNavigatePresentation: () => void;
   onLogout: () => void;
 }
@@ -16,24 +13,15 @@ interface HQHomeProps {
 export const HQHome = ({
   onNavigateSales,
   onNavigateBranchInfo,
-  onNavigateManagementStore,
   onNavigatePresentation,
   onLogout,
 }: HQHomeProps) => {
-
-  const handleLogout = () => {
-    alertConfirm('ログアウト', 'ログアウトしますか？', async () => {
-      await clearBranch();
-      onLogout();
-    }, 'ログアウト');
-  };
-
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
       <Header
         title="管理画面"
         rightElement={
-          <Button title="ログアウト" onPress={handleLogout} size="sm" variant="secondary" />
+          <Button title="ホームに戻る" onPress={onLogout} size="sm" variant="secondary" />
         }
       />
 
@@ -52,15 +40,6 @@ export const HQHome = ({
             <Text className="text-white text-xl font-bold text-center">各店舗情報</Text>
             <Text className="text-cyan-100 text-center mt-1 text-sm">
               各店舗の報告書を一覧表示
-            </Text>
-          </Card>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={onNavigateManagementStore}>
-          <Card className="bg-purple-500 p-6">
-            <Text className="text-white text-xl font-bold text-center">模擬店管理</Text>
-            <Text className="text-purple-100 text-center mt-1 text-sm">
-              模擬店の追加・パスワード設定
             </Text>
           </Card>
         </TouchableOpacity>

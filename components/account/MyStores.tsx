@@ -1,15 +1,74 @@
-import { View, Text, TouchableOpacity, ScrollView, Alert, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useEffect, useCallback } from 'react';
 import * as Crypto from 'expo-crypto';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import * as DocumentPicker from 'expo-document-picker';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSubscription } from '../../contexts/SubscriptionContext';
 import { supabase } from '../../lib/supabase';
 import { getLoginCodesForUser, createLoginCode, regenerateLoginCode } from '../../lib/loginCode';
 import { alertNotify } from '../../lib/alertUtils';
-import { getBranch, saveBranch } from '../../lib/storage';
-import { Button, Card, Input, Modal } from '../common';
+import { clearBranch, getBranch, getMenuCategories, getMenus, saveBranch, saveMenuCategories, saveMenus } from '../../lib/storage';
+import { Button, Card, Input, Modal, Header } from '../common';
 import type { Branch, LoginCode } from '../../types/database';
+
+// ─── CSV utilities ───
+
+const CSV_HEADER = 'branch_code,branch_name,password,sales_target,status';
+
+const toCsvCell = (value: string | number): string => {
+  const text = String(value ?? '');
+  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+};
+
+const parseCsvLine = (line: string): string[] => {
+  const cells: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        cells.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+};
+
+type CsvImportRow = {
+  branch_code: string;
+  branch_name: string;
+  password: string;
+  sales_target: number;
+  status: 'active' | 'inactive';
+};
+
+type ImportPreview = {
+  newRows: CsvImportRow[];
+  updateRows: (CsvImportRow & { existingId: string })[];
+  errors: string[];
+};
+
+// ─── Component ───
 
 interface MyStoresProps {
   onBack: () => void;
@@ -18,7 +77,7 @@ interface MyStoresProps {
 
 export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   const { authState } = useAuth();
-  const { isFreePlan, maxStores } = useSubscription();
+  const { isFreePlan, isOrgPlan, maxStores } = useSubscription();
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loginCodes, setLoginCodes] = useState<Record<string, LoginCode>>({});
@@ -26,13 +85,24 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
   const [editingBranchName, setEditingBranchName] = useState('');
+  const [editingBranchPassword, setEditingBranchPassword] = useState('');
+  const [editingBranchStatus, setEditingBranchStatus] = useState<'active' | 'inactive'>('active');
   const [savingBranchName, setSavingBranchName] = useState(false);
+  const [deletingBranch, setDeletingBranch] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [showActionsModal, setShowActionsModal] = useState(false);
 
   const userId = authState.status === 'authenticated' ? authState.user.id : null;
   const subscriptionId =
     authState.status === 'authenticated' ? authState.subscription.id : null;
   const organizationId =
     authState.status === 'authenticated' ? authState.subscription.organization_id : null;
+
+  // ─── Data loading ───
 
   const loadData = useCallback(async () => {
     if (isFreePlan) {
@@ -46,7 +116,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     if (!userId) return;
     setLoading(true);
     try {
-      // ユーザーの店舗を取得
       const { data: branchData } = await supabase
         .from('branches')
         .select('*')
@@ -63,7 +132,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         setBranches(fallbackData ?? []);
       }
 
-      // ログインコードを取得
       const codes = await getLoginCodesForUser(userId);
       const codeMap: Record<string, LoginCode> = {};
       for (const code of codes) {
@@ -80,6 +148,13 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadData().finally(() => setRefreshing(false));
+  }, [loadData]);
+
+  // ─── Login code actions ───
 
   const handleCopyCode = async (code: string) => {
     try {
@@ -128,6 +203,8 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     }
   };
 
+  // ─── Branch code helpers ───
+
   const generateBranchCode = (existingBranches: Array<Pick<Branch, 'branch_code'>>): string => {
     const maxNumber = existingBranches.reduce((max, branch) => {
       const num = parseInt(branch.branch_code.replace('S', ''), 10);
@@ -160,6 +237,8 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     return data?.id ?? null;
   }, [subscriptionId, userId]);
 
+  // ─── Store CRUD ───
+
   const handleCreateStore = async () => {
     if (!userId) return;
     if (!isFreePlan && Number.isFinite(maxStores) && branches.length >= maxStores) {
@@ -187,6 +266,33 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
       const { error } = await supabase.from('branches').insert(newBranch);
       if (error) throw error;
 
+      // デフォルトカテゴリ/サンプルメニューを作成
+      const defaultCategoryId = Crypto.randomUUID();
+      const { error: categoryError } = await supabase.from('menu_categories').insert({
+        id: defaultCategoryId,
+        branch_id: newBranch.id,
+        category_name: 'フード',
+        sort_order: 0,
+      });
+      if (categoryError) throw categoryError;
+
+      const { error: menuError } = await supabase.from('menus').insert({
+        id: Crypto.randomUUID(),
+        branch_id: newBranch.id,
+        menu_name: 'サンプルメニュー',
+        price: 500,
+        menu_number: 101,
+        sort_order: 0,
+        category_id: defaultCategoryId,
+        stock_management: false,
+        stock_quantity: 0,
+        is_active: true,
+        is_show: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      if (menuError) throw menuError;
+
       if (!isFreePlan) {
         const activeSubId = await getActiveSubscriptionId();
         if (activeSubId) {
@@ -211,11 +317,15 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   const handleOpenRename = (branch: Branch) => {
     setEditingBranch(branch);
     setEditingBranchName(branch.branch_name);
+    setEditingBranchPassword(branch.password ?? '');
+    setEditingBranchStatus(branch.status ?? 'active');
   };
 
   const handleCloseRename = () => {
     setEditingBranch(null);
     setEditingBranchName('');
+    setEditingBranchPassword('');
+    setEditingBranchStatus('active');
     setSavingBranchName(false);
   };
 
@@ -230,177 +340,523 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
       alertNotify('入力エラー', '店舗名を入力してください');
       return;
     }
+    if (!editingBranchPassword.trim()) {
+      alertNotify('入力エラー', 'パスワードを入力してください');
+      return;
+    }
 
     setSavingBranchName(true);
     try {
       const storedBranch = await getBranch();
       if (isFreePlan) {
         if (!storedBranch) throw new Error('ローカル店舗データが見つかりません');
-        const nextBranch = { ...storedBranch, branch_name: nextName };
+        const nextBranch = {
+          ...storedBranch,
+          branch_name: nextName,
+          password: editingBranchPassword.trim(),
+          status: editingBranchStatus,
+        };
         await saveBranch(nextBranch);
         setBranches([nextBranch]);
       } else {
         const { data, error } = await supabase
           .from('branches')
-          .update({ branch_name: nextName })
+          .update({
+            branch_name: nextName,
+            password: editingBranchPassword.trim(),
+            status: editingBranchStatus,
+          })
           .eq('id', editingBranch.id)
           .eq('owner_id', userId)
-          .select('id, branch_name')
+          .select('id, branch_name, password, status')
           .single();
         if (error) throw error;
         if (!data) throw new Error('更新対象の店舗が見つかりません');
 
         setBranches((prev) =>
-          prev.map((b) => (b.id === editingBranch.id ? { ...b, branch_name: nextName } : b)),
+          prev.map((b) =>
+            b.id === editingBranch.id
+              ? {
+                  ...b,
+                  branch_name: nextName,
+                  password: editingBranchPassword.trim(),
+                  status: editingBranchStatus,
+                }
+              : b,
+          ),
         );
 
         if (
           storedBranch &&
           (storedBranch.id === editingBranch.id || storedBranch.branch_code === editingBranch.branch_code)
         ) {
-          await saveBranch({ ...storedBranch, branch_name: nextName });
+          await saveBranch({
+            ...storedBranch,
+            branch_name: nextName,
+            password: editingBranchPassword.trim(),
+            status: editingBranchStatus,
+          });
         }
       }
 
-      alertNotify('更新完了', '店舗名を変更しました');
+      alertNotify('更新完了', '店舗設定を更新しました');
       handleCloseRename();
     } catch (e) {
       console.error('Failed to rename store:', e);
-      const message = e instanceof Error ? e.message : '店舗名の変更に失敗しました';
+      const message = e instanceof Error ? e.message : '店舗設定の変更に失敗しました';
       alertNotify('エラー', message);
       setSavingBranchName(false);
     }
   };
 
+  const executeDeleteStore = async () => {
+    if (!editingBranch) return;
+    setDeletingBranch(true);
+    try {
+      const target = editingBranch;
+      const storedBranch = await getBranch();
+
+      if (isFreePlan) {
+        const allMenus = await getMenus();
+        const allCategories = await getMenuCategories();
+        await saveMenus(allMenus.filter((m) => m.branch_id !== target.id));
+        await saveMenuCategories(allCategories.filter((c) => c.branch_id !== target.id));
+        if (storedBranch?.id === target.id || storedBranch?.branch_code === target.branch_code) {
+          await clearBranch();
+        }
+        setBranches((prev) => prev.filter((b) => b.id !== target.id));
+      } else {
+        if (!userId) throw new Error('ログイン状態を確認できませんでした');
+        const { error } = await supabase
+          .from('branches')
+          .delete()
+          .eq('id', target.id)
+          .eq('owner_id', userId);
+        if (error) throw error;
+        if (storedBranch?.id === target.id || storedBranch?.branch_code === target.branch_code) {
+          await clearBranch();
+        }
+        setBranches((prev) => prev.filter((b) => b.id !== target.id));
+      }
+
+      setLoginCodes((prev) => {
+        const next = { ...prev };
+        delete next[target.id];
+        return next;
+      });
+
+      alertNotify('削除完了', `「${target.branch_name}」を削除しました`);
+      handleCloseRename();
+    } catch (e) {
+      console.error('Failed to delete store:', e);
+      const message = e instanceof Error ? e.message : '店舗の削除に失敗しました';
+      alertNotify('エラー', message);
+      setDeletingBranch(false);
+    } finally {
+      setDeletingBranch(false);
+    }
+  };
+
+  const handleDeleteStore = async () => {
+    if (!editingBranch) return;
+    const confirmed = await new Promise<boolean>((resolve) => {
+      const msg = `「${editingBranch.branch_name}」を削除します。関連するメニュー・履歴データも削除されます。続行しますか？`;
+      if (Platform.OS === 'web') {
+        resolve(window.confirm(msg));
+      } else {
+        Alert.alert(
+          '店舗削除',
+          msg,
+          [
+            { text: 'キャンセル', onPress: () => resolve(false), style: 'cancel' },
+            { text: '削除', onPress: () => resolve(true), style: 'destructive' },
+          ],
+        );
+      }
+    });
+    if (!confirmed) return;
+    await executeDeleteStore();
+  };
+
+  // ─── CSV Export ───
+
+  const buildCsv = (): string => {
+    const lines: string[] = [CSV_HEADER];
+    branches.forEach((b) => {
+      lines.push(
+        [
+          toCsvCell(b.branch_code),
+          toCsvCell(b.branch_name),
+          toCsvCell(b.password),
+          toCsvCell(b.sales_target),
+          toCsvCell(b.status),
+        ].join(',')
+      );
+    });
+    return `\uFEFF${lines.join('\n')}`;
+  };
+
+  const handleExportCsv = async () => {
+    if (branches.length === 0) {
+      alertNotify('CSV出力', '出力対象の店舗がありません');
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const csvContent = buildCsv();
+      const filename = `stores_${new Date().toISOString().slice(0, 10)}.csv`;
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        alertNotify('CSV出力', 'CSVをダウンロードしました');
+        return;
+      }
+
+      const baseDir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
+      if (!baseDir) throw new Error('保存先ディレクトリを取得できませんでした');
+      const fileUri = `${baseDir}${filename}`;
+      await FileSystem.writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: '店舗一覧CSVを共有' });
+      } else {
+        alertNotify('CSV出力', `CSVを保存しました: ${fileUri}`);
+      }
+    } catch (error: any) {
+      console.error('CSV export error:', error);
+      alertNotify('エラー', `CSV出力に失敗しました: ${error?.message ?? ''}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // ─── CSV Import ───
+
+  const parseImportCsv = (csvText: string): ImportPreview => {
+    const raw = csvText.replace(/^\uFEFF/, '');
+    const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    const errors: string[] = [];
+    const newRows: CsvImportRow[] = [];
+    const updateRows: (CsvImportRow & { existingId: string })[] = [];
+
+    if (lines.length < 2) {
+      errors.push('CSVにデータ行がありません');
+      return { newRows, updateRows, errors };
+    }
+
+    const headerCells = parseCsvLine(lines[0]).map((h) => h.toLowerCase().trim());
+    const colIndex = {
+      branch_code: headerCells.indexOf('branch_code'),
+      branch_name: headerCells.indexOf('branch_name'),
+      password: headerCells.indexOf('password'),
+      sales_target: headerCells.indexOf('sales_target'),
+      status: headerCells.indexOf('status'),
+    };
+
+    if (colIndex.branch_name === -1) {
+      errors.push('ヘッダーに branch_name 列が必要です');
+      return { newRows, updateRows, errors };
+    }
+    if (colIndex.password === -1) {
+      errors.push('ヘッダーに password 列が必要です');
+      return { newRows, updateRows, errors };
+    }
+
+    const existingMap = new Map(branches.map((b) => [b.branch_code, b]));
+    let nextCode = branches.length > 0
+      ? Math.max(...branches.map((b) => parseInt(b.branch_code.replace('S', ''), 10) || 0))
+      : 0;
+
+    for (let i = 1; i < lines.length; i++) {
+      const cells = parseCsvLine(lines[i]);
+      const rowNum = i + 1;
+
+      const branchName = colIndex.branch_name >= 0 ? (cells[colIndex.branch_name] ?? '').trim() : '';
+      const password = colIndex.password >= 0 ? (cells[colIndex.password] ?? '').trim() : '';
+      const salesTarget = colIndex.sales_target >= 0 ? parseInt(cells[colIndex.sales_target] ?? '0', 10) || 0 : 0;
+      const statusRaw = colIndex.status >= 0 ? (cells[colIndex.status] ?? 'active').trim().toLowerCase() : 'active';
+      const status: 'active' | 'inactive' = statusRaw === 'inactive' ? 'inactive' : 'active';
+      const branchCode = colIndex.branch_code >= 0 ? (cells[colIndex.branch_code] ?? '').trim() : '';
+
+      if (!branchName) {
+        errors.push(`${rowNum}行目: 店舗名が空です`);
+        continue;
+      }
+      if (!password) {
+        errors.push(`${rowNum}行目: パスワードが空です`);
+        continue;
+      }
+      if (salesTarget < 0) {
+        errors.push(`${rowNum}行目: 売上目標が不正です`);
+        continue;
+      }
+
+      const row: CsvImportRow = { branch_code: branchCode, branch_name: branchName, password, sales_target: salesTarget, status };
+
+      if (branchCode && existingMap.has(branchCode)) {
+        updateRows.push({ ...row, existingId: existingMap.get(branchCode)!.id });
+      } else {
+        if (!branchCode) {
+          nextCode++;
+          row.branch_code = `S${String(nextCode).padStart(3, '0')}`;
+        }
+        newRows.push(row);
+      }
+    }
+
+    return { newRows, updateRows, errors };
+  };
+
+  const handlePickCsv = async () => {
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.csv,text/csv';
+        input.onchange = async (e: any) => {
+          const file = e.target?.files?.[0];
+          if (!file) return;
+          const text: string = await file.text();
+          const preview = parseImportCsv(text);
+          setImportPreview(preview);
+          setShowImportModal(true);
+        };
+        input.click();
+        return;
+      }
+
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/csv', 'text/comma-separated-values', '*/*'],
+      });
+      if (result.canceled) return;
+
+      const asset = result.assets?.[0];
+      if (!asset?.uri) return;
+
+      const text = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'utf8' });
+      const preview = parseImportCsv(text);
+      setImportPreview(preview);
+      setShowImportModal(true);
+    } catch (error: any) {
+      console.error('CSV pick error:', error);
+      alertNotify('エラー', `CSVファイルの読み込みに失敗しました: ${error?.message ?? ''}`);
+    }
+  };
+
+  const handleImportConfirm = async () => {
+    if (!importPreview || !userId) return;
+
+    setImporting(true);
+    try {
+      for (const row of importPreview.newRows) {
+        const branch: Branch = {
+          id: Crypto.randomUUID(),
+          branch_code: row.branch_code,
+          branch_name: row.branch_name,
+          password: row.password,
+          sales_target: row.sales_target,
+          status: row.status,
+          created_at: new Date().toISOString(),
+          owner_id: userId,
+          organization_id: organizationId,
+        };
+
+        const { error } = await supabase.from('branches').insert(branch);
+        if (error) throw error;
+
+        // 新規店舗にログインコードを自動生成
+        const activeSubId = await getActiveSubscriptionId();
+        if (activeSubId) {
+          const code = await createLoginCode(branch.id, activeSubId, userId);
+          if (code) {
+            setLoginCodes((prev) => ({ ...prev, [branch.id]: code }));
+          }
+        }
+      }
+
+      for (const row of importPreview.updateRows) {
+        const fields = {
+          branch_name: row.branch_name,
+          password: row.password,
+          sales_target: row.sales_target,
+          status: row.status,
+        };
+
+        const { error } = await supabase.from('branches').update(fields).eq('id', row.existingId);
+        if (error) throw error;
+      }
+
+      setShowImportModal(false);
+      setImportPreview(null);
+      await loadData();
+      alertNotify(
+        'インポート完了',
+        `新規 ${importPreview.newRows.length}件、更新 ${importPreview.updateRows.length}件 を処理しました`
+      );
+    } catch (error: any) {
+      console.error('Import error:', error);
+      alertNotify('エラー', `インポートに失敗しました: ${error?.message ?? ''}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // ─── Render helpers ───
+
+  const renderStoreItem = ({ item }: { item: Branch }) => {
+    const code = loginCodes[item.id];
+    return (
+      <Card className={`mb-2 px-3 py-2 border ${item.status === 'active' ? 'border-blue-200 bg-white' : 'border-gray-200 bg-gray-100 opacity-60'}`}>
+        <View className="flex-row items-start justify-between">
+          {/* Left: store info */}
+          <View className="flex-1 pr-2">
+            <View className="flex-row items-center gap-1 mb-1">
+              <View className="px-2 py-0.5 rounded bg-blue-100">
+                <Text className="text-[10px] font-bold text-blue-700">{item.branch_code}</Text>
+              </View>
+              <View className={`px-2 py-0.5 rounded ${item.status === 'active' ? 'bg-green-100' : 'bg-gray-200'}`}>
+                <Text className={`text-[10px] font-bold ${item.status === 'active' ? 'text-green-700' : 'text-gray-500'}`}>
+                  {item.status === 'active' ? '稼働中' : '停止中'}
+                </Text>
+              </View>
+            </View>
+            <Text className="text-base font-semibold text-gray-900" numberOfLines={1}>
+              {item.branch_name}
+            </Text>
+            <View className="flex-row items-center gap-3 mt-1">
+              <Text className="text-gray-500 text-xs">PW: {item.password}</Text>
+              <Text className="text-blue-600 font-bold text-xs">目標 {item.sales_target.toLocaleString()}円</Text>
+            </View>
+            {/* Login code inline */}
+            {!isFreePlan && (
+              <View className="flex-row items-center gap-2 mt-1.5">
+                <Text className="text-gray-400 text-[10px]">ログインコード:</Text>
+                {code ? (
+                  <View className="flex-row items-center gap-1">
+                    <Text className="text-xs font-bold tracking-[3px] text-gray-700">{code.code}</Text>
+                    <TouchableOpacity
+                      onPress={() => handleCopyCode(code.code)}
+                      className="px-1.5 py-0.5 bg-blue-50 rounded"
+                    >
+                      <Text className="text-blue-600 text-[10px] font-medium">
+                        {copiedCode === code.code ? '済' : 'コピー'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleRegenerateCode(code)}
+                      className="px-1.5 py-0.5 bg-gray-100 rounded"
+                    >
+                      <Text className="text-gray-500 text-[10px] font-medium">再生成</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => handleCreateCode(item.id)}
+                    className="px-2 py-0.5 bg-blue-50 rounded"
+                  >
+                    <Text className="text-blue-600 text-[10px] font-medium">生成</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </View>
+          {/* Right: action buttons */}
+          <View className="items-end gap-1">
+            <TouchableOpacity
+              onPress={() => {
+                if (item.status === 'inactive') {
+                  alertNotify('停止中の店舗', '停止中の店舗には入れません。店舗設定で「稼働中」に変更してください。');
+                  return;
+                }
+                onEnterStore(item);
+              }}
+              activeOpacity={0.8}
+              className={`px-3 py-1.5 rounded ${item.status === 'active' ? 'bg-green-500' : 'bg-gray-400'}`}
+            >
+              <Text className="text-white text-xs font-semibold">店舗に入る</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => handleOpenRename(item)}
+              className="px-2 py-1 bg-blue-50 rounded"
+            >
+              <Text className="text-blue-600 text-xs font-medium">店舗設定</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Card>
+    );
+  };
+
+  // ─── Main render ───
+
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
-      <View className="flex-row items-center p-4 border-b border-gray-200">
-        <TouchableOpacity onPress={onBack} className="p-2">
-          <Text className="text-blue-600">&larr; 戻る</Text>
-        </TouchableOpacity>
-        <Text className="text-lg font-bold text-gray-900 ml-2">店舗管理</Text>
-      </View>
-
-      <ScrollView contentContainerClassName="p-4 gap-4">
-        {loading ? (
-          <Text className="text-gray-500 text-center py-8">読み込み中...</Text>
-        ) : branches.length === 0 ? (
-          <Card className="bg-white p-6">
-            <Text className="text-gray-500 text-center mb-4">
-              まだ店舗がありません
-            </Text>
-            <Text className="text-gray-400 text-center text-sm">
-              {isFreePlan
-                ? '無料プランでは1店舗をローカルで利用できます。\n有料プランにアップグレードすると、DB連携とログインコードが利用可能に。'
-                : '「店舗に入る」から新しい店舗を登録してください。'}
-            </Text>
+      <Header
+        title="店舗管理"
+        subtitle={`登録済み: ${branches.length}店舗`}
+        showBack
+        onBack={onBack}
+        rightElement={
+          <View className="flex-row gap-1">
             {!isFreePlan && (
+              <Button title="+ 店舗追加" onPress={handleCreateStore} size="sm" />
+            )}
+            {isOrgPlan && (
               <TouchableOpacity
-                onPress={handleCreateStore}
-                className="mt-5 bg-blue-600 rounded-lg py-3 items-center"
-                activeOpacity={0.8}
+                onPress={() => setShowActionsModal(true)}
+                className="w-9 h-9 bg-gray-100 rounded-lg items-center justify-center"
+                activeOpacity={0.7}
               >
-                <Text className="text-white font-semibold">初期店舗を作成する</Text>
+                <Text className="text-gray-700 text-lg font-bold leading-none">☰</Text>
               </TouchableOpacity>
             )}
-          </Card>
-        ) : (
-          <>
-            {!isFreePlan && (
-              <TouchableOpacity
-                onPress={handleCreateStore}
-                className="bg-blue-600 rounded-lg py-3 items-center"
-                activeOpacity={0.8}
-              >
-                <Text className="text-white font-semibold">店舗を追加</Text>
-              </TouchableOpacity>
-            )}
-            {branches.map((branch) => {
-              const code = loginCodes[branch.id];
-              return (
-                <Card key={branch.id} className="bg-white p-4">
-                  <View className="flex-row justify-between items-start mb-3">
-                    <View>
-                      <Text className="text-xs text-gray-400">
-                        {branch.branch_code}
-                      </Text>
-                      <Text className="text-lg font-bold text-gray-900">
-                        {branch.branch_name}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => onEnterStore(branch)}
-                      activeOpacity={0.8}
-                      className="bg-green-500 rounded-lg px-4 py-2"
-                    >
-                      <Text className="text-white font-semibold text-sm">
-                        店舗に入る
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View className="mb-3">
-                    <TouchableOpacity
-                      onPress={() => handleOpenRename(branch)}
-                      activeOpacity={0.8}
-                      className="self-start bg-gray-100 rounded px-3 py-1.5"
-                    >
-                      <Text className="text-gray-700 text-xs font-semibold">店舗名変更</Text>
-                    </TouchableOpacity>
-                  </View>
+          </View>
+        }
+      />
 
-                  {/* ログインコード */}
-                  {!isFreePlan && (
-                    <View className="bg-gray-50 rounded-lg p-3">
-                      <Text className="text-xs text-gray-500 mb-1">
-                        ログインコード
-                      </Text>
-                      {code ? (
-                        <View className="flex-row items-center justify-between">
-                          <Text className="text-xl font-bold tracking-[6px] text-gray-800">
-                            {code.code}
-                          </Text>
-                          <View className="flex-row gap-2">
-                            <TouchableOpacity
-                              onPress={() => handleCopyCode(code.code)}
-                              className="bg-blue-100 rounded px-3 py-1.5"
-                            >
-                              <Text className="text-blue-700 text-xs font-semibold">
-                                {copiedCode === code.code ? 'コピー済' : 'コピー'}
-                              </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={() => handleRegenerateCode(code)}
-                              className="bg-gray-200 rounded px-3 py-1.5"
-                            >
-                              <Text className="text-gray-600 text-xs font-semibold">
-                                再生成
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      ) : (
-                        <TouchableOpacity
-                          onPress={() => handleCreateCode(branch.id)}
-                          className="bg-blue-500 rounded-lg py-2 items-center"
-                        >
-                          <Text className="text-white font-semibold text-sm">
-                            コードを生成
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  )}
-                </Card>
-              );
-            })}
-          </>
-        )}
-      </ScrollView>
+      {loading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" />
+          <Text className="text-gray-500 mt-2">読み込み中...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={branches}
+          renderItem={renderStoreItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ padding: 16 }}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+          }
+          ListEmptyComponent={
+            <Card className="bg-white p-6">
+              <Text className="text-gray-500 text-center mb-4">
+                まだ店舗がありません
+              </Text>
+              <Text className="text-gray-400 text-center text-sm">
+                {isFreePlan
+                  ? '無料プランでは1店舗をローカルで利用できます。\n有料プランにアップグレードすると、DB連携とログインコードが利用可能に。'
+                  : '上部の「+ 店舗追加」ボタンから新しい店舗を登録してください。'}
+              </Text>
+            </Card>
+          }
+        />
+      )}
 
+      {/* Rename modal */}
       <Modal
         visible={!!editingBranch}
         onClose={handleCloseRename}
-        title="店舗名の変更"
+        title="店舗設定"
       >
         <Input
           label="店舗名"
@@ -408,6 +864,46 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           onChangeText={setEditingBranchName}
           placeholder="店舗名を入力"
         />
+        <Input
+          label="パスワード"
+          value={editingBranchPassword}
+          onChangeText={setEditingBranchPassword}
+          placeholder="4桁以上を推奨"
+        />
+        <View className="mt-2">
+          <Text className="text-gray-700 font-medium mb-2">稼働状態</Text>
+          <View className="flex-row gap-2">
+            <TouchableOpacity
+              onPress={() => setEditingBranchStatus('active')}
+              className={`flex-1 px-3 py-2 rounded-lg border ${
+                editingBranchStatus === 'active' ? 'bg-green-500 border-green-500' : 'bg-white border-gray-300'
+              }`}
+              activeOpacity={0.8}
+            >
+              <Text className={`text-center font-medium ${editingBranchStatus === 'active' ? 'text-white' : 'text-gray-700'}`}>
+                稼働中
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setEditingBranchStatus('inactive')}
+              className={`flex-1 px-3 py-2 rounded-lg border ${
+                editingBranchStatus === 'inactive' ? 'bg-gray-600 border-gray-600' : 'bg-white border-gray-300'
+              }`}
+              activeOpacity={0.8}
+            >
+              <Text className={`text-center font-medium ${editingBranchStatus === 'inactive' ? 'text-white' : 'text-gray-700'}`}>
+                停止中
+              </Text>
+            </TouchableOpacity>
+          </View>
+          {editingBranchStatus === 'inactive' && (
+            <View className="mt-2 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
+              <Text className="text-yellow-700 text-xs">
+                停止中にすると「店舗に入る」「支店番号+パスワードログイン」「ログインコードログイン」が利用できなくなります。
+              </Text>
+            </View>
+          )}
+        </View>
         <View className="flex-row gap-3 mt-3">
           <View className="flex-1">
             <Button title="キャンセル" onPress={handleCloseRename} variant="secondary" />
@@ -417,10 +913,150 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
               title="保存"
               onPress={handleRenameStore}
               loading={savingBranchName}
-              disabled={!editingBranchName.trim()}
+              disabled={!editingBranchName.trim() || !editingBranchPassword.trim()}
             />
           </View>
         </View>
+        <View className="mt-3">
+          <Button
+            title={deletingBranch ? '削除中...' : '店舗を削除'}
+            onPress={handleDeleteStore}
+            variant="danger"
+            loading={deletingBranch}
+            disabled={deletingBranch}
+          />
+        </View>
+      </Modal>
+
+      {/* Store actions modal (hamburger menu) */}
+      <Modal
+        visible={showActionsModal}
+        onClose={() => setShowActionsModal(false)}
+        title="店舗操作"
+      >
+        <View className="gap-3">
+          <TouchableOpacity
+            onPress={() => {
+              setShowActionsModal(false);
+              handlePickCsv();
+            }}
+            className="flex-row items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3"
+            activeOpacity={0.7}
+          >
+            <Text className="text-lg">📥</Text>
+            <View className="flex-1">
+              <Text className="text-green-800 font-semibold text-sm">CSV一括登録</Text>
+              <Text className="text-green-600 text-xs">CSVファイルから店舗を一括登録・更新</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => {
+              setShowActionsModal(false);
+              handleExportCsv();
+            }}
+            disabled={exporting || branches.length === 0}
+            className={`flex-row items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 ${
+              exporting || branches.length === 0 ? 'opacity-50' : ''
+            }`}
+            activeOpacity={0.7}
+          >
+            <Text className="text-lg">📤</Text>
+            <View className="flex-1">
+              <Text className="text-blue-800 font-semibold text-sm">
+                {exporting ? 'CSV出力中...' : 'CSV一括ダウンロード'}
+              </Text>
+              <Text className="text-blue-600 text-xs">全店舗情報をCSVファイルで出力</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      {/* CSV Import Preview modal */}
+      <Modal
+        visible={showImportModal}
+        onClose={() => {
+          setShowImportModal(false);
+          setImportPreview(null);
+        }}
+        title="CSVインポート確認"
+      >
+        {importPreview && (
+          <ScrollView style={{ maxHeight: 400 }}>
+            {importPreview.errors.length > 0 && (
+              <View className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3">
+                <Text className="text-red-700 font-semibold mb-1">エラー ({importPreview.errors.length}件)</Text>
+                {importPreview.errors.map((err, i) => (
+                  <Text key={i} className="text-red-600 text-sm">{err}</Text>
+                ))}
+              </View>
+            )}
+
+            {importPreview.newRows.length > 0 && (
+              <View className="mb-4">
+                <Text className="text-green-700 font-semibold mb-2">
+                  新規登録 ({importPreview.newRows.length}件)
+                </Text>
+                {importPreview.newRows.map((row, i) => (
+                  <View key={`new-${i}`} className="flex-row items-center justify-between bg-green-50 rounded-lg px-3 py-2 mb-1">
+                    <View>
+                      <Text className="text-gray-900 font-medium">{row.branch_code} {row.branch_name}</Text>
+                      <Text className="text-gray-500 text-xs">目標: {row.sales_target.toLocaleString()}円</Text>
+                    </View>
+                    <View className={`px-2 py-0.5 rounded-full ${row.status === 'active' ? 'bg-green-200' : 'bg-gray-200'}`}>
+                      <Text className="text-xs">{row.status === 'active' ? '稼働' : '停止'}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {importPreview.updateRows.length > 0 && (
+              <View className="mb-4">
+                <Text className="text-blue-700 font-semibold mb-2">
+                  更新 ({importPreview.updateRows.length}件)
+                </Text>
+                {importPreview.updateRows.map((row, i) => (
+                  <View key={`upd-${i}`} className="flex-row items-center justify-between bg-blue-50 rounded-lg px-3 py-2 mb-1">
+                    <View>
+                      <Text className="text-gray-900 font-medium">{row.branch_code} {row.branch_name}</Text>
+                      <Text className="text-gray-500 text-xs">目標: {row.sales_target.toLocaleString()}円</Text>
+                    </View>
+                    <View className={`px-2 py-0.5 rounded-full ${row.status === 'active' ? 'bg-green-200' : 'bg-gray-200'}`}>
+                      <Text className="text-xs">{row.status === 'active' ? '稼働' : '停止'}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {importPreview.newRows.length === 0 && importPreview.updateRows.length === 0 && importPreview.errors.length === 0 && (
+              <Text className="text-gray-500 text-center py-4">処理対象のデータがありません</Text>
+            )}
+
+            <View className="flex-row gap-3 mt-4">
+              <View className="flex-1">
+                <Button
+                  title="キャンセル"
+                  onPress={() => {
+                    setShowImportModal(false);
+                    setImportPreview(null);
+                  }}
+                  variant="secondary"
+                />
+              </View>
+              <View className="flex-1">
+                <Button
+                  title="インポート実行"
+                  onPress={handleImportConfirm}
+                  loading={importing}
+                  disabled={importing || (importPreview.newRows.length === 0 && importPreview.updateRows.length === 0)}
+                  variant="success"
+                />
+              </View>
+            </View>
+          </ScrollView>
+        )}
       </Modal>
     </SafeAreaView>
   );

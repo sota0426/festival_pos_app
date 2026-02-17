@@ -20,7 +20,6 @@ import { createZipFromTextFiles, uint8ArrayToBase64 } from '../../lib/zip';
 import type { Branch, BranchSales, BranchVisitors, SalesAggregation } from '../../types/database';
 
 interface HQDashboardProps {
-  onNavigateToBranches: () => void;
   onNavigateToBranchInfo: (branchId?: string) => void;
   onBack: () => void;
 }
@@ -105,7 +104,7 @@ const toCsvCell = (value: string | number): string => {
   return `"${text.replace(/"/g, '""')}"`;
 };
 
-export const HQDashboard = ({ onNavigateToBranches, onNavigateToBranchInfo, onBack }: HQDashboardProps) => {
+export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps) => {
   const [activeTab, setActiveTab] = useState<DashboardTab>('dashboard');
   const [resultPanelIndex, setResultPanelIndex] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -761,7 +760,6 @@ export const HQDashboard = ({ onNavigateToBranches, onNavigateToBranchInfo, onBa
                   <Text className="text-lg font-bold text-gray-900">支店別売上</Text>
                   <View className="flex-row gap-2">
                     <Button title="各店舗情報" onPress={() => onNavigateToBranchInfo()} size="sm" variant="primary" />
-                    <Button title="支店管理" onPress={onNavigateToBranches} size="sm" variant="secondary" />
                   </View>
                 </View>
                 {branchSales.map((branch) => (

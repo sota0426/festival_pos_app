@@ -114,6 +114,9 @@ export const validateLoginCode = async (
     }
     return { valid: false, reason: fnError ? 'server_error' : 'invalid' };
   }
+  if (branch.status === 'inactive') {
+    return { valid: false, reason: 'invalid' };
+  }
 
   return { valid: true, branch, loginCode };
 };

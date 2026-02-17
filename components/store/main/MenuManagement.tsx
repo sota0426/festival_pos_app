@@ -1137,8 +1137,8 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     if (uncategorized.length > 0) {
       sections.push({
         id: 'uncategorized',
-        title: 'その他',
-        categoryCode: '0',
+        title: 'フード',
+        categoryCode: '1',
         visual: UNCATEGORIZED_VISUAL,
         menus: uncategorized,
       });
@@ -1406,12 +1406,13 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           viewMode === 'menus' ? (
             <View className="flex-row gap-1">
               <Button title="+ メニュー追加" onPress={() => withMenuRestrictionCheck('menu_add', () => setShowAddModal(true))} size="sm" />
-              <Button
-                title="▼"
+              <TouchableOpacity
                 onPress={() => setShowMenuActionsModal(true)}
-                size="sm"
-                variant="secondary"
-              />
+                className="w-9 h-9 bg-gray-100 rounded-lg items-center justify-center"
+                activeOpacity={0.7}
+              >
+                <Text className="text-gray-700 text-lg font-bold leading-none">☰</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <Button title="+ カテゴリ追加" onPress={() => { setCategoryName(''); setShowCategoryModal(true); }} size="sm" />
@@ -1878,26 +1879,42 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         title="メニュー操作"
       >
         <View className="gap-3">
-          <Button
-            title="CSV登録"
+          <TouchableOpacity
             onPress={() => {
               setShowMenuActionsModal(false);
               withMenuRestrictionCheck('menu_add', handlePickMenuCsv);
             }}
-            variant="success"
-          />
-          <Button
-            title={exporting ? 'CSV出力中...' : 'CSV出力'}
+            className="flex-row items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3"
+            activeOpacity={0.7}
+          >
+            <Text className="text-lg">📥</Text>
+            <View className="flex-1">
+              <Text className="text-green-800 font-semibold text-sm">CSV一括登録</Text>
+              <Text className="text-green-600 text-xs">CSVファイルからメニューを一括登録</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
             onPress={() => {
               setShowMenuActionsModal(false);
               handleExportMenuCsv();
             }}
-            variant="secondary"
             disabled={exporting || menus.length === 0}
-            loading={exporting}
-          />
-          <Button
-            title="メニュー全削除"
+            className={`flex-row items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 ${
+              exporting || menus.length === 0 ? 'opacity-50' : ''
+            }`}
+            activeOpacity={0.7}
+          >
+            <Text className="text-lg">📤</Text>
+            <View className="flex-1">
+              <Text className="text-blue-800 font-semibold text-sm">
+                {exporting ? 'CSV出力中...' : 'CSV一括ダウンロード'}
+              </Text>
+              <Text className="text-blue-600 text-xs">全メニュー情報をCSVファイルで出力</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
             onPress={() => {
               setShowMenuActionsModal(false);
               withMenuRestrictionCheck('menu_delete', () => {
@@ -1906,8 +1923,15 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                 setShowDeleteAllModal(true);
               });
             }}
-            variant="danger"
-          />
+            className="flex-row items-center gap-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3"
+            activeOpacity={0.7}
+          >
+            <Text className="text-lg">🗑️</Text>
+            <View className="flex-1">
+              <Text className="text-red-800 font-semibold text-sm">メニュー全削除</Text>
+              <Text className="text-red-600 text-xs">登録済みのメニューをすべて削除</Text>
+            </View>
+          </TouchableOpacity>
         </View>
       </Modal>
 

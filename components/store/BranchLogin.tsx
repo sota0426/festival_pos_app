@@ -3,8 +3,8 @@ import { View, Text, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Input, Card } from '../common';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { saveBranch, getBranch, clearBranch } from '../../lib/storage';
-import type { Branch } from '../../types/database';
+import { saveBranch, getBranch, clearBranch, getMenus, saveMenus, getMenuCategories, saveMenuCategories } from '../../lib/storage';
+import type { Branch, Menu, MenuCategory } from '../../types/database';
 
 interface BranchLoginProps {
   onLoginSuccess: (branch: Branch) => void;
@@ -118,6 +118,12 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
         setError('この支店番号は登録されていません');
         return;
       }
+      if (data.status === 'inactive') {
+        setError('この店舗は停止中のためログインできません');
+        setFoundBranch(null);
+        setIsNewBranch(false);
+        return;
+      }
 
       setFoundBranch(data);
       setIsNewBranch(false);
@@ -133,6 +139,11 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
     if (!foundBranch) return;
 
     setSubmitted(true);
+
+    if (foundBranch.status === 'inactive') {
+      setError('この店舗は停止中のためログインできません');
+      return;
+    }
 
     if (password !== foundBranch.password) {
       setError('パスワードが正しくありません');
@@ -172,6 +183,47 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
         status: 'active',
         created_at: new Date().toISOString(),
       };
+
+      // ローカル用デフォルトカテゴリ/サンプルメニューを作成
+      let defaultCategoryId = `cat-${Date.now()}`;
+      const nowIso = new Date().toISOString();
+      const currentCategories = await getMenuCategories();
+      const existingCategory = currentCategories.find(
+        (c) => c.branch_id === newBranch.id && c.category_name === 'フード',
+      );
+      if (!existingCategory) {
+        const defaultCategory: MenuCategory = {
+          id: defaultCategoryId,
+          branch_id: newBranch.id,
+          category_name: 'フード',
+          sort_order: 0,
+          created_at: nowIso,
+        };
+        await saveMenuCategories([...currentCategories, defaultCategory]);
+      } else {
+        defaultCategoryId = existingCategory.id;
+      }
+
+      const currentMenus = await getMenus();
+      const menuExists = currentMenus.some((m) => m.branch_id === newBranch.id);
+      if (!menuExists) {
+        const sampleMenu: Menu = {
+          id: `menu-${Date.now()}`,
+          branch_id: newBranch.id,
+          menu_name: 'サンプルメニュー',
+          price: 500,
+          menu_number: 101,
+          sort_order: 0,
+          category_id: defaultCategoryId,
+          stock_management: false,
+          stock_quantity: 0,
+          is_active: true,
+          is_show: true,
+          created_at: nowIso,
+          updated_at: nowIso,
+        };
+        await saveMenus([...currentMenus, sampleMenu]);
+      }
 
       await saveBranch(newBranch);
       onLoginSuccess(newBranch);

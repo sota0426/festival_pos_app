@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Card, Header, Modal } from '../../common';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
-import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings, getMenuCategories } from '../../../lib/storage';
+import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings, getMenuCategories, saveMenuCategories } from '../../../lib/storage';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
 import type { Branch, Menu, MenuCategory, CartItem, PendingTransaction, PaymentMethodSettings } from '../../../types/database';
 import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
@@ -47,8 +47,9 @@ export const Register = ({
 
 const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const isMobile = width < 768;
+  const discountModalContentMaxHeight = Math.max(260, Math.floor(height *  0.9));
 
   const scrollRef = useRef<ScrollView>(null)
   const scrollY = useRef(0);
@@ -57,14 +58,57 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
   const fetchMenus = useCallback(async () => {
     try {
       const localMenus = await getMenus();
+      const localCategories = await getMenuCategories();
+
+      if (isSupabaseConfigured()) {
+        try {
+          const [
+            { data: remoteMenus, error: menuError },
+            { data: remoteCategories, error: categoryError },
+          ] = await Promise.all([
+            supabase
+              .from('menus')
+              .select('*')
+              .eq('branch_id', branch.id)
+              .eq('is_active', true)
+              .order('sort_order', { ascending: true, nullsFirst: false })
+              .order('created_at', { ascending: true }),
+            supabase
+              .from('menu_categories')
+              .select('*')
+              .eq('branch_id', branch.id)
+              .order('sort_order', { ascending: true }),
+          ]);
+
+          if (menuError) throw menuError;
+          if (categoryError) throw categoryError;
+
+          const branchMenus = (remoteMenus ?? []).filter((m) => m.is_show !== false);
+          const branchCategories = (remoteCategories ?? []).sort((a, b) => a.sort_order - b.sort_order);
+
+          // 同期有効時はDB結果をローカルにも反映して次回起動を高速化
+          const otherMenus = localMenus.filter((m) => m.branch_id !== branch.id);
+          const otherCategories = localCategories.filter((c) => c.branch_id !== branch.id);
+          await saveMenus([...otherMenus, ...(remoteMenus ?? [])]);
+          await saveMenuCategories([...otherCategories, ...(remoteCategories ?? [])]);
+
+          setMenus(sortMenus(branchMenus));
+          setCategories(branchCategories);
+          return;
+        } catch (remoteError) {
+          console.error('Error fetching menus from Supabase, fallback to local:', remoteError);
+        }
+      }
+
       const branchMenus = localMenus.filter(
         (m) => m.branch_id === branch.id && m.is_active && m.is_show !== false,
       );
-      setMenus(sortMenus(branchMenus));
+      const branchCategories = localCategories
+        .filter((c) => c.branch_id === branch.id)
+        .sort((a, b) => a.sort_order - b.sort_order);
 
-      const localCategories = await getMenuCategories();
-      const branchCategories = localCategories.filter((c) => c.branch_id === branch.id);
-      setCategories(branchCategories.sort((a, b) => a.sort_order - b.sort_order));
+      setMenus(sortMenus(branchMenus));
+      setCategories(branchCategories);
     } catch (error) {
       console.error('Error fetching menus:', error);
     } finally {
@@ -712,45 +756,54 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
             key={item.menu_id}
             className="py-3 border-b border-gray-100"
           >
-            <View className="flex-row items-center justify-between">
-              <TouchableOpacity className="flex-1 mr-2" onLongPress={() => openDiscountModal(item.menu_id)}>
-                <Text className="text-gray-900 font-medium text-xl" numberOfLines={1}>
-                  {item.menu_name}
-                </Text>
-                <Text className="text-gray-500 text-sm">
+            <View className="flex-row items-start">
+              <View className="flex-1 min-w-0 pr-2">
+                <TouchableOpacity onLongPress={() => openDiscountModal(item.menu_id)} activeOpacity={0.8}>
+                  <Text
+                    className={`text-gray-900 font-semibold leading-5 ${isMobile ? 'text-base' : 'text-lg'}`}
+                    numberOfLines={2}
+                  >
+                    {item.menu_name}
+                  </Text>
+                </TouchableOpacity>
+
+                <Text className="text-gray-500 text-xs mt-1">
                   @{item.unit_price.toLocaleString()}円
                   {item.discount > 0 && (
-                    <Text className="text-red-500 "> -{item.discount.toLocaleString()}円</Text>
+                    <Text className="text-red-500"> -{item.discount.toLocaleString()}円</Text>
                   )}
                 </Text>
-              </TouchableOpacity>
 
-              <View className="flex-row items-center">
-                <TouchableOpacity
-                  onPress={() => updateCartItemQuantity(item.menu_id, -1)}
-                  className="w-9 h-9 bg-gray-200 rounded items-center justify-center"
-                >
-                  <Text className="text-gray-600 font-bold text-lg">-</Text>
-                </TouchableOpacity>
-                <Text className="w-10 text-center font-semibold text-lg">{item.quantity}</Text>
-                <TouchableOpacity
-                  onPress={() => updateCartItemQuantity(item.menu_id, 1)}
-                  className="w-9 h-9 bg-gray-200 rounded items-center justify-center"
-                >
-                  <Text className="text-gray-600 font-bold text-lg">+</Text>
-                </TouchableOpacity>
+                <View className="flex-row items-center mt-2">
+                  <TouchableOpacity
+                    onPress={() => updateCartItemQuantity(item.menu_id, -1)}
+                    className={`bg-gray-200 rounded items-center justify-center ${isMobile ? 'w-7 h-7' : 'w-8 h-8'}`}
+                  >
+                    <Text className={`text-gray-600 font-bold ${isMobile ? 'text-sm' : 'text-base'}`}>-</Text>
+                  </TouchableOpacity>
+                  <Text className={`text-center font-semibold ${isMobile ? 'w-8 text-sm' : 'w-9 text-base'}`}>
+                    {item.quantity}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => updateCartItemQuantity(item.menu_id, 1)}
+                    className={`bg-gray-200 rounded items-center justify-center ${isMobile ? 'w-7 h-7' : 'w-8 h-8'}`}
+                  >
+                    <Text className={`text-gray-600 font-bold ${isMobile ? 'text-sm' : 'text-base'}`}>+</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
 
-              <Text className="w-20 text-right font-semibold text-gray-900">
-                {item.subtotal.toLocaleString()}円
-              </Text>
-
-              <TouchableOpacity
-                onPress={() => removeFromCart(item.menu_id)}
-                className="ml-2 p-2"
-            >
-              <Text className="text-red-500 text-lg">×</Text>
-            </TouchableOpacity>
+              <View className="items-end justify-start pl-1">
+                <Text className={`font-semibold text-gray-900 ${isMobile ? 'text-sm' : 'text-base'}`}>
+                  {item.subtotal.toLocaleString()}円
+                </Text>
+                <TouchableOpacity
+                  onPress={() => removeFromCart(item.menu_id)}
+                  className={`items-center justify-center ${isMobile ? 'w-7 h-7 mt-1' : 'w-8 h-8 mt-1'}`}
+                >
+                  <Text className={`text-red-500 ${isMobile ? 'text-base' : 'text-lg'}`}>×</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         ))}
@@ -1015,6 +1068,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
   const discountTargetItem = cart.find((i) => i.menu_id === discountTargetMenuId);
   const discountNum = parseInt(discountAmount, 10) || 0;
+  const isCompactDiscountModal = isMobile;
 
   const discountModal = (
     <Modal
@@ -1027,41 +1081,54 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       title="割引設定"
     >
       {discountTargetItem && (
-        <ScrollView>
-          <View className="mb-2">
-            <Text className="text-gray-700 font-medium mb-1">{discountTargetItem.menu_name}</Text>
-            <Text className="text-gray-500 text-sm mb-3">
+        <ScrollView
+          style={{ maxHeight: discountModalContentMaxHeight }}
+          contentContainerStyle={{ paddingBottom: 8 }}
+          showsVerticalScrollIndicator
+        >
+          <View className={isCompactDiscountModal ? 'mb-1' : 'mb-2'}>
+            <Text
+              className={`text-gray-700 font-medium ${isCompactDiscountModal ? 'text-sm mb-1' : 'mb-1'}`}
+              numberOfLines={1}
+            >
+              {discountTargetItem.menu_name}
+            </Text>
+            <Text className={`text-gray-500 ${isCompactDiscountModal ? 'text-xs mb-2' : 'text-sm mb-3'}`}>
               定価: {discountTargetItem.unit_price.toLocaleString()}円
             </Text>
           </View>
 
-          <View className="bg-gray-100 rounded-xl p-4 mb-2">
-            <Text className="text-gray-500 text-sm">割引額（円）</Text>
-            <Text className="text-2xl font-bold text-gray-900 text-right">
-              {discountNum > 0 ? `${discountNum.toLocaleString()}円` : '---'}
-            </Text>
+          <View className="flex-row gap-2 mb-2">
+            <View className={`flex-1 bg-gray-100 rounded-xl ${isCompactDiscountModal ? 'p-3' : 'p-4'}`}>
+              <Text className={`text-gray-500 ${isCompactDiscountModal ? 'text-xs' : 'text-sm'}`}>割引額</Text>
+              <Text className={`font-bold text-gray-900 text-right ${isCompactDiscountModal ? 'text-xl' : 'text-2xl'}`}>
+                {discountNum > 0 ? `${discountNum.toLocaleString()}円` : '---'}
+              </Text>
+            </View>
+
+            <View className={`flex-1 rounded-xl ${isCompactDiscountModal ? 'p-3' : 'p-4'} ${discountNum > 0 ? 'bg-green-50' : 'bg-gray-50'}`}>
+              <Text className={`text-gray-500 ${isCompactDiscountModal ? 'text-xs' : 'text-sm'}`}>割引後単価</Text>
+              <Text className={`font-bold text-right ${isCompactDiscountModal ? 'text-xl' : 'text-2xl'} ${discountNum > 0 ? 'text-green-600' : 'text-gray-300'}`}>
+                {Math.max(0, discountTargetItem.unit_price - discountNum).toLocaleString()}円
+              </Text>
+            </View>
           </View>
 
-          <View className={`rounded-xl p-4 mb-2 ${discountNum > 0 ? 'bg-green-50' : 'bg-gray-50'}`}>
-            <Text className="text-gray-500 text-sm">割引後単価</Text>
-            <Text className={`text-2xl font-bold text-right ${discountNum > 0 ? 'text-green-600' : 'text-gray-300'}`}>
-              {Math.max(0, discountTargetItem.unit_price - discountNum).toLocaleString()}円
-            </Text>
-          </View>
-
-          <View className="gap-2">
+          <View className={isCompactDiscountModal ? 'gap-1.5' : 'gap-2'}>
             {discountNumpadKeys.map((row, rowIndex) => (
-              <View key={rowIndex} className="flex-row gap-2">
+              <View key={rowIndex} className={isCompactDiscountModal ? 'flex-row gap-1.5' : 'flex-row gap-2'}>
                 {row.map((key) => (
                   <TouchableOpacity
                     key={key}
                     onPress={() => onDiscountNumpadPress(key,discountTargetItem.unit_price)}
                     activeOpacity={0.7}
-                    className={`flex-1 py-3 rounded-xl items-center justify-center ${
+                    className={`flex-1 rounded-xl items-center justify-center ${
+                      isCompactDiscountModal ? 'py-2.5' : 'py-3'
+                    } ${
                       key === 'clear' ? 'bg-red-100' : key === 'backspace' ? 'bg-gray-200' : 'bg-gray-100'
                     }`}
                   >
-                    <Text className={`text-xl font-bold ${key === 'clear' ? 'text-red-600' : 'text-gray-900'}`}>
+                    <Text className={`${isCompactDiscountModal ? 'text-lg' : 'text-xl'} font-bold ${key === 'clear' ? 'text-red-600' : 'text-gray-900'}`}>
                       {key === 'clear' ? 'C' : key === 'backspace' ? '←' : key}
                     </Text>
                   </TouchableOpacity>
@@ -1070,23 +1137,23 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
             ))}
           </View>
 
-          <View className="flex-row gap-2 mt-3">
+          <View className={`flex-row gap-2 ${isCompactDiscountModal ? 'mt-2' : 'mt-3'}`}>
             <TouchableOpacity
               onPress={clearDiscount}
               activeOpacity={0.7}
-              className="flex-1 py-3 bg-gray-200 rounded-xl items-center"
+              className={`flex-1 bg-gray-200 rounded-xl items-center ${isCompactDiscountModal ? 'py-2.5' : 'py-3'}`}
             >
-              <Text className="text-gray-700 font-bold text-sm">割引解除</Text>
+              <Text className={`text-gray-700 font-bold ${isCompactDiscountModal ? 'text-xs' : 'text-sm'}`}>割引解除</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={applyDiscount}
               disabled={discountNum <= 0 || discountNum > discountTargetItem.unit_price}
               activeOpacity={0.8}
-              className={`flex-1 py-3 rounded-xl items-center ${
+              className={`flex-1 rounded-xl items-center ${isCompactDiscountModal ? 'py-2.5' : 'py-3'} ${
                 discountNum > 0 && discountNum <= discountTargetItem.unit_price ? 'bg-blue-500' : 'bg-gray-300'
               }`}
             >
-              <Text className="text-white text-lg font-bold">適用</Text>
+              <Text className={`text-white font-bold ${isCompactDiscountModal ? 'text-base' : 'text-lg'}`}>適用</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>

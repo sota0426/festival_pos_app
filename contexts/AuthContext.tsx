@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Platform } from 'react-native';
 import { supabase, hasSupabaseEnvConfigured } from '../lib/supabase';
-import type { Session, User } from '@supabase/supabase-js';
+import type { User } from '@supabase/supabase-js';
 import type { Profile, Subscription, Branch } from '../types/database';
 
 export type AuthState =
@@ -136,11 +136,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .maybeSingle();
 
       if (!menu) {
+        let categoryId: string | null = null;
+        const { data: existingCategory } = await supabase
+          .from('menu_categories')
+          .select('id')
+          .eq('branch_id', branchId)
+          .eq('category_name', 'フード')
+          .maybeSingle();
+
+        if (existingCategory?.id) {
+          categoryId = existingCategory.id;
+        } else {
+          const { data: insertedCategory } = await supabase
+            .from('menu_categories')
+            .insert({
+              branch_id: branchId,
+              category_name: 'フード',
+              sort_order: 0,
+            })
+            .select('id')
+            .single();
+          categoryId = insertedCategory?.id ?? null;
+        }
+
         await supabase.from('menus').insert({
           branch_id: branchId,
           menu_name: 'サンプルメニュー',
           price: 500,
-          menu_number: 1,
+          menu_number: 101,
+          sort_order: 0,
+          category_id: categoryId,
           stock_management: false,
           stock_quantity: 0,
           is_active: true,

@@ -9,7 +9,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SubscriptionProvider } from './contexts/SubscriptionContext';
 import { DemoProvider } from './contexts/DemoContext';
 
-import { HQLogin, HQDashboard, BranchManagement, HQBranchReports, HQPresentation } from './components/hq';
+import { HQLogin, HQDashboard, HQBranchReports, HQPresentation } from './components/hq';
 import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, BudgetManager } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
@@ -43,7 +43,6 @@ type Screen =
   | 'hq_home'
   | 'hq_dashboard'
   | 'hq_branch_info'
-  | 'hq_branches'
   | 'hq_presentation'
   | 'store_login'
   | 'store_home'
@@ -290,7 +289,6 @@ function AppContent() {
                 setHqBranchInfoFocusBranchId(null);
                 setCurrentScreen('hq_branch_info');
               }}
-              onNavigateManagementStore={()=>setCurrentScreen('hq_branches')}
               onNavigatePresentation={() => setCurrentScreen('hq_presentation')}
               onLogout={() => {
                 if (authState.status === 'authenticated') {
@@ -308,7 +306,6 @@ function AppContent() {
           <>
             <DemoBanner />
             <HQDashboard
-              onNavigateToBranches={() => setCurrentScreen('hq_branches')}
               onNavigateToBranchInfo={(branchId?: string) => {
                 setHqBranchInfoReturnScreen('hq_dashboard');
                 setHqBranchInfoFocusBranchId(branchId ?? null);
@@ -327,16 +324,6 @@ function AppContent() {
               focusBranchId={hqBranchInfoFocusBranchId}
               onBack={() => setCurrentScreen(hqBranchInfoReturnScreen)}
               onBackToHQ={() => setCurrentScreen('hq_home')}
-            />
-          </>
-        );
-
-      case 'hq_branches':
-        return (
-          <>
-            <DemoBanner />
-            <BranchManagement
-              onBack={() => setCurrentScreen('hq_home')}
             />
           </>
         );

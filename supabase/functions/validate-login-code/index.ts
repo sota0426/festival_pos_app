@@ -88,6 +88,12 @@ serve(async (req) => {
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+    if (branch.status === 'inactive') {
+      return new Response(
+        JSON.stringify({ valid: false }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     return new Response(
       JSON.stringify({ valid: true, branch }),
