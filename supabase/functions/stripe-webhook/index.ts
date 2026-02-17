@@ -1,5 +1,5 @@
 // Supabase Edge Function: Stripe Webhook ハンドラー
-// デプロイ: supabase functions deploy stripe-webhook
+// デプロイ: supabase functions deploy stripe-webhook --no-verify-jwt
 // 環境変数: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
@@ -40,12 +40,22 @@ serve(async (req) => {
   );
 
   try {
+    console.log('[Webhook] Event received:', event.type, event.id);
+
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object;
         const userId = session.metadata?.supabase_user_id;
         const plan = session.metadata?.plan;
         const subscriptionId = session.subscription;
+
+        console.log('[Webhook] checkout.session.completed', {
+          sessionId: session.id,
+          userId,
+          plan,
+          subscriptionId,
+          customer: session.customer,
+        });
 
         if (userId && plan && subscriptionId) {
           // Stripe Subscription の詳細を取得
@@ -57,17 +67,29 @@ serve(async (req) => {
           );
           const stripeSub = await subRes.json();
 
+          console.log('[Webhook] Stripe subscription fetch', {
+            status: subRes.status,
+            subscriptionStatus: stripeSub.status,
+            currentPeriodEnd: stripeSub.current_period_end,
+          });
+
           let organizationId: string | null = null;
           if (plan === 'organization') {
-            const { data: existingOrg } = await supabaseAdmin
+            const { data: existingOrg, error: orgSelectError } = await supabaseAdmin
               .from('organizations')
               .select('id')
               .eq('owner_id', userId)
               .limit(1)
               .maybeSingle();
 
+            if (orgSelectError) {
+              console.error('[Webhook] organizations select FAILED:', orgSelectError.message);
+              throw orgSelectError;
+            }
+
             if (existingOrg?.id) {
               organizationId = existingOrg.id;
+              console.log('[Webhook] Existing organization found:', organizationId);
             } else {
               const { data: createdOrg, error: createOrgError } = await supabaseAdmin
                 .from('organizations')
@@ -78,10 +100,14 @@ serve(async (req) => {
                 .select('id')
                 .single();
 
-              if (createOrgError) throw createOrgError;
+              if (createOrgError) {
+                console.error('[Webhook] organizations insert FAILED:', createOrgError.message);
+                throw createOrgError;
+              }
               organizationId = createdOrg.id;
+              console.log('[Webhook] Organization created:', organizationId);
 
-              await supabaseAdmin.from('organization_members').upsert(
+              const { error: memberError } = await supabaseAdmin.from('organization_members').upsert(
                 {
                   organization_id: createdOrg.id,
                   user_id: userId,
@@ -89,10 +115,17 @@ serve(async (req) => {
                 },
                 { onConflict: 'organization_id,user_id' }
               );
+
+              if (memberError) {
+                console.error('[Webhook] organization_members upsert FAILED:', memberError.message);
+                throw memberError;
+              }
+              console.log('[Webhook] Organization member added');
             }
           }
 
-          await supabaseAdmin
+          // サブスクリプション更新（最重要）
+          const { error: updateError } = await supabaseAdmin
             .from('subscriptions')
             .update({
               stripe_subscription_id: subscriptionId,
@@ -106,16 +139,27 @@ serve(async (req) => {
             })
             .eq('user_id', userId);
 
+          if (updateError) {
+            console.error('[Webhook] subscriptions update FAILED:', updateError.message);
+            throw updateError;
+          }
+          console.log('[Webhook] subscriptions update SUCCESS for', userId, '→', plan);
+
           // ユーザーが店舗を持っていなければデフォルト店舗+ログインコードを自動作成
-          const { data: existingBranches } = await supabaseAdmin
+          const { data: existingBranches, error: branchSelectError } = await supabaseAdmin
             .from('branches')
             .select('id')
             .eq('owner_id', userId)
             .limit(1);
 
+          if (branchSelectError) {
+            console.error('[Webhook] branches select FAILED:', branchSelectError.message);
+            throw branchSelectError;
+          }
+
           if (!existingBranches || existingBranches.length === 0) {
             const branchId = crypto.randomUUID();
-            await supabaseAdmin.from('branches').insert({
+            const { error: branchInsertError } = await supabaseAdmin.from('branches').insert({
               id: branchId,
               branch_code: 'S001',
               branch_name: '店舗1',
@@ -127,12 +171,23 @@ serve(async (req) => {
               created_at: new Date().toISOString(),
             });
 
+            if (branchInsertError) {
+              console.error('[Webhook] branches insert FAILED:', branchInsertError.message);
+              throw branchInsertError;
+            }
+            console.log('[Webhook] Default branch created:', branchId);
+
             // ログインコード生成
-            const { data: subData } = await supabaseAdmin
+            const { data: subData, error: subSelectError } = await supabaseAdmin
               .from('subscriptions')
               .select('id')
               .eq('user_id', userId)
               .single();
+
+            if (subSelectError) {
+              console.error('[Webhook] subscriptions select for login code FAILED:', subSelectError.message);
+              throw subSelectError;
+            }
 
             if (subData) {
               for (let i = 0; i < 5; i++) {
@@ -146,17 +201,32 @@ serve(async (req) => {
                   created_at: new Date().toISOString(),
                 });
 
-                if (!loginCodeError) break;
-                if (loginCodeError.code !== '23505') throw loginCodeError;
+                if (!loginCodeError) {
+                  console.log('[Webhook] Login code created:', loginCode);
+                  break;
+                }
+                if (loginCodeError.code !== '23505') {
+                  console.error('[Webhook] login_codes insert FAILED:', loginCodeError.message);
+                  throw loginCodeError;
+                }
+                console.log('[Webhook] Login code collision, retrying...');
               }
             }
           } else if (organizationId) {
-            await supabaseAdmin
+            const { error: branchUpdateError } = await supabaseAdmin
               .from('branches')
               .update({ organization_id: organizationId })
               .eq('owner_id', userId)
               .is('organization_id', null);
+
+            if (branchUpdateError) {
+              console.error('[Webhook] branches org update FAILED:', branchUpdateError.message);
+              throw branchUpdateError;
+            }
+            console.log('[Webhook] Existing branches assigned to organization');
           }
+        } else {
+          console.warn('[Webhook] Missing metadata:', { userId, plan, subscriptionId });
         }
         break;
       }
@@ -165,11 +235,9 @@ serve(async (req) => {
         const subscription = event.data.object;
         const stripeSubId = subscription.id;
 
-        const planMap: Record<string, string> = {};
-        // Price ID -> plan type のマッピングはStripe Price IDで判断
-        // 簡易版: metadataから取得 or statusのみ更新
+        console.log('[Webhook] customer.subscription.updated', { stripeSubId, status: subscription.status });
 
-        await supabaseAdmin
+        const { error: subUpdateError } = await supabaseAdmin
           .from('subscriptions')
           .update({
             status: subscription.status === 'active' ? 'active' :
@@ -182,12 +250,21 @@ serve(async (req) => {
             updated_at: new Date().toISOString(),
           })
           .eq('stripe_subscription_id', stripeSubId);
+
+        if (subUpdateError) {
+          console.error('[Webhook] subscription.updated FAILED:', subUpdateError.message);
+          throw subUpdateError;
+        }
+        console.log('[Webhook] subscription.updated SUCCESS for', stripeSubId);
         break;
       }
 
       case 'customer.subscription.deleted': {
         const subscription = event.data.object;
-        await supabaseAdmin
+
+        console.log('[Webhook] customer.subscription.deleted', { stripeSubId: subscription.id });
+
+        const { error: deleteError } = await supabaseAdmin
           .from('subscriptions')
           .update({
             status: 'canceled',
@@ -196,19 +273,34 @@ serve(async (req) => {
             updated_at: new Date().toISOString(),
           })
           .eq('stripe_subscription_id', subscription.id);
+
+        if (deleteError) {
+          console.error('[Webhook] subscription.deleted FAILED:', deleteError.message);
+          throw deleteError;
+        }
+        console.log('[Webhook] subscription.deleted SUCCESS for', subscription.id);
         break;
       }
 
       case 'invoice.payment_failed': {
         const invoice = event.data.object;
+
+        console.log('[Webhook] invoice.payment_failed', { subscriptionId: invoice.subscription });
+
         if (invoice.subscription) {
-          await supabaseAdmin
+          const { error: failError } = await supabaseAdmin
             .from('subscriptions')
             .update({
               status: 'past_due',
               updated_at: new Date().toISOString(),
             })
             .eq('stripe_subscription_id', invoice.subscription);
+
+          if (failError) {
+            console.error('[Webhook] invoice.payment_failed update FAILED:', failError.message);
+            throw failError;
+          }
+          console.log('[Webhook] invoice.payment_failed update SUCCESS for', invoice.subscription);
         }
         break;
       }
@@ -219,7 +311,7 @@ serve(async (req) => {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {
-    console.error('Webhook error:', error);
+    console.error('[Webhook] ERROR:', error.message, error);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },

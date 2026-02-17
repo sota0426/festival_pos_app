@@ -11,6 +11,7 @@ import type {
   BudgetExpense,
   BudgetSettings,
   VisitorCounterGroup,
+  RestrictionSettings,
 } from '../types/database';
 import { setSyncEnabled } from './syncMode';
 
@@ -27,6 +28,7 @@ const STORAGE_KEYS = {
   BUDGET_EXPENSES: '@festival_pos/budget_expenses',
   MENU_CATEGORIES: '@festival_pos/menu_categories',
   ADMIN_PASSWORD: '@festival_pos/admin_password',
+  RESTRICTIONS: '@festival_pos/restrictions',
 };
 const VISITOR_GROUPS_KEY_PREFIX = '@festival_pos/visitor_groups';
 const BREAKEVEN_DRAFT_KEY_PREFIX = '@festival_pos/breakeven_draft';
@@ -382,6 +384,27 @@ export const clearAllPendingTransactions = async (branchId: string): Promise<voi
   const transactions = await getPendingTransactions();
   const remaining = transactions.filter((t) => t.branch_id !== branchId);
   await AsyncStorage.setItem(STORAGE_KEYS.PENDING_TRANSACTIONS, JSON.stringify(remaining));
+};
+
+// Restriction settings storage
+const DEFAULT_RESTRICTIONS: RestrictionSettings = {
+  menu_add: false,
+  menu_edit: false,
+  menu_delete: true,
+  sales_cancel: false,
+  sales_history: false,
+  sales_reset: true,
+  payment_change: false,
+  settings_access: false,
+};
+
+export const saveRestrictions = async (r: RestrictionSettings): Promise<void> => {
+  await AsyncStorage.setItem(STORAGE_KEYS.RESTRICTIONS, JSON.stringify(r));
+};
+
+export const getRestrictions = async (): Promise<RestrictionSettings> => {
+  const data = await AsyncStorage.getItem(STORAGE_KEYS.RESTRICTIONS);
+  return data ? { ...DEFAULT_RESTRICTIONS, ...JSON.parse(data) } : DEFAULT_RESTRICTIONS;
 };
 
 // Get all local storage data

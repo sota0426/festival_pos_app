@@ -7,9 +7,9 @@ import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import { Button, Input, Card, Header, Modal } from '../../common';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
-import { saveMenus, getMenus, saveMenuCategories, getMenuCategories, verifyAdminPassword } from '../../../lib/storage';
+import { saveMenus, getMenus, saveMenuCategories, getMenuCategories, verifyAdminPassword, getRestrictions } from '../../../lib/storage';
 import { alertConfirm, alertNotify } from '../../../lib/alertUtils';
-import type { Branch, Menu, MenuCategory } from '../../../types/database';
+import type { Branch, Menu, MenuCategory, RestrictionSettings } from '../../../types/database';
 import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
 
 const MENU_CSV_HEADER = 'menu_name,price,category,stock_management,stock_quantity,is_show';
@@ -107,6 +107,13 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const [importPreview, setImportPreview] = useState<MenuImportPreview | null>(null);
   const [importing, setImporting] = useState(false);
   const [showMenuActionsModal, setShowMenuActionsModal] = useState(false);
+
+  // Restriction & admin guard state
+  const [restrictions, setRestrictions] = useState<RestrictionSettings | null>(null);
+  const [showAdminGuardModal, setShowAdminGuardModal] = useState(false);
+  const [adminGuardPwInput, setAdminGuardPwInput] = useState('');
+  const [adminGuardError, setAdminGuardError] = useState('');
+  const [adminGuardCallback, setAdminGuardCallback] = useState<(() => void) | null>(null);
 
   const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
@@ -298,6 +305,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   useEffect(() => {
     fetchMenus();
     fetchCategories();
+    getRestrictions().then(setRestrictions);
   }, [fetchMenus, fetchCategories]);
 
   const resetForm = () => {
@@ -306,6 +314,44 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     setSelectedCategoryId(null);
     setStockManagement(false);
     setStockQuantity('');
+  };
+
+  // --- Admin guard helpers ---
+  const openMenuGuard = (onSuccess: () => void) => {
+    setAdminGuardPwInput('');
+    setAdminGuardError('');
+    setAdminGuardCallback(() => onSuccess);
+    setShowAdminGuardModal(true);
+  };
+
+  const closeMenuGuard = () => {
+    setShowAdminGuardModal(false);
+    setAdminGuardPwInput('');
+    setAdminGuardError('');
+    setAdminGuardCallback(null);
+  };
+
+  const handleMenuGuardSubmit = async () => {
+    if (!adminGuardPwInput.trim()) {
+      setAdminGuardError('管理者パスワードを入力してください');
+      return;
+    }
+    const isValid = await verifyAdminPassword(adminGuardPwInput);
+    if (!isValid) {
+      setAdminGuardError('パスワードが正しくありません');
+      return;
+    }
+    const cb = adminGuardCallback;
+    closeMenuGuard();
+    cb?.();
+  };
+
+  const withMenuRestrictionCheck = (key: keyof RestrictionSettings, action: () => void) => {
+    if (restrictions?.[key]) {
+      openMenuGuard(action);
+    } else {
+      action();
+    }
   };
 
   const handleAddMenu = async () => {
@@ -1174,7 +1220,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           <View className="items-end gap-1">
             <View className="flex-row gap-1">
               <TouchableOpacity
-                onPress={() => openEditModal(item)}
+                onPress={() => withMenuRestrictionCheck('menu_edit', () => openEditModal(item))}
                 className="px-2 py-1 bg-blue-50 rounded"
               >
                 <Text className="text-blue-600 text-xs font-medium">編集</Text>
@@ -1193,7 +1239,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               </TouchableOpacity>              
 
               <TouchableOpacity
-                onPress={() => handleDeleteMenu(item)}
+                onPress={() => withMenuRestrictionCheck('menu_delete', () => handleDeleteMenu(item))}
                 className="px-2 py-1 bg-red-50 rounded"
               >
                 <Text className="text-red-600 text-xs font-medium">削除</Text>
@@ -1338,7 +1384,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         rightElement={
           viewMode === 'menus' ? (
             <View className="flex-row gap-1">
-              <Button title="+ メニュー追加" onPress={() => setShowAddModal(true)} size="sm" />
+              <Button title="+ メニュー追加" onPress={() => withMenuRestrictionCheck('menu_add', () => setShowAddModal(true))} size="sm" />
               <Button
                 title="▼"
                 onPress={() => setShowMenuActionsModal(true)}
@@ -1385,7 +1431,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           {menuSections.length === 0 ? (
             <View className="items-center py-12">
               <Text className="text-gray-500 mb-4">メニューが登録されていません</Text>
-              <Button title="メニューを追加" onPress={() => setShowAddModal(true)} />
+              <Button title="メニューを追加" onPress={() => withMenuRestrictionCheck('menu_add', () => setShowAddModal(true))} />
             </View>
           ) : (
             menuSections.map((section) => (
@@ -1815,7 +1861,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             title="CSV登録"
             onPress={() => {
               setShowMenuActionsModal(false);
-              handlePickMenuCsv();
+              withMenuRestrictionCheck('menu_add', handlePickMenuCsv);
             }}
             variant="success"
           />
@@ -1833,12 +1879,49 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             title="メニュー全削除"
             onPress={() => {
               setShowMenuActionsModal(false);
-              setAdminPasswordInput('');
-              setDeleteAllError('');
-              setShowDeleteAllModal(true);
+              withMenuRestrictionCheck('menu_delete', () => {
+                setAdminPasswordInput('');
+                setDeleteAllError('');
+                setShowDeleteAllModal(true);
+              });
             }}
             variant="danger"
           />
+        </View>
+      </Modal>
+
+      {/* Admin Guard Modal for restrictions */}
+      <Modal
+        visible={showAdminGuardModal}
+        onClose={closeMenuGuard}
+        title="管理者パスワード"
+      >
+        <Text className="text-gray-600 text-sm mb-3">
+          この操作には管理者パスワードが必要です
+        </Text>
+        <TextInput
+          value={adminGuardPwInput}
+          onChangeText={(text) => {
+            setAdminGuardPwInput(text);
+            setAdminGuardError('');
+          }}
+          secureTextEntry
+          placeholder="管理者パスワードを入力"
+          className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+          placeholderTextColor="#9CA3AF"
+        />
+        {adminGuardError ? <Text className="text-red-500 text-sm mt-1">{adminGuardError}</Text> : null}
+        <View className="flex-row gap-3 mt-3">
+          <View className="flex-1">
+            <Button title="キャンセル" onPress={closeMenuGuard} variant="secondary" />
+          </View>
+          <View className="flex-1">
+            <Button
+              title="確認"
+              onPress={handleMenuGuardSubmit}
+              disabled={!adminGuardPwInput.trim()}
+            />
+          </View>
         </View>
       </Modal>
     </SafeAreaView>

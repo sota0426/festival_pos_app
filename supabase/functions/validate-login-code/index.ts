@@ -17,6 +17,18 @@ serve(async (req) => {
   }
 
   try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (!supabaseUrl || !serviceRoleKey) {
+      return new Response(
+        JSON.stringify({
+          valid: false,
+          error: 'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in function secrets',
+        }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const { code } = await req.json();
 
     if (!code || typeof code !== 'string' || code.length !== 6) {
@@ -27,8 +39,8 @@ serve(async (req) => {
     }
 
     const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      supabaseUrl,
+      serviceRoleKey
     );
 
     const upperCode = code.toUpperCase().trim();
@@ -42,6 +54,9 @@ serve(async (req) => {
       .single();
 
     if (codeError || !loginCode) {
+      if (codeError && codeError.code !== 'PGRST116') {
+        console.error('login_codes lookup failed:', codeError);
+      }
       return new Response(
         JSON.stringify({ valid: false }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -65,6 +80,9 @@ serve(async (req) => {
       .single();
 
     if (branchError || !branch) {
+      if (branchError) {
+        console.error('branches lookup failed:', branchError);
+      }
       return new Response(
         JSON.stringify({ valid: false }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -75,9 +93,10 @@ serve(async (req) => {
       JSON.stringify({ valid: true, branch }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-  } catch (error) {
+  } catch (error: any) {
+    console.error('validate-login-code unexpected error:', error);
     return new Response(
-      JSON.stringify({ valid: false, error: error.message }),
+      JSON.stringify({ valid: false, error: error?.message ?? 'unknown error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

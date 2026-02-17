@@ -148,6 +148,18 @@ export interface StoreSettings {
   sync_enabled: boolean;
 }
 
+// Restriction settings — controls which operations require admin password
+export interface RestrictionSettings {
+  menu_add: boolean;         // メニュー追加
+  menu_edit: boolean;        // メニュー編集
+  menu_delete: boolean;      // メニュー削除
+  sales_cancel: boolean;     // 売上取消
+  sales_history: boolean;    // 売上履歴閲覧
+  sales_reset: boolean;      // 売上全削除
+  payment_change: boolean;   // 支払い方法変更
+  settings_access: boolean;  // 設定タブアクセス
+}
+
 export interface LocalStorage {
   pending_transactions: PendingTransaction[];
   menus: Menu[];

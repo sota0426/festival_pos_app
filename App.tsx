@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Platform, Text, View } from 'react-native';
 
 import './global.css';
 
@@ -18,7 +18,7 @@ import { HQHome } from 'components/hq/HQHome';
 import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
 import { Home } from 'components/Home';
 import { BudgetExpenseRecorder } from 'components/store/budget/BudgetExpenseRecorder';
-import { hasSupabaseEnvConfigured, supabase } from './lib/supabase';
+import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 // 新画面
 import { Landing } from './components/Landing';
@@ -57,11 +57,12 @@ type Screen =
   | 'store_budget_breakeven';
 
 function AppContent() {
-  const { authState, enterDemo } = useAuth();
+  const { authState, enterDemo, refreshSubscription } = useAuth();
   const [currentScreen, setCurrentScreen] = useState<Screen>('landing');
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [hqBranchInfoReturnScreen, setHqBranchInfoReturnScreen] = useState<'hq_home' | 'hq_dashboard'>('hq_home');
   const [hqBranchInfoFocusBranchId, setHqBranchInfoFocusBranchId] = useState<string | null>(null);
+  const [checkoutProcessing, setCheckoutProcessing] = useState(false);
 
   // Initialize sync
   useSync();
@@ -74,7 +75,7 @@ function AppContent() {
 
   const resolveBranchForStore = useCallback(
     async (branch: Branch): Promise<Branch | null> => {
-      if (!hasSupabaseEnvConfigured() || isUuid(branch.id)) return branch;
+      if (!isSupabaseConfigured() || isUuid(branch.id)) return branch;
 
       const { data, error } = await supabase
         .from('branches')
@@ -119,7 +120,12 @@ function AppContent() {
   // render中のsetStateを避け、遷移はeffectで行う
   useEffect(() => {
     const resolveLoginCodeBranch = async () => {
-      if (authState.status !== 'login_code' || currentScreen !== 'landing') return;
+      if (
+        authState.status !== 'login_code' ||
+        (currentScreen !== 'landing' && currentScreen !== 'login_code_entry')
+      ) {
+        return;
+      }
       const resolved = await resolveBranchForStore(authState.branch);
       if (!resolved) return;
       setCurrentBranch(resolved);
@@ -134,11 +140,54 @@ function AppContent() {
     resolveLoginCodeBranch();
   }, [authState, currentScreen, resolveBranchForStore]);
 
+  // Stripe Checkout 完了後のリトライ付きサブスクリプション更新
+  const handleCheckoutSuccess = useCallback(async () => {
+    setCheckoutProcessing(true);
+    try {
+      const maxRetries = 5;
+      const baseDelay = 1500;
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        const sub = await refreshSubscription();
+        if (sub && sub.plan_type !== 'free') break;
+        if (attempt < maxRetries - 1) {
+          await new Promise(r => setTimeout(r, baseDelay * Math.pow(2, attempt)));
+        }
+      }
+      setCurrentScreen('my_stores');
+    } finally {
+      setCheckoutProcessing(false);
+    }
+  }, [refreshSubscription]);
+
+  // ?checkout=success URL パラメータ検出
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (authState.status !== 'authenticated') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const checkoutResult = params.get('checkout');
+    if (checkoutResult === 'success') {
+      // URL をクリーンアップして再トリガーを防止
+      window.history.replaceState({}, '', window.location.origin + window.location.pathname);
+      handleCheckoutSuccess();
+    }
+  }, [authState.status, handleCheckoutSuccess]);
+
   // ローディング中
   if (authState.status === 'loading') {
     return (
       <View className="flex-1 justify-center items-center bg-gray-50">
         <ActivityIndicator size="large" color="#22c55e" />
+      </View>
+    );
+  }
+
+  // Checkout処理中
+  if (checkoutProcessing) {
+    return (
+      <View className="flex-1 justify-center items-center bg-gray-50">
+        <ActivityIndicator size="large" color="#22c55e" />
+        <Text className="mt-4 text-gray-600">プランを更新しています...</Text>
       </View>
     );
   }
@@ -339,6 +388,7 @@ function AppContent() {
               onNavigateToBudget={() => setCurrentScreen('store_budget')}
               onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
               onNavigateToBudgetBreakeven={() => setCurrentScreen('store_budget_breakeven')}
+              onBranchUpdated={(updatedBranch) => setCurrentBranch(updatedBranch)}
               onLogout={handleBranchLogout}
             />
           </>

@@ -70,14 +70,20 @@ const plans = [
 ];
 
 export const PricingScreen = ({ onBack }: PricingScreenProps) => {
-  const { plan: currentPlan, openCheckout } = useSubscription();
+  const { plan: currentPlan, openCheckout, openPortal, isFreePlan } = useSubscription();
   const [loading, setLoading] = useState<string | null>(null);
+  const isPaidCurrent = currentPlan === 'store' || currentPlan === 'organization';
 
   const handleSelectPlan = async (planKey: 'store' | 'organization') => {
     if (planKey === currentPlan) return;
     try {
       setLoading(planKey);
-      await openCheckout(planKey);
+      if (isPaidCurrent) {
+        // 既存有料契約の変更/解約はStripeポータルで一元管理
+        await openPortal();
+      } else {
+        await openCheckout(planKey);
+      }
     } catch {
       // エラーはSubscriptionContextで処理
     } finally {
@@ -152,13 +158,31 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
                   <Text className="text-white font-bold">
                     {loading === p.key
                       ? '処理中...'
-                      : 'このプランに変更'}
+                      : isPaidCurrent
+                        ? 'お支払い管理で変更'
+                        : 'このプランに変更'}
                   </Text>
                 </TouchableOpacity>
               )}
             </Card>
           );
         })}
+
+        {!isFreePlan && (
+          <Card className="bg-white p-5 border border-orange-200">
+            <Text className="text-gray-900 font-bold mb-2">キャンセル・無料プランへの変更</Text>
+            <Text className="text-gray-600 text-sm mb-3">
+              有料プランの解約、無料プランへの変更、請求情報の確認はStripeのお支払い管理画面で行えます。
+            </Text>
+            <TouchableOpacity
+              onPress={openPortal}
+              activeOpacity={0.8}
+              className="rounded-lg py-3 items-center bg-orange-500"
+            >
+              <Text className="text-white font-bold">お支払い管理を開く</Text>
+            </TouchableOpacity>
+          </Card>
+        )}
       </ScrollView>
     </SafeAreaView>
   );

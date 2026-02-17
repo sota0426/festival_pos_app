@@ -59,8 +59,6 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       // セッション確認
       const { data: { session } } = await supabase.auth.getSession();
-      console.log('[Checkout] Session exists:', !!session);
-      console.log('[Checkout] Access token (first 20 chars):', session?.access_token?.substring(0, 20));
       if (!session) {
         Alert.alert('エラー', 'セッションが切れました。再度ログインしてください。');
         return;

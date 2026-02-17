@@ -28,6 +28,10 @@ export const LoginCodeEntry = ({ onBack }: LoginCodeEntryProps) => {
 
       if (result.valid && result.branch) {
         enterWithLoginCode(result.branch, code.toUpperCase().trim());
+      } else if (result.reason === 'unauthorized') {
+        setError('ログインコード認証の設定エラーです（Functionが401）。管理者に連絡してください。');
+      } else if (result.reason === 'server_error') {
+        setError('ログインコード認証サーバーでエラーが発生しました。時間をおいて再試行してください。');
       } else {
         setError('無効なコードです。コードを確認してもう一度お試しください。');
       }

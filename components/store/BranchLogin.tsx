@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { View, Text, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Input, Card } from '../common';
-import { supabase, hasSupabaseEnvConfigured } from '../../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { saveBranch, getBranch, clearBranch } from '../../lib/storage';
 import type { Branch } from '../../types/database';
 
@@ -34,7 +34,7 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
       }
 
       // Supabase接続時は branch.id に UUID が必要
-      if (!hasSupabaseEnvConfigured()) {
+      if (!isSupabaseConfigured()) {
         onLoginSuccess(savedBranch);
         setChecking(false);
         return;
@@ -83,7 +83,7 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
     setError(null);
 
     try {
-      if (!hasSupabaseEnvConfigured()) {
+      if (!isSupabaseConfigured()) {
         if (formattedCode === 'S001' || formattedCode === 'S002') {
           const demoBranch: Branch = {
             id: formattedCode,
@@ -246,6 +246,9 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
                     setError(null);
                   }}
                 />
+                <Text className='text-xs text-gray-600'>
+                  初期パスワード「0000」
+                </Text>
               </View>
             </>
           )}

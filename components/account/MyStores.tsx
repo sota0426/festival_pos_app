@@ -7,7 +7,8 @@ import { useSubscription } from '../../contexts/SubscriptionContext';
 import { supabase } from '../../lib/supabase';
 import { getLoginCodesForUser, createLoginCode, regenerateLoginCode } from '../../lib/loginCode';
 import { alertNotify } from '../../lib/alertUtils';
-import { Card } from '../common';
+import { getBranch, saveBranch } from '../../lib/storage';
+import { Button, Card, Input, Modal } from '../common';
 import type { Branch, LoginCode } from '../../types/database';
 
 interface MyStoresProps {
@@ -23,6 +24,9 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   const [loginCodes, setLoginCodes] = useState<Record<string, LoginCode>>({});
   const [loading, setLoading] = useState(true);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
+  const [editingBranchName, setEditingBranchName] = useState('');
+  const [savingBranchName, setSavingBranchName] = useState(false);
 
   const userId = authState.status === 'authenticated' ? authState.user.id : null;
   const subscriptionId =
@@ -31,6 +35,14 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     authState.status === 'authenticated' ? authState.subscription.organization_id : null;
 
   const loadData = useCallback(async () => {
+    if (isFreePlan) {
+      const localBranch = await getBranch();
+      setBranches(localBranch ? [localBranch] : []);
+      setLoginCodes({});
+      setLoading(false);
+      return;
+    }
+
     if (!userId) return;
     setLoading(true);
     try {
@@ -63,7 +75,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [isFreePlan, userId]);
 
   useEffect(() => {
     loadData();
@@ -196,6 +208,70 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     }
   };
 
+  const handleOpenRename = (branch: Branch) => {
+    setEditingBranch(branch);
+    setEditingBranchName(branch.branch_name);
+  };
+
+  const handleCloseRename = () => {
+    setEditingBranch(null);
+    setEditingBranchName('');
+    setSavingBranchName(false);
+  };
+
+  const handleRenameStore = async () => {
+    if (!editingBranch) return;
+    if (!userId && !isFreePlan) {
+      alertNotify('エラー', 'ログイン状態を確認できませんでした');
+      return;
+    }
+    const nextName = editingBranchName.trim();
+    if (!nextName) {
+      alertNotify('入力エラー', '店舗名を入力してください');
+      return;
+    }
+
+    setSavingBranchName(true);
+    try {
+      const storedBranch = await getBranch();
+      if (isFreePlan) {
+        if (!storedBranch) throw new Error('ローカル店舗データが見つかりません');
+        const nextBranch = { ...storedBranch, branch_name: nextName };
+        await saveBranch(nextBranch);
+        setBranches([nextBranch]);
+      } else {
+        const { data, error } = await supabase
+          .from('branches')
+          .update({ branch_name: nextName })
+          .eq('id', editingBranch.id)
+          .eq('owner_id', userId)
+          .select('id, branch_name')
+          .single();
+        if (error) throw error;
+        if (!data) throw new Error('更新対象の店舗が見つかりません');
+
+        setBranches((prev) =>
+          prev.map((b) => (b.id === editingBranch.id ? { ...b, branch_name: nextName } : b)),
+        );
+
+        if (
+          storedBranch &&
+          (storedBranch.id === editingBranch.id || storedBranch.branch_code === editingBranch.branch_code)
+        ) {
+          await saveBranch({ ...storedBranch, branch_name: nextName });
+        }
+      }
+
+      alertNotify('更新完了', '店舗名を変更しました');
+      handleCloseRename();
+    } catch (e) {
+      console.error('Failed to rename store:', e);
+      const message = e instanceof Error ? e.message : '店舗名の変更に失敗しました';
+      alertNotify('エラー', message);
+      setSavingBranchName(false);
+    }
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
       <View className="flex-row items-center p-4 border-b border-gray-200">
@@ -262,6 +338,15 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
                       </Text>
                     </TouchableOpacity>
                   </View>
+                  <View className="mb-3">
+                    <TouchableOpacity
+                      onPress={() => handleOpenRename(branch)}
+                      activeOpacity={0.8}
+                      className="self-start bg-gray-100 rounded px-3 py-1.5"
+                    >
+                      <Text className="text-gray-700 text-xs font-semibold">店舗名変更</Text>
+                    </TouchableOpacity>
+                  </View>
 
                   {/* ログインコード */}
                   {!isFreePlan && (
@@ -311,6 +396,32 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           </>
         )}
       </ScrollView>
+
+      <Modal
+        visible={!!editingBranch}
+        onClose={handleCloseRename}
+        title="店舗名の変更"
+      >
+        <Input
+          label="店舗名"
+          value={editingBranchName}
+          onChangeText={setEditingBranchName}
+          placeholder="店舗名を入力"
+        />
+        <View className="flex-row gap-3 mt-3">
+          <View className="flex-1">
+            <Button title="キャンセル" onPress={handleCloseRename} variant="secondary" />
+          </View>
+          <View className="flex-1">
+            <Button
+              title="保存"
+              onPress={handleRenameStore}
+              loading={savingBranchName}
+              disabled={!editingBranchName.trim()}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };

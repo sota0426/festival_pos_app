@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl, ActivityIndicator} from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl, ActivityIndicator, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Modal, Button } from '../../../common';
 import { supabase, isSupabaseConfigured } from '../../../../lib/supabase';
-import { getPendingTransactions, getMenus, saveMenus } from '../../../../lib/storage';
+import { getPendingTransactions, getMenus, saveMenus, getRestrictions, verifyAdminPassword } from '../../../../lib/storage';
 import { alertConfirm, alertNotify } from '../../../../lib/alertUtils';
-import type { Branch, Transaction, TransactionItem } from '../../../../types/database';
+import type { Branch, Transaction, TransactionItem, RestrictionSettings } from '../../../../types/database';
 import { MenuSalesSummary } from './MenuSalesSummary';
 import { handleExportCSV } from './ExportCSV';
 import { CancelModal } from './CancelModal';
@@ -37,6 +37,12 @@ export const SalesHistory = ({
   const [cancelling, setCancelling] = useState(false);
   const [view, setView] = useState<'history' | 'menuSales'>("history");
 
+  // Restriction & admin guard state
+  const [restrictions, setRestrictions] = useState<RestrictionSettings | null>(null);
+  const [showAdminGuardModal, setShowAdminGuardModal] = useState(false);
+  const [adminGuardPwInput, setAdminGuardPwInput] = useState('');
+  const [adminGuardError, setAdminGuardError] = useState('');
+  const [adminGuardCallback, setAdminGuardCallback] = useState<(() => void) | null>(null);
 
   const fetchTransactions = useCallback(async () => {
     try {
@@ -191,9 +197,40 @@ export const SalesHistory = ({
 
   useEffect(() => {
     fetchTransactions();
+    getRestrictions().then(setRestrictions);
   }, [fetchTransactions]);
 
-  const handleCancelTransaction = (transaction: TransactionWithItems) => {
+  // --- Admin guard helpers ---
+  const openSalesGuard = (onSuccess: () => void) => {
+    setAdminGuardPwInput('');
+    setAdminGuardError('');
+    setAdminGuardCallback(() => onSuccess);
+    setShowAdminGuardModal(true);
+  };
+
+  const closeSalesGuard = () => {
+    setShowAdminGuardModal(false);
+    setAdminGuardPwInput('');
+    setAdminGuardError('');
+    setAdminGuardCallback(null);
+  };
+
+  const handleSalesGuardSubmit = async () => {
+    if (!adminGuardPwInput.trim()) {
+      setAdminGuardError('管理者パスワードを入力してください');
+      return;
+    }
+    const isValid = await verifyAdminPassword(adminGuardPwInput);
+    if (!isValid) {
+      setAdminGuardError('パスワードが正しくありません');
+      return;
+    }
+    const cb = adminGuardCallback;
+    closeSalesGuard();
+    cb?.();
+  };
+
+  const executeCancelTransaction = (transaction: TransactionWithItems) => {
     alertConfirm(
       '取引取消',
       `取引番号: ${transaction.transaction_code}\n合計: ${transaction.total_amount.toLocaleString()}円\n\nこの取引を取消しますか？\n在庫は元に戻されます。`,
@@ -258,6 +295,14 @@ export const SalesHistory = ({
       },
       '取消する',
     );
+  };
+
+  const handleCancelTransaction = (transaction: TransactionWithItems) => {
+    if (restrictions?.sales_cancel) {
+      openSalesGuard(() => executeCancelTransaction(transaction));
+    } else {
+      executeCancelTransaction(transaction);
+    }
   };
 
   // Calculate totals
@@ -367,7 +412,42 @@ export const SalesHistory = ({
         onCancelTransaction={handleCancelTransaction}
         formatDate={formatDate}
       />
-      
+
+      {/* Admin Guard Modal for sales_cancel restriction */}
+      <Modal
+        visible={showAdminGuardModal}
+        onClose={closeSalesGuard}
+        title="管理者パスワード"
+      >
+        <Text className="text-gray-600 text-sm mb-3">
+          売上の取消には管理者パスワードが必要です
+        </Text>
+        <TextInput
+          value={adminGuardPwInput}
+          onChangeText={(text) => {
+            setAdminGuardPwInput(text);
+            setAdminGuardError('');
+          }}
+          secureTextEntry
+          placeholder="管理者パスワードを入力"
+          className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+          placeholderTextColor="#9CA3AF"
+        />
+        {adminGuardError ? <Text className="text-red-500 text-sm mt-1">{adminGuardError}</Text> : null}
+        <View className="flex-row gap-3 mt-3">
+          <View className="flex-1">
+            <Button title="キャンセル" onPress={closeSalesGuard} variant="secondary" />
+          </View>
+          <View className="flex-1">
+            <Button
+              title="確認"
+              onPress={handleSalesGuardSubmit}
+              disabled={!adminGuardPwInput.trim()}
+            />
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 };

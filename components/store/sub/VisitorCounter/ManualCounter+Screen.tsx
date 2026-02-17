@@ -213,22 +213,16 @@ export const ManualCounterScreen = ({ branch, onBack }: Props) => {
           lastCountLabel={formatTime(lastCountTime)}
         />
 
-        <View className="px-4 pb-2 flex justify-between">
+        <View className="px-4 pb-4 flex flex-row justify-between">
           <View className="flex-row gap-2">
             <TouchableOpacity
               onPress={() => requestReset("today")}
               className="bg-amber-400 px-4 py-2 rounded-xl"
             >
-              <Text className="text-white font-bold text-xs">本日をリセット</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => requestReset("all")}
-              className="bg-red-400 px-4 py-2 rounded-xl"
-            >
-              <Text className="text-white font-bold text-xs">すべて削除</Text>
+              <Text className="text-white font-bold text-xs">来客リセット</Text>
             </TouchableOpacity>
           </View>
-          <View className="flex-row justify-end mb-2">
+          <View className="">
             {groups.length < MAX_GROUPS && (
               <TouchableOpacity
                 onPress={addGroup}

@@ -44,34 +44,64 @@ export const createLoginCode = async (
   return null;
 };
 
+export type ValidateLoginCodeResult = {
+  valid: boolean;
+  branch?: Branch;
+  loginCode?: LoginCode;
+  reason?: 'invalid' | 'unauthorized' | 'server_error';
+};
+
 export const validateLoginCode = async (
   code: string
-): Promise<{ valid: boolean; branch?: Branch; loginCode?: LoginCode }> => {
+): Promise<ValidateLoginCodeResult> => {
   const upperCode = code.toUpperCase().trim();
 
+  // 未ログイン状態でも検証できるよう、Edge Function経由で確認
+  const { data: fnData, error: fnError } = await supabase.functions.invoke('validate-login-code', {
+    body: { code: upperCode },
+  });
+
+  // Functionが正常応答した場合は、その結果を正として扱う
+  if (!fnError && fnData) {
+    if (fnData.valid && fnData.branch) {
+      return { valid: true, branch: fnData.branch as Branch };
+    }
+    return { valid: false, reason: 'invalid' };
+  }
+
+  if (fnError) {
+    const status = (fnError as { context?: { status?: number } })?.context?.status;
+    if (status === 401) {
+      return { valid: false, reason: 'unauthorized' };
+    }
+  }
+
+  // Edge Function未デプロイ等のフォールバック（ログイン済み環境向け）
   const { data: loginCode, error: codeError } = await supabase
     .from('login_codes')
     .select('*')
     .eq('code', upperCode)
     .eq('is_active', true)
-    .single();
+    .maybeSingle();
 
   if (codeError || !loginCode) {
-    return { valid: false };
+    return { valid: false, reason: fnError ? 'server_error' : 'invalid' };
   }
 
-  // サブスクリプションが有効か確認
   const { data: subscription, error: subError } = await supabase
     .from('subscriptions')
     .select('status')
     .eq('id', loginCode.subscription_id)
     .single();
 
-  if (subError || !subscription || (subscription.status !== 'active' && subscription.status !== 'trialing')) {
-    return { valid: false };
+  if (
+    subError ||
+    !subscription ||
+    (subscription.status !== 'active' && subscription.status !== 'trialing')
+  ) {
+    return { valid: false, reason: 'invalid' };
   }
 
-  // 店舗データを取得
   const { data: branch, error: branchError } = await supabase
     .from('branches')
     .select('*')
@@ -79,7 +109,10 @@ export const validateLoginCode = async (
     .single();
 
   if (branchError || !branch) {
-    return { valid: false };
+    if (fnError) {
+      console.error('validate-login-code fallback failed and function error:', fnError);
+    }
+    return { valid: false, reason: fnError ? 'server_error' : 'invalid' };
   }
 
   return { valid: true, branch, loginCode };

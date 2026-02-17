@@ -26,7 +26,7 @@ interface AuthContextValue {
   enterWithLoginCode: (branch: Branch, code: string) => void;
   exitLoginCode: () => void;
   refreshProfile: () => Promise<void>;
-  refreshSubscription: () => Promise<void>;
+  refreshSubscription: () => Promise<Subscription | null>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -140,7 +140,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           branch_id: branchId,
           menu_name: 'サンプルメニュー',
           price: 500,
-          menu_number: 101,
+          menu_number: 1,
           stock_management: false,
           stock_quantity: 0,
           is_active: true,
@@ -274,8 +274,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [authState]);
 
-  const refreshSubscription = useCallback(async () => {
-    if (authState.status !== 'authenticated') return;
+  const refreshSubscription = useCallback(async (): Promise<Subscription | null> => {
+    if (authState.status !== 'authenticated') return null;
     const { data } = await supabase
       .from('subscriptions')
       .select('*')
@@ -288,11 +288,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthState((prev) =>
         prev.status === 'authenticated' ? { ...prev, subscription } : prev
       );
-      return;
+      return subscription;
     }
     setAuthState((prev) =>
       prev.status === 'authenticated' ? { ...prev, subscription: data } : prev
     );
+    return data;
   }, [authState, ensureUserBootstrapData]);
 
   return (

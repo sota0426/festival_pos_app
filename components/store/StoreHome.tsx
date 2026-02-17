@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button, Input, Modal } from '../common';
-import { getStoreSettings, saveStoreSettings, saveAdminPassword, verifyAdminPassword, clearAllPendingTransactions } from '../../lib/storage';
+import { getStoreSettings, saveStoreSettings, saveAdminPassword, verifyAdminPassword, clearAllPendingTransactions, saveBranch, getRestrictions, saveRestrictions } from '../../lib/storage';
 import { alertConfirm, alertNotify } from '../../lib/alertUtils';
-import type { Branch, PaymentMethodSettings } from '../../types/database';
+import type { Branch, PaymentMethodSettings, RestrictionSettings } from '../../types/database';
 import { isSupabaseConfigured, supabase } from 'lib/supabase';
 
 type TabKey = 'main' | 'sub' | 'budget' | 'settings';
@@ -19,6 +19,7 @@ interface StoreHomeProps {
   onNavigateToBudget: () => void;
   onNavigateToBudgetExpense: () => void;
   onNavigateToBudgetBreakeven: () => void;
+  onBranchUpdated?: (branch: Branch) => void;
   onLogout: () => void;
 }
 
@@ -39,6 +40,7 @@ export const StoreHome = ({
   onNavigateToBudget,
   onNavigateToBudgetExpense,
   onNavigateToBudgetBreakeven,
+  onBranchUpdated,
   onLogout,
 }: StoreHomeProps) => {
   const [activeTab, setActiveTab] = useState<TabKey>('main');
@@ -57,6 +59,20 @@ export const StoreHome = ({
   const [resetError, setResetError] = useState('');
   const [resetting, setResetting] = useState(false);
 
+  // Restriction management state
+  const [restrictions, setRestrictions] = useState<RestrictionSettings>({
+    menu_add: false, menu_edit: false, menu_delete: true,
+    sales_cancel: false, sales_history: false, sales_reset: true,
+    payment_change: false, settings_access: false,
+  });
+  const [showRestrictionsModal, setShowRestrictionsModal] = useState(false);
+
+  // Admin guard modal state (generic password prompt for restricted operations)
+  const [showAdminGuardModal, setShowAdminGuardModal] = useState(false);
+  const [adminGuardInput, setAdminGuardInput] = useState('');
+  const [adminGuardError, setAdminGuardError] = useState('');
+  const [adminGuardCallback, setAdminGuardCallback] = useState<(() => void) | null>(null);
+
   useEffect(() => {
     const loadSettings = async () => {
       const settings = await getStoreSettings();
@@ -66,23 +82,103 @@ export const StoreHome = ({
       if (settings.payment_methods) {
         setPaymentMethods(settings.payment_methods);
       }
+      const r = await getRestrictions();
+      setRestrictions(r);
     };
     loadSettings();
   }, []);
 
+  useEffect(() => {
+    const refreshBranchName = async () => {
+      if (!isSupabaseConfigured()) return;
+      const { data, error } = await supabase
+        .from('branches')
+        .select('*')
+        .eq('id', branch.id)
+        .maybeSingle();
+      if (error || !data) return;
+      if (data.branch_name !== branch.branch_name) {
+        await saveBranch(data);
+        onBranchUpdated?.(data);
+      }
+    };
+    refreshBranchName();
+  }, [branch.id, branch.branch_name, onBranchUpdated]);
+
+  // --- Admin guard helpers ---
+  const openAdminGuard = (onSuccess: () => void) => {
+    setAdminGuardInput('');
+    setAdminGuardError('');
+    setAdminGuardCallback(() => onSuccess);
+    setShowAdminGuardModal(true);
+  };
+
+  const closeAdminGuard = () => {
+    setShowAdminGuardModal(false);
+    setAdminGuardInput('');
+    setAdminGuardError('');
+    setAdminGuardCallback(null);
+  };
+
+  const handleAdminGuardSubmit = async () => {
+    if (!adminGuardInput.trim()) {
+      setAdminGuardError('管理者パスワードを入力してください');
+      return;
+    }
+    const isValid = await verifyAdminPassword(adminGuardInput);
+    if (!isValid) {
+      setAdminGuardError('パスワードが正しくありません');
+      return;
+    }
+    const cb = adminGuardCallback;
+    closeAdminGuard();
+    cb?.();
+  };
+
+  /** Check restriction and either run action immediately or show password modal */
+  const withRestrictionCheck = (key: keyof RestrictionSettings, action: () => void) => {
+    if (restrictions[key]) {
+      openAdminGuard(action);
+    } else {
+      action();
+    }
+  };
+
+  // --- Restriction setting toggle ---
+  const toggleRestriction = async (key: keyof RestrictionSettings) => {
+    const updated = { ...restrictions, [key]: !restrictions[key] };
+    setRestrictions(updated);
+    await saveRestrictions(updated);
+  };
+
   const handleTabChange = async (tab: TabKey) => {
+    if (tab === 'settings' && restrictions.settings_access && activeTab !== 'settings') {
+      openAdminGuard(async () => {
+        setActiveTab('settings');
+        const currentSettings = await getStoreSettings();
+        await saveStoreSettings({ ...currentSettings, sub_screen_mode: false });
+      });
+      return;
+    }
     setActiveTab(tab);
     const currentSettings = await getStoreSettings();
     await saveStoreSettings({ ...currentSettings, sub_screen_mode: tab === 'sub' });
   };
 
   const togglePaymentMethod = async (key: keyof PaymentMethodSettings) => {
-    const updated = { ...paymentMethods, [key]: !paymentMethods[key] };
-    // Ensure at least one payment method is enabled
-    if (!updated.cash && !updated.cashless && !updated.voucher) return;
-    setPaymentMethods(updated);
-    const currentSettings = await getStoreSettings();
-    await saveStoreSettings({ ...currentSettings, payment_methods: updated });
+    const doToggle = async () => {
+      const updated = { ...paymentMethods, [key]: !paymentMethods[key] };
+      // Ensure at least one payment method is enabled
+      if (!updated.cash && !updated.cashless && !updated.voucher) return;
+      setPaymentMethods(updated);
+      const currentSettings = await getStoreSettings();
+      await saveStoreSettings({ ...currentSettings, payment_methods: updated });
+    };
+    if (restrictions.payment_change) {
+      openAdminGuard(doToggle);
+    } else {
+      await doToggle();
+    }
   };
 
   const resetPasswordForm = () => {
@@ -231,7 +327,7 @@ export const StoreHome = ({
                 </Card>
               </TouchableOpacity>
 
-              <TouchableOpacity onPress={onNavigateToHistory} activeOpacity={0.8}>
+              <TouchableOpacity onPress={() => withRestrictionCheck('sales_history', onNavigateToHistory)} activeOpacity={0.8}>
                 <Card className="bg-orange-400 p-6">
                   <Text className="text-white text-2xl  font-bold text-center">販売履歴</Text>
                   <Text className="text-orange-100 text-center mt-2">売上確認・取消</Text>
@@ -378,6 +474,19 @@ export const StoreHome = ({
               />
             </Card>
 
+            {/* Restriction Management */}
+            <Card>
+              <Text className="text-gray-900 text-lg font-bold mb-3">制限管理</Text>
+              <Text className="text-gray-500 text-sm mb-3">
+                チェックした操作は管理者パスワードが必要になります
+              </Text>
+              <Button
+                title="制限を設定"
+                onPress={() => setShowRestrictionsModal(true)}
+                variant="secondary"
+              />
+            </Card>
+
             {/* Reset Sales Data */}
             <Card>
               <Text className="text-gray-900 text-lg font-bold mb-3">売上データ全削除</Text>
@@ -496,6 +605,147 @@ export const StoreHome = ({
               variant="danger"
               loading={resetting}
               disabled={!adminPasswordInput.trim()}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Restrictions Management Modal */}
+      <Modal
+        visible={showRestrictionsModal}
+        onClose={() => setShowRestrictionsModal(false)}
+        title="制限管理"
+      >
+        <ScrollView style={{ maxHeight: 480 }}>
+          <Text className="text-gray-500 text-sm mb-4">
+            チェックした操作には管理者パスワードが必要になります
+          </Text>
+
+          {/* Menu Section */}
+          <Text className="font-bold text-gray-700 mb-2">メニュー</Text>
+          {([
+            { key: 'menu_add' as const, label: 'メニューの追加', desc: '新しいメニュー項目の登録' },
+            { key: 'menu_edit' as const, label: 'メニューの編集', desc: '既存メニューの価格・名前変更' },
+            { key: 'menu_delete' as const, label: 'メニューの削除', desc: 'メニュー項目の削除' },
+          ]).map((item) => (
+            <TouchableOpacity
+              key={item.key}
+              onPress={() => toggleRestriction(item.key)}
+              activeOpacity={0.7}
+              className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
+                restrictions[item.key] ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-white'
+              }`}
+            >
+              <View
+                className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+                  restrictions[item.key] ? 'border-red-500 bg-red-500' : 'border-gray-300'
+                }`}
+              >
+                {restrictions[item.key] && <Text className="text-white text-xs font-bold">✓</Text>}
+              </View>
+              <View className="flex-1">
+                <Text className="text-gray-900 font-semibold">{item.label}</Text>
+                <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+
+          {/* Sales Section */}
+          <Text className="font-bold text-gray-700 mb-2 mt-3">売上</Text>
+          {([
+            { key: 'sales_cancel' as const, label: '売上の取消（レジ返品）', desc: '販売済み注文のキャンセル' },
+            { key: 'sales_history' as const, label: '売上履歴の閲覧', desc: '販売履歴画面へのアクセス' },
+            { key: 'sales_reset' as const, label: '売上データの全削除', desc: '全売上データの削除' },
+          ]).map((item) => (
+            <TouchableOpacity
+              key={item.key}
+              onPress={() => toggleRestriction(item.key)}
+              activeOpacity={0.7}
+              className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
+                restrictions[item.key] ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-white'
+              }`}
+            >
+              <View
+                className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+                  restrictions[item.key] ? 'border-red-500 bg-red-500' : 'border-gray-300'
+                }`}
+              >
+                {restrictions[item.key] && <Text className="text-white text-xs font-bold">✓</Text>}
+              </View>
+              <View className="flex-1">
+                <Text className="text-gray-900 font-semibold">{item.label}</Text>
+                <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+
+          {/* Settings Section */}
+          <Text className="font-bold text-gray-700 mb-2 mt-3">設定</Text>
+          {([
+            { key: 'payment_change' as const, label: '支払い方法の変更', desc: '現金/キャッシュレス/金券のON/OFF' },
+            { key: 'settings_access' as const, label: '設定タブへのアクセス', desc: '設定タブ自体へのアクセス' },
+          ]).map((item) => (
+            <TouchableOpacity
+              key={item.key}
+              onPress={() => toggleRestriction(item.key)}
+              activeOpacity={0.7}
+              className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
+                restrictions[item.key] ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-white'
+              }`}
+            >
+              <View
+                className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+                  restrictions[item.key] ? 'border-red-500 bg-red-500' : 'border-gray-300'
+                }`}
+              >
+                {restrictions[item.key] && <Text className="text-white text-xs font-bold">✓</Text>}
+              </View>
+              <View className="flex-1">
+                <Text className="text-gray-900 font-semibold">{item.label}</Text>
+                <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        <View className="mt-4">
+          <Button
+            title="閉じる"
+            onPress={() => setShowRestrictionsModal(false)}
+            variant="secondary"
+          />
+        </View>
+      </Modal>
+
+      {/* Admin Guard Modal (generic password prompt for restricted operations) */}
+      <Modal
+        visible={showAdminGuardModal}
+        onClose={closeAdminGuard}
+        title="管理者パスワード"
+      >
+        <Text className="text-gray-600 text-sm mb-3">
+          この操作には管理者パスワードが必要です
+        </Text>
+        <Input
+          label="パスワード"
+          value={adminGuardInput}
+          onChangeText={(text) => {
+            setAdminGuardInput(text);
+            setAdminGuardError('');
+          }}
+          secureTextEntry
+          placeholder="管理者パスワードを入力"
+          error={adminGuardError}
+        />
+        <View className="flex-row gap-3 mt-2">
+          <View className="flex-1">
+            <Button title="キャンセル" onPress={closeAdminGuard} variant="secondary" />
+          </View>
+          <View className="flex-1">
+            <Button
+              title="確認"
+              onPress={handleAdminGuardSubmit}
+              disabled={!adminGuardInput.trim()}
             />
           </View>
         </View>
