@@ -455,6 +455,21 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         } else {
           const affectedCategoryIds = new Set<string | null>([previousCategoryId, selectedCategoryId]);
           const affectedMenus = sortedUpdatedMenus.filter((menu) => affectedCategoryIds.has(menu.category_id));
+
+          // UNIQUE制約(menu_number等)の一時衝突を避けるため2段階更新する
+          for (let i = 0; i < affectedMenus.length; i += 1) {
+            const menu = affectedMenus[i];
+            const { error } = await supabase
+              .from('menus')
+              .update({
+                sort_order: 100000 + i,
+                menu_number: -100000 - i,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', menu.id);
+            if (error) throw error;
+          }
+
           for (const menu of affectedMenus) {
             const { error } = await supabase
               .from('menus')
@@ -477,9 +492,15 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       setShowEditModal(false);
       setEditingMenu(null);
       resetForm();
-    } catch (error) {
-      console.error('Error updating menu:', error);
-      Alert.alert('エラー', 'メニューの更新に失敗しました');
+    } catch (error: any) {
+      console.error('Error updating menu:', {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details,
+        hint: error?.hint,
+      });
+      const reason = error?.message ? `\n${error.message}` : '';
+      Alert.alert('エラー', `メニューの更新に失敗しました${reason}`);
     } finally {
       setSaving(false);
     }
