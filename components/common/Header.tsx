@@ -3,13 +3,14 @@ import { Text, View, TouchableOpacity } from 'react-native';
 interface HeaderProps {
   title: string;
   subtitle?: string;
+  subtitleElement?: React.ReactNode;
   showBack?: boolean;
   onBack?: () => void;
   titleLeftElement?: React.ReactNode;
   rightElement?: React.ReactNode;
 }
 
-export const Header = ({ title, subtitle, showBack = false, onBack, titleLeftElement, rightElement }: HeaderProps) => {
+export const Header = ({ title, subtitle, subtitleElement, showBack = false, onBack, titleLeftElement, rightElement }: HeaderProps) => {
   return (
     <View className="bg-white border-b border-gray-200 px-4 py-4">
       <View className="flex-row items-center justify-between">
@@ -24,7 +25,7 @@ export const Header = ({ title, subtitle, showBack = false, onBack, titleLeftEle
               {titleLeftElement}
               <Text className="text-xl font-bold text-gray-900 flex-shrink">{title}</Text>
             </View>
-            {subtitle && <Text className="text-sm text-gray-500 mt-0.5">{subtitle}</Text>}
+            {subtitleElement ? subtitleElement : subtitle ? <Text className="text-sm text-gray-500 mt-0.5">{subtitle}</Text> : null}
           </View>
         </View>
         {rightElement && <View>{rightElement}</View>}

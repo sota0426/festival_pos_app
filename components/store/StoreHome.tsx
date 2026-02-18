@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Clipboard from 'expo-clipboard';
 import { Card, Header, Button, Input, Modal } from '../common';
 import {
   getStoreSettings, saveStoreSettings, saveAdminPassword, verifyAdminPassword,
@@ -14,7 +15,7 @@ import {
   getPendingVisitorCounts, savePendingVisitorCount, getVisitorGroups, saveVisitorGroups,
   getBudgetSettings, getBudgetExpenses, getPrepIngredients,
 } from '../../lib/storage';
-import { alertConfirm, alertNotify } from '../../lib/alertUtils';
+import { alertNotify } from '../../lib/alertUtils';
 import type {
   Branch,
   BudgetExpense,
@@ -34,7 +35,6 @@ import { isSupabaseConfigured, supabase } from 'lib/supabase';
 import { base64ToBytes, bytesToBase64, bytesToText, createZip, extractStoredZipEntries, textToBytes } from '../../lib/zipUtils';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSubscription } from '../../contexts/SubscriptionContext';
-import { LoginCodeEntry } from 'components/auth/LoginCodeEntry';
 
 /** 削除カテゴリのキー */
 type DeleteCategory = 'sales' | 'menu' | 'visitor' | 'budget' | 'prep';
@@ -91,6 +91,96 @@ const DATA_CATEGORY_LABELS: Record<ExportableCategory, string> = {
   prep: '下準備データ',
 };
 
+const toCsvCell = (value: unknown): string => {
+  const normalized =
+    value == null
+      ? ''
+      : typeof value === 'object'
+        ? JSON.stringify(value)
+        : String(value);
+  const text = String(normalized);
+  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+};
+
+const csvFromObjects = (rows: Record<string, unknown>[]): string => {
+  if (rows.length === 0) return '\uFEFF';
+  const headers = Array.from(
+    rows.reduce((set, row) => {
+      Object.keys(row).forEach((key) => set.add(key));
+      return set;
+    }, new Set<string>()),
+  );
+  const lines: string[] = [headers.map(toCsvCell).join(',')];
+  rows.forEach((row) => {
+    lines.push(headers.map((header) => toCsvCell(row[header])).join(','));
+  });
+  return `\uFEFF${lines.join('\n')}`;
+};
+
+const parseCsvLine = (line: string): string[] => {
+  const cells: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      cells.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current);
+  return cells;
+};
+
+const csvToObjects = (content: string): Record<string, string>[] => {
+  const raw = content.replace(/^\uFEFF/, '');
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length === 0) return [];
+  const headers = parseCsvLine(lines[0]).map((h) => h.trim());
+  const rows: Record<string, string>[] = [];
+  for (let i = 1; i < lines.length; i += 1) {
+    const values = parseCsvLine(lines[i]);
+    const row: Record<string, string> = {};
+    headers.forEach((header, idx) => {
+      row[header] = values[idx] ?? '';
+    });
+    rows.push(row);
+  }
+  return rows;
+};
+
+const toNumberOr = (value: unknown, fallback = 0): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const n = Number(String(value ?? '').trim());
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const toBoolean = (value: unknown): boolean => String(value ?? '').trim().toLowerCase() === 'true';
+
+const parseJsonCell = <T,>(value: unknown, fallback: T): T => {
+  const text = String(value ?? '').trim();
+  if (!text) return fallback;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return fallback;
+  }
+};
+
 export const StoreHome = ({
   branch,
   onNavigateToRegister,
@@ -106,7 +196,7 @@ export const StoreHome = ({
   onBranchUpdated,
   onLogout,
 }: StoreHomeProps) => {
-  const { authState } = useAuth();
+  const { authState, exitLoginCode } = useAuth();
   const { isOrgPlan } = useSubscription();
   const [activeTab, setActiveTab] = useState<TabKey>('main');
   const [settingsView, setSettingsView] = useState<SettingsView>('top');
@@ -154,11 +244,17 @@ export const StoreHome = ({
   const [adminGuardError, setAdminGuardError] = useState('');
   const [adminGuardCallback, setAdminGuardCallback] = useState<(() => void) | null>(null);
   const [switchableBranches, setSwitchableBranches] = useState<Branch[]>([]);
+  const [branchLoginCode, setBranchLoginCode] = useState<string | null>(null);
+  const [showLoginCodeModal, setShowLoginCodeModal] = useState(false);
+  const [copiedLoginCode, setCopiedLoginCode] = useState(false);
 
   useEffect(() => {
     const loadSettings = async () => {
       const settings = await getStoreSettings();
-      if (settings.sub_screen_mode) {
+      // ログインコード利用時は常に店舗ホーム（メイン画面）から開始
+      if (authState.status === 'login_code') {
+        setActiveTab('main');
+      } else if (settings.sub_screen_mode) {
         setActiveTab('sub');
       }
       if (settings.payment_methods) {
@@ -168,7 +264,14 @@ export const StoreHome = ({
       setRestrictions(r);
     };
     loadSettings();
-  }, []);
+  }, [authState.status]);
+
+  useEffect(() => {
+    if (authState.status === 'login_code') {
+      setActiveTab('main');
+      setSettingsView('top');
+    }
+  }, [authState.status]);
 
   useEffect(() => {
     const refreshBranchName = async () => {
@@ -215,6 +318,38 @@ export const StoreHome = ({
 
     loadSwitchableBranches();
   }, [authState, isOrgPlan]);
+
+  useEffect(() => {
+    const loadBranchLoginCode = async () => {
+      if (authState.status === 'login_code' && authState.branch.id === branch.id) {
+        setBranchLoginCode(authState.loginCode);
+        return;
+      }
+      if (!isSupabaseConfigured()) {
+        setBranchLoginCode(null);
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('login_codes')
+          .select('code')
+          .eq('branch_id', branch.id)
+          .eq('is_active', true)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (error) {
+          console.error('Failed to load branch login code:', error);
+          setBranchLoginCode(null);
+          return;
+        }
+        setBranchLoginCode(data?.[0]?.code ?? null);
+      } catch (error) {
+        console.error('Failed to load branch login code:', error);
+        setBranchLoginCode(null);
+      }
+    };
+    loadBranchLoginCode();
+  }, [authState, branch.id]);
 
   // --- Admin guard helpers ---
   const openAdminGuard = (onSuccess: () => void) => {
@@ -734,38 +869,69 @@ export const StoreHome = ({
       const payload = await buildBackupPayload(categories);
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const list = Array.from(categories);
+      const csvFiles: { name: string; content: string }[] = [];
 
-      if (list.length === 1) {
-        const key = list[0];
-        const singlePayload: StoreBackupPayload = {
-          ...payload,
-          data: { [key]: payload.data[key] },
-        };
-        const json = JSON.stringify(singlePayload, null, 2);
-        const filename = `store_backup_${branch.branch_code}_${key}_${timestamp}.json`;
-        await saveTextAsFile(filename, json, 'application/json', `${DATA_CATEGORY_LABELS[key]} を出力しました`);
+      list.forEach((key) => {
+        const data = payload.data[key] as Record<string, unknown> | undefined;
+        if (!data) return;
+
+        if (key === 'sales') {
+          const transactions = (data.transactions as Record<string, unknown>[] | undefined) ?? [];
+          const items = (data.transaction_items as Record<string, unknown>[] | undefined) ?? [];
+          const pending = (data.pending_transactions as Record<string, unknown>[] | undefined) ?? [];
+          csvFiles.push({ name: 'sales_transactions.csv', content: csvFromObjects(transactions) });
+          csvFiles.push({ name: 'sales_transaction_items.csv', content: csvFromObjects(items) });
+          csvFiles.push({ name: 'sales_pending_transactions.csv', content: csvFromObjects(pending) });
+        }
+
+        if (key === 'menu') {
+          const menus = (data.menus as Record<string, unknown>[] | undefined) ?? [];
+          const categoriesData = (data.menu_categories as Record<string, unknown>[] | undefined) ?? [];
+          csvFiles.push({ name: 'menu_menus.csv', content: csvFromObjects(menus) });
+          csvFiles.push({ name: 'menu_categories.csv', content: csvFromObjects(categoriesData) });
+        }
+
+        if (key === 'visitor') {
+          const counts = (data.visitor_counts as Record<string, unknown>[] | undefined) ?? [];
+          const pending = (data.pending_visitor_counts as Record<string, unknown>[] | undefined) ?? [];
+          const groups = (data.visitor_groups as Record<string, unknown>[] | undefined) ?? [];
+          csvFiles.push({ name: 'visitor_counts.csv', content: csvFromObjects(counts) });
+          csvFiles.push({ name: 'visitor_pending_counts.csv', content: csvFromObjects(pending) });
+          csvFiles.push({ name: 'visitor_groups.csv', content: csvFromObjects(groups) });
+        }
+
+        if (key === 'budget') {
+          const settings = (data.budget_settings as Record<string, unknown> | undefined) ?? {};
+          const expenses = (data.budget_expenses as Record<string, unknown>[] | undefined) ?? [];
+          csvFiles.push({ name: 'budget_settings.csv', content: csvFromObjects([settings]) });
+          csvFiles.push({ name: 'budget_expenses.csv', content: csvFromObjects(expenses) });
+        }
+
+        if (key === 'prep') {
+          const prep = (data.prep_ingredients as Record<string, unknown>[] | undefined) ?? [];
+          csvFiles.push({ name: 'prep_ingredients.csv', content: csvFromObjects(prep) });
+        }
+      });
+
+      const nonEmptyCsvFiles = csvFiles.filter((file) => file.content.trim().length > 0);
+
+      if (nonEmptyCsvFiles.length === 0) {
+        alertNotify('エクスポート', '出力対象データがありません');
+        return false;
+      }
+
+      if (nonEmptyCsvFiles.length === 1) {
+        const only = nonEmptyCsvFiles[0];
+        const filename = `store_backup_${branch.branch_code}_${timestamp}_${only.name}`;
+        await saveTextAsFile(filename, only.content, 'text/csv;charset=utf-8;', `${only.name} を出力しました`);
       } else {
-        const zipEntries = [
-          { name: 'backup.json', data: textToBytes(JSON.stringify(payload, null, 2)) },
-          { name: 'manifest.json', data: textToBytes(JSON.stringify({
-            version: 1,
-            exported_at: payload.exported_at,
-            categories: list,
-            branch: payload.branch,
-          }, null, 2)) },
-          ...list.map((key) => ({
-            name: `${key}.json`,
-            data: textToBytes(JSON.stringify({
-              category: key,
-              label: DATA_CATEGORY_LABELS[key],
-              exported_at: payload.exported_at,
-              data: payload.data[key],
-            }, null, 2)),
-          })),
-        ];
+        const zipEntries = nonEmptyCsvFiles.map((file) => ({
+          name: file.name,
+          data: textToBytes(file.content),
+        }));
         const zipBytes = createZip(zipEntries);
         const filename = `store_backup_${branch.branch_code}_${timestamp}.zip`;
-        await saveZipAsFile(filename, zipBytes, `${list.length}種類のデータをZIPで出力しました`);
+        await saveZipAsFile(filename, zipBytes, `${nonEmptyCsvFiles.length}件のCSVをZIPで出力しました`);
       }
 
       if (!options?.silentSuccess) {
@@ -781,24 +947,169 @@ export const StoreHome = ({
     }
   };
 
-  const toImportPayload = (raw: any): StoreBackupPayload | null => {
-    if (!raw || typeof raw !== 'object') return null;
-    if (raw.version === 1 && raw.data && typeof raw.data === 'object') {
-      return raw as StoreBackupPayload;
-    }
+  const payloadFromCsvFiles = (
+    files: Array<{ name: string; content: string }>,
+  ): StoreBackupPayload | null => {
+    const data: Partial<Record<ExportableCategory, unknown>> = {};
 
-    const keys = (Object.keys(raw) as ExportableCategory[]).filter((key) =>
-      ['sales', 'menu', 'visitor', 'budget', 'prep'].includes(key),
-    );
-    if (keys.length > 0) {
-      return {
-        version: 1,
-        exported_at: new Date().toISOString(),
-        branch: { id: branch.id, branch_code: branch.branch_code, branch_name: branch.branch_name },
-        data: keys.reduce((acc, key) => ({ ...acc, [key]: raw[key] }), {}),
-      };
+    files.forEach((file) => {
+      const name = file.name.toLowerCase();
+      const rows = csvToObjects(file.content);
+
+      if (name.endsWith('sales_transactions.csv')) {
+        const sales = (data.sales as { transactions?: Transaction[]; transaction_items?: TransactionItem[]; pending_transactions?: PendingTransaction[] } | undefined) ?? {};
+        sales.transactions = rows.map((row) => ({
+          ...(row as unknown as Transaction),
+          total_amount: toNumberOr(row.total_amount),
+        }));
+        data.sales = sales;
+      }
+
+      if (name.endsWith('sales_transaction_items.csv')) {
+        const sales = (data.sales as { transactions?: Transaction[]; transaction_items?: TransactionItem[]; pending_transactions?: PendingTransaction[] } | undefined) ?? {};
+        sales.transaction_items = rows.map((row) => ({
+          ...(row as unknown as TransactionItem),
+          quantity: toNumberOr(row.quantity),
+          unit_price: toNumberOr(row.unit_price),
+          subtotal: toNumberOr(row.subtotal),
+        }));
+        data.sales = sales;
+      }
+
+      if (name.endsWith('sales_pending_transactions.csv')) {
+        const sales = (data.sales as { transactions?: Transaction[]; transaction_items?: TransactionItem[]; pending_transactions?: PendingTransaction[] } | undefined) ?? {};
+        sales.pending_transactions = rows.map((row) => ({
+          ...(row as unknown as PendingTransaction),
+          total_amount: toNumberOr(row.total_amount),
+          synced: toBoolean(row.synced),
+          items: parseJsonCell(row.items, [] as PendingTransaction['items']),
+        }));
+        data.sales = sales;
+      }
+
+      if (name.endsWith('menu_menus.csv')) {
+        const menu = (data.menu as { menus?: Menu[]; menu_categories?: MenuCategory[] } | undefined) ?? {};
+        menu.menus = rows.map((row) => ({
+          ...(row as unknown as Menu),
+          price: toNumberOr(row.price),
+          menu_number: toNumberOr(row.menu_number),
+          sort_order: toNumberOr(row.sort_order),
+          stock_quantity: toNumberOr(row.stock_quantity),
+          stock_management: toBoolean(row.stock_management),
+          is_active: row.is_active === '' ? true : toBoolean(row.is_active),
+          is_show: row.is_show === '' ? true : toBoolean(row.is_show),
+          category_id: row.category_id || null,
+        }));
+        data.menu = menu;
+      }
+
+      if (name.endsWith('menu_categories.csv')) {
+        const menu = (data.menu as { menus?: Menu[]; menu_categories?: MenuCategory[] } | undefined) ?? {};
+        menu.menu_categories = rows.map((row) => ({
+          ...(row as unknown as MenuCategory),
+          sort_order: toNumberOr(row.sort_order),
+        }));
+        data.menu = menu;
+      }
+
+      if (name.endsWith('visitor_counts.csv')) {
+        const visitor = (data.visitor as { visitor_counts?: PendingVisitorCount[]; pending_visitor_counts?: PendingVisitorCount[]; visitor_groups?: VisitorCounterGroup[] } | undefined) ?? {};
+        visitor.visitor_counts = rows.map((row) => ({
+          ...(row as unknown as PendingVisitorCount),
+          count: toNumberOr(row.count),
+          synced: row.synced === '' ? true : toBoolean(row.synced),
+        }));
+        data.visitor = visitor;
+      }
+
+      if (name.endsWith('visitor_pending_counts.csv')) {
+        const visitor = (data.visitor as { visitor_counts?: PendingVisitorCount[]; pending_visitor_counts?: PendingVisitorCount[]; visitor_groups?: VisitorCounterGroup[] } | undefined) ?? {};
+        visitor.pending_visitor_counts = rows.map((row) => ({
+          ...(row as unknown as PendingVisitorCount),
+          count: toNumberOr(row.count),
+          synced: toBoolean(row.synced),
+        }));
+        data.visitor = visitor;
+      }
+
+      if (name.endsWith('visitor_groups.csv')) {
+        const visitor = (data.visitor as { visitor_counts?: PendingVisitorCount[]; pending_visitor_counts?: PendingVisitorCount[]; visitor_groups?: VisitorCounterGroup[] } | undefined) ?? {};
+        visitor.visitor_groups = rows as unknown as VisitorCounterGroup[];
+        data.visitor = visitor;
+      }
+
+      if (name.endsWith('budget_settings.csv')) {
+        const budget = (data.budget as { budget_settings?: BudgetSettings; budget_expenses?: BudgetExpense[] } | undefined) ?? {};
+        const row = rows[0] ?? {};
+        budget.budget_settings = {
+          ...(row as unknown as BudgetSettings),
+          branch_id: row.branch_id ?? branch.id,
+          initial_budget: toNumberOr(row.initial_budget),
+          target_sales: toNumberOr(row.target_sales),
+        };
+        data.budget = budget;
+      }
+
+      if (name.endsWith('budget_expenses.csv')) {
+        const budget = (data.budget as { budget_settings?: BudgetSettings; budget_expenses?: BudgetExpense[] } | undefined) ?? {};
+        budget.budget_expenses = rows.map((row) => ({
+          ...(row as unknown as BudgetExpense),
+          amount: toNumberOr(row.amount),
+          receipt_image: row.receipt_image || null,
+          synced: row.synced === '' ? true : toBoolean(row.synced),
+        }));
+        data.budget = budget;
+      }
+
+      if (name.endsWith('prep_ingredients.csv')) {
+        const prep = (data.prep as { prep_ingredients?: PrepIngredient[] } | undefined) ?? {};
+        prep.prep_ingredients = rows.map((row) => ({
+          ...(row as unknown as PrepIngredient),
+          current_stock: toNumberOr(row.current_stock),
+          minimum_stock: row.minimum_stock === '' ? null : toNumberOr(row.minimum_stock),
+        }));
+        data.prep = prep;
+      }
+    });
+
+    if (Object.keys(data).length === 0) return null;
+
+    return {
+      version: 1,
+      exported_at: new Date().toISOString(),
+      branch: { id: branch.id, branch_code: branch.branch_code, branch_name: branch.branch_name },
+      data,
+    };
+  };
+
+  const readPickedFileText = async (asset: DocumentPicker.DocumentPickerAsset): Promise<string> => {
+    if (Platform.OS === 'web') {
+      const webFile = (asset as DocumentPicker.DocumentPickerAsset & { file?: File }).file;
+      if (webFile) return webFile.text();
+      if (asset.uri) {
+        const response = await fetch(asset.uri);
+        return await response.text();
+      }
+      throw new Error('Webファイルの読み込みに失敗しました');
     }
-    return null;
+    return await FileSystem.readAsStringAsync(asset.uri, { encoding: 'utf8' });
+  };
+
+  const readPickedFileBase64 = async (asset: DocumentPicker.DocumentPickerAsset): Promise<string> => {
+    if (Platform.OS === 'web') {
+      const webFile = (asset as DocumentPicker.DocumentPickerAsset & { file?: File }).file;
+      if (webFile) {
+        const arrayBuffer = await webFile.arrayBuffer();
+        return bytesToBase64(new Uint8Array(arrayBuffer));
+      }
+      if (asset.uri) {
+        const response = await fetch(asset.uri);
+        const arrayBuffer = await response.arrayBuffer();
+        return bytesToBase64(new Uint8Array(arrayBuffer));
+      }
+      throw new Error('Web ZIPファイルの読み込みに失敗しました');
+    }
+    return await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
   };
 
   const pickImportFile = async () => {
@@ -807,7 +1118,7 @@ export const StoreHome = ({
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
         multiple: false,
-        type: ['application/json', 'application/zip', 'application/octet-stream', 'text/plain'],
+        type: ['application/zip', 'text/csv', 'application/octet-stream', 'text/plain'],
       });
       if (result.canceled) return;
       const asset = result.assets[0];
@@ -818,31 +1129,15 @@ export const StoreHome = ({
       let payload: StoreBackupPayload | null = null;
 
       if (isZip) {
-        const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+        const base64 = await readPickedFileBase64(asset);
         const zipEntries = extractStoredZipEntries(base64ToBytes(base64));
-        const backupEntry = zipEntries.find((entry) => entry.name === 'backup.json');
-        if (backupEntry) {
-          payload = toImportPayload(JSON.parse(bytesToText(backupEntry.data)));
-        } else {
-          const data: Partial<Record<ExportableCategory, unknown>> = {};
-          zipEntries.forEach((entry) => {
-            const key = entry.name.replace('.json', '') as ExportableCategory;
-            if (!['sales', 'menu', 'visitor', 'budget', 'prep'].includes(key)) return;
-            const parsed = JSON.parse(bytesToText(entry.data));
-            data[key] = parsed?.data ?? parsed;
-          });
-          if (Object.keys(data).length > 0) {
-            payload = {
-              version: 1,
-              exported_at: new Date().toISOString(),
-              branch: { id: branch.id, branch_code: branch.branch_code, branch_name: branch.branch_name },
-              data,
-            };
-          }
-        }
+        const csvFiles = zipEntries
+          .filter((entry) => entry.name.toLowerCase().endsWith('.csv'))
+          .map((entry) => ({ name: entry.name, content: bytesToText(entry.data) }));
+        payload = payloadFromCsvFiles(csvFiles);
       } else {
-        const text = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'utf8' });
-        payload = toImportPayload(JSON.parse(text));
+        const text = await readPickedFileText(asset);
+        payload = payloadFromCsvFiles([{ name: asset.name ?? 'import.csv', content: text }]);
       }
 
       if (!payload) {
@@ -1028,6 +1323,25 @@ export const StoreHome = ({
       onLogout();
   };
 
+  const maskedLoginCode = branchLoginCode
+    ? `${branchLoginCode.slice(0, 1)}${'＊'.repeat(Math.max(0, branchLoginCode.length - 1))}`
+    : null;
+
+  const handleCopyLoginCode = async () => {
+    if (!branchLoginCode) return;
+    try {
+      if (Platform.OS === 'web') {
+        await navigator.clipboard.writeText(branchLoginCode);
+      } else {
+        await Clipboard.setStringAsync(branchLoginCode);
+      }
+      setCopiedLoginCode(true);
+      setTimeout(() => setCopiedLoginCode(false), 1600);
+    } catch {
+      alertNotify('エラー', 'ログインコードのコピーに失敗しました');
+    }
+  };
+
   const currentBranchIndex = switchableBranches.findIndex((b) => b.id === branch.id);
   const canSwitchBranch = isOrgPlan && authState.status === 'authenticated' && switchableBranches.length > 1 && currentBranchIndex >= 0;
 
@@ -1059,7 +1373,20 @@ export const StoreHome = ({
       <Header
         title={branch.branch_name}
         titleLeftElement={branchSwitcher}
-        subtitle={`支店番号: ${branch.branch_code}`}
+        subtitleElement={
+          <View className="flex-row items-center gap-2 mt-0.5">
+            <Text className="text-sm text-gray-500">支店番号: {branch.branch_code}</Text>
+            {maskedLoginCode ? (
+              <TouchableOpacity
+                onPress={() => setShowLoginCodeModal(true)}
+                activeOpacity={0.8}
+                className="px-2 py-0.5 rounded-full border border-blue-200 bg-blue-50"
+              >
+                <Text className="text-[11px] font-medium text-blue-700">ログインコード: {maskedLoginCode}</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        }
         rightElement={
           <Button title="トップ画面" onPress={handleBackToTop} variant="secondary" size="sm" />
         }
@@ -1375,6 +1702,25 @@ export const StoreHome = ({
                       <Text className="text-cyan-700 text-xs">バックアップからデータ復元</Text>
                     </View>
                   </TouchableOpacity>
+
+                  {authState.status === 'login_code' && (
+                    <TouchableOpacity
+                      onPress={async () => {
+                        await exitLoginCode();
+                        onLogout();
+                      }}
+                      activeOpacity={0.8}
+                      className="flex-row items-center gap-3 rounded-xl border border-red-300 bg-white px-3 py-3 mt-2"
+                    >
+                      <View className="w-9 h-9 rounded-full bg-red-100 items-center justify-center">
+                        <Text className="text-red-700 font-bold">退</Text>
+                      </View>
+                      <View className="flex-1">
+                        <Text className="text-red-700 font-semibold">ログアウト</Text>
+                        <Text className="text-red-500 text-xs">ログインコード利用を終了してトップへ戻る</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </>
             )}
@@ -1428,6 +1774,43 @@ export const StoreHome = ({
               onPress={handleChangePassword}
               loading={savingPassword}
               disabled={!newPassword.trim() || !confirmPassword.trim()}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showLoginCodeModal}
+        onClose={() => {
+          setShowLoginCodeModal(false);
+          setCopiedLoginCode(false);
+        }}
+        title="ログインコード"
+      >
+        <View className="items-center py-2">
+          <Text className="text-3xl font-bold tracking-[0.28em] text-gray-900">
+            {branchLoginCode ?? '------'}
+          </Text>
+          <Text className="text-gray-500 text-xs mt-2">
+            タップでコピーして、店舗ログインに共有できます
+          </Text>
+        </View>
+        <View className="flex-row gap-3 mt-3">
+          <View className="flex-1">
+            <Button
+              title="閉じる"
+              onPress={() => {
+                setShowLoginCodeModal(false);
+                setCopiedLoginCode(false);
+              }}
+              variant="secondary"
+            />
+          </View>
+          <View className="flex-1">
+            <Button
+              title={copiedLoginCode ? 'コピー済み' : 'コピー'}
+              onPress={handleCopyLoginCode}
+              disabled={!branchLoginCode}
             />
           </View>
         </View>
@@ -1609,7 +1992,7 @@ export const StoreHome = ({
         ))}
         <View className="bg-blue-50 rounded-lg p-3 mb-2">
           <Text className="text-blue-700 text-xs">
-            1種類を選択: JSON出力 / 複数種類を選択: ZIP出力
+            1ファイルの場合はCSVで出力、複数ファイルになる場合はCSVをZIPで出力します
           </Text>
         </View>
         <View className="flex-row gap-3 mt-2">
@@ -1656,7 +2039,7 @@ export const StoreHome = ({
         {importSourceName ? (
           <Text className="text-gray-600 text-xs mt-2">選択ファイル: {importSourceName}</Text>
         ) : (
-          <Text className="text-gray-400 text-xs mt-2">JSON または ZIP を選択してください</Text>
+          <Text className="text-gray-400 text-xs mt-2">CSV または CSV入りZIP を選択してください</Text>
         )}
 
         {importPayload && (

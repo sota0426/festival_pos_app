@@ -847,7 +847,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
             </Text>
             <View className="flex-row items-center gap-3 mt-1">
               <Text className="text-gray-500 text-xs">PW: {item.password}</Text>
-              <Text className="text-blue-600 font-bold text-xs">目標 {item.sales_target.toLocaleString()}円</Text>
             </View>
             {/* Login code inline */}
             {!isFreePlan && (
@@ -1153,7 +1152,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
                   <View key={`new-${i}`} className="flex-row items-center justify-between bg-green-50 rounded-lg px-3 py-2 mb-1">
                     <View>
                       <Text className="text-gray-900 font-medium">{row.branch_code} {row.branch_name}</Text>
-                      <Text className="text-gray-500 text-xs">目標: {row.sales_target.toLocaleString()}円</Text>
                     </View>
                     <View className={`px-2 py-0.5 rounded-full ${row.status === 'active' ? 'bg-green-200' : 'bg-gray-200'}`}>
                       <Text className="text-xs">{row.status === 'active' ? '稼働' : '停止'}</Text>
@@ -1172,7 +1170,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
                   <View key={`upd-${i}`} className="flex-row items-center justify-between bg-blue-50 rounded-lg px-3 py-2 mb-1">
                     <View>
                       <Text className="text-gray-900 font-medium">{row.branch_code} {row.branch_name}</Text>
-                      <Text className="text-gray-500 text-xs">目標: {row.sales_target.toLocaleString()}円</Text>
                     </View>
                     <View className={`px-2 py-0.5 rounded-full ${row.status === 'active' ? 'bg-green-200' : 'bg-gray-200'}`}>
                       <Text className="text-xs">{row.status === 'active' ? '稼働' : '停止'}</Text>

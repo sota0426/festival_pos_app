@@ -1209,13 +1209,33 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     const menuCode = menuCodeMap.get(item.id) ?? '000';
     const isTopInSection = indexInSection === 0;
     const isBottomInSection = indexInSection === sectionLength - 1;
+    const canDragReorder = sectionLength > 1;
+    let movedByDrag = false;
     const dragResponder = PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 6,
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy < -20) {
+      onStartShouldSetPanResponder: () => canDragReorder,
+      onStartShouldSetPanResponderCapture: () => canDragReorder,
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        Math.abs(gestureState.dy) > 2 || Math.abs(gestureState.dx) > 2,
+      onMoveShouldSetPanResponderCapture: (_, gestureState) =>
+        Math.abs(gestureState.dy) > 2 || Math.abs(gestureState.dx) > 2,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderMove: (_, gestureState) => {
+        if (!canDragReorder) return;
+        if (movedByDrag) return;
+        if (gestureState.dy < -18) {
+          movedByDrag = true;
           moveMenuOrder(item, 'up');
-        } else if (gestureState.dy > 20) {
+        } else if (gestureState.dy > 18) {
+          movedByDrag = true;
+          moveMenuOrder(item, 'down');
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (!canDragReorder) return;
+        if (movedByDrag) return;
+        if (gestureState.dy < -18) {
+          moveMenuOrder(item, 'up');
+        } else if (gestureState.dy > 18) {
           moveMenuOrder(item, 'down');
         }
       },
@@ -1312,10 +1332,12 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             </View>
             <View className="flex-row gap-1 items-center">
               <View
-                {...dragResponder.panHandlers}
-                className="w-7 h-7 items-center justify-center rounded bg-gray-200"
+                {...(canDragReorder ? dragResponder.panHandlers : {})}
+                className={`w-9 h-9 items-center justify-center rounded ${
+                  canDragReorder ? 'bg-blue-100 border border-blue-300' : 'bg-gray-200 opacity-50'
+                }`}
               >
-                <Text className="text-gray-600 text-xs font-bold">⋮⋮</Text>
+                <Text className={`text-sm font-bold ${canDragReorder ? 'text-blue-700' : 'text-gray-500'}`}>⋮⋮</Text>
               </View>
               <TouchableOpacity
                 onPress={() => moveMenuOrder(item, 'up')}

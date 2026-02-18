@@ -36,6 +36,7 @@ type Screen =
   | 'landing'
   | 'auth_signin'
   | 'login_code_entry'
+  | 'login_code_loading'
   | 'account_dashboard'
   | 'pricing'
   | 'my_stores'
@@ -164,7 +165,7 @@ function AppContent() {
     } else if (authState.status === 'demo') {
       setCurrentScreen('landing');
     } else if (authState.status === 'login_code') {
-      setCurrentScreen('landing');
+      setCurrentScreen('login_code_loading');
     } else {
       setCurrentScreen('landing');
     }
@@ -175,7 +176,9 @@ function AppContent() {
     const resolveLoginCodeBranch = async () => {
       if (
         authState.status !== 'login_code' ||
-        (currentScreen !== 'landing' && currentScreen !== 'login_code_entry')
+        (currentScreen !== 'landing' &&
+          currentScreen !== 'login_code_entry' &&
+          currentScreen !== 'login_code_loading')
       ) {
         return;
       }
@@ -188,6 +191,11 @@ function AppContent() {
     if (authState.status === 'authenticated') {
       if (currentScreen === 'landing' || currentScreen === 'auth_signin') {
         setCurrentScreen('account_dashboard');
+      }
+    }
+    if (authState.status === 'unauthenticated') {
+      if (currentScreen === 'login_code_loading') {
+        setCurrentScreen('landing');
       }
     }
     resolveLoginCodeBranch();
@@ -308,13 +316,20 @@ function AppContent() {
           />
         );
 
+      case 'login_code_loading':
+        return (
+          <View className="flex-1 justify-center items-center bg-gray-50">
+            <ActivityIndicator size="large" color="#22c55e" />
+            <Text className="mt-4 text-gray-600">店舗画面を準備しています...</Text>
+          </View>
+        );
+
       case 'account_dashboard':
         return (
           <AccountDashboard
             onNavigateToStore={() => setCurrentScreen('store_login')}
             onNavigateToHQ={() => setCurrentScreen('hq_home')}
             onNavigateToPricing={() => setCurrentScreen('pricing')}
-            onNavigateToMyStores={() => setCurrentScreen('my_stores')}
             onLogout={() => setCurrentScreen('landing')}
           />
         );
@@ -377,6 +392,7 @@ function AppContent() {
                 setHqBranchInfoFocusBranchId(null);
                 setCurrentScreen('hq_branch_info');
               }}
+              onNavigateMyStores={() => setCurrentScreen('my_stores')}
               onNavigatePresentation={() => setCurrentScreen('hq_presentation')}
               onLogout={() => {
                 if (authState.status === 'authenticated') {

@@ -8,7 +8,6 @@ interface AccountDashboardProps {
   onNavigateToStore: () => void;
   onNavigateToHQ: () => void;
   onNavigateToPricing: () => void;
-  onNavigateToMyStores: () => void;
   onLogout: () => void;
 }
 
@@ -22,7 +21,6 @@ export const AccountDashboard = ({
   onNavigateToStore,
   onNavigateToHQ,
   onNavigateToPricing,
-  onNavigateToMyStores,
   onLogout,
 }: AccountDashboardProps) => {
   const { authState, signOut } = useAuth();
@@ -100,18 +98,6 @@ export const AccountDashboard = ({
         {/* 管理メニュー */}
         <View className="gap-3 mb-6">
           <Text className="text-base font-bold text-gray-800 mb-1">管理</Text>
-
-          <TouchableOpacity onPress={onNavigateToMyStores} activeOpacity={0.8}>
-            <Card className="bg-white p-4">
-              <View className="flex-row justify-between items-center">
-                <Text className="font-semibold text-gray-800">店舗管理</Text>
-                <Text className="text-gray-400">&gt;</Text>
-              </View>
-              <Text className="text-gray-500 text-xs mt-1">
-                ログインコードの確認・店舗の追加
-              </Text>
-            </Card>
-          </TouchableOpacity>
 
           <TouchableOpacity onPress={onNavigateToPricing} activeOpacity={0.8}>
             <Card className="bg-white p-4">
