@@ -92,6 +92,17 @@ export interface Menu {
   updated_at: string;
 }
 
+export interface PrepIngredient {
+  id: string;
+  branch_id: string;
+  ingredient_name: string;
+  unit: string;
+  current_stock: number;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export type PaymentMethod = 'paypay' | 'voucher' | 'cash';
 
 export type FulfillmentStatus = 'pending' | 'served';

@@ -7,11 +7,11 @@ import type {
   LocalStorage,
   PendingVisitorCount,
   StoreSettings,
-  PaymentMode,
   BudgetExpense,
   BudgetSettings,
   VisitorCounterGroup,
   RestrictionSettings,
+  PrepIngredient,
 } from '../types/database';
 import { setSyncEnabled } from './syncMode';
 
@@ -31,6 +31,7 @@ const STORAGE_KEYS = {
   RESTRICTIONS: '@festival_pos/restrictions',
 };
 const VISITOR_GROUPS_KEY_PREFIX = '@festival_pos/visitor_groups';
+const PREP_INGREDIENTS_KEY_PREFIX = '@festival_pos/prep_ingredients';
 const BREAKEVEN_DRAFT_KEY_PREFIX = '@festival_pos/breakeven_draft';
 const EXPENSE_RECORDER_KEY_PREFIX = '@festival_pos/expense_recorder';
 
@@ -222,6 +223,15 @@ export const getVisitorGroups = async (branchId: string): Promise<VisitorCounter
   return data ? JSON.parse(data) : [];
 };
 
+export const savePrepIngredients = async (branchId: string, ingredients: PrepIngredient[]): Promise<void> => {
+  await AsyncStorage.setItem(`${PREP_INGREDIENTS_KEY_PREFIX}/${branchId}`, JSON.stringify(ingredients));
+};
+
+export const getPrepIngredients = async (branchId: string): Promise<PrepIngredient[]> => {
+  const data = await AsyncStorage.getItem(`${PREP_INGREDIENTS_KEY_PREFIX}/${branchId}`);
+  return data ? JSON.parse(data) : [];
+};
+
 export const saveBreakevenDraft = async (branchId: string, draft: BreakevenDraft): Promise<void> => {
   await AsyncStorage.setItem(`${BREAKEVEN_DRAFT_KEY_PREFIX}/${branchId}`, JSON.stringify(draft));
 };
@@ -297,6 +307,10 @@ export const clearAllData = async (): Promise<void> => {
   const recorderKeys = allKeys.filter((key) => key.startsWith(`${EXPENSE_RECORDER_KEY_PREFIX}/`));
   if (recorderKeys.length > 0) {
     await AsyncStorage.multiRemove(recorderKeys);
+  }
+  const prepIngredientKeys = allKeys.filter((key) => key.startsWith(`${PREP_INGREDIENTS_KEY_PREFIX}/`));
+  if (prepIngredientKeys.length > 0) {
+    await AsyncStorage.multiRemove(prepIngredientKeys);
   }
 };
 

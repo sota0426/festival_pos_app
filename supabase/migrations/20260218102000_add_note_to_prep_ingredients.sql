@@ -1,0 +1,2 @@
+ALTER TABLE public.prep_ingredients
+ADD COLUMN IF NOT EXISTS note TEXT NOT NULL DEFAULT '';

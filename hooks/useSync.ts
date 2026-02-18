@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { AppState, AppStateStatus } from 'react-native';
+import { AppState, AppStateStatus, Platform } from 'react-native';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {
   getPendingTransactions,
@@ -14,6 +14,8 @@ import * as Crypto from 'expo-crypto';
 
 const SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
 const VISITOR_SYNC_INTERVAL = 15 * 60 * 1000; // 15 minutes
+// 未同期データがある場合のリトライ間隔（短め）
+const RETRY_INTERVAL = 30 * 1000; // 30 seconds
 const ALLOWED_VISITOR_GROUP_TYPES = new Set(['group1', 'group2', 'group3', 'group4']);
 
 const normalizeVisitorGroupType = (value?: string | null): string => {
@@ -29,7 +31,10 @@ export const useSync = () => {
   const syncInProgress = useRef(false);
   const visitorSyncInProgress = useRef(false);
   const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
   const visitorSyncTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // 前回のオンライン状態を記録（復帰検知用）
+  const wasOfflineRef = useRef(false);
 
   const syncPendingTransactions = useCallback(async () => {
     if (!isSupabaseConfigured() || syncInProgress.current) {
@@ -206,70 +211,112 @@ export const useSync = () => {
   }, []);
 
   const checkAndSync = useCallback(async () => {
-    const lastSync = await getLastSyncTime();
+    if (!isSupabaseConfigured()) return;
 
-    if (!lastSync) {
-      // Never synced, sync now
+    // 未同期データがあれば間隔に関わらず即時同期
+    const pending = await getPendingTransactions();
+    const hasUnsynced = pending.some((t) => !t.synced);
+    if (hasUnsynced) {
       await syncPendingTransactions();
       return;
     }
 
+    // 未同期なし: 最終同期から1時間以上経過していれば同期
+    const lastSync = await getLastSyncTime();
+    if (!lastSync) {
+      await syncPendingTransactions();
+      return;
+    }
     const lastSyncTime = new Date(lastSync).getTime();
-    const now = Date.now();
-
-    if (now - lastSyncTime >= SYNC_INTERVAL) {
-      // More than 1 hour since last sync
+    if (Date.now() - lastSyncTime >= SYNC_INTERVAL) {
       await syncPendingTransactions();
     }
   }, [syncPendingTransactions]);
 
+  // 未同期データが残っている間、短い間隔でリトライタイマーを張る
+  const scheduleRetryIfNeeded = useCallback(async () => {
+    if (retryTimerRef.current) return; // すでにスケジュール済み
+    const pending = await getPendingTransactions();
+    const hasUnsynced = pending.some((t) => !t.synced);
+    if (!hasUnsynced) return;
+    retryTimerRef.current = setInterval(async () => {
+      const stillPending = await getPendingTransactions();
+      const stillUnsynced = stillPending.some((t) => !t.synced);
+      if (!stillUnsynced) {
+        // 全件同期済みになったらリトライタイマーを解除
+        if (retryTimerRef.current) {
+          clearInterval(retryTimerRef.current);
+          retryTimerRef.current = null;
+        }
+        return;
+      }
+      await syncPendingTransactions();
+    }, RETRY_INTERVAL);
+  }, [syncPendingTransactions]);
+
   // Set up periodic sync
   useEffect(() => {
-    // Initial sync check
-    checkAndSync();
+    // 初回: 未同期データがあれば即時同期、その後リトライタイマーをセット
+    void checkAndSync().then(() => scheduleRetryIfNeeded());
 
-    // Set up interval for periodic sync
+    // 定期同期（1時間ごと、フォールバック用）
     syncTimerRef.current = setInterval(() => {
-      checkAndSync();
+      void checkAndSync().then(() => scheduleRetryIfNeeded());
     }, SYNC_INTERVAL);
 
-    // Visitor counts sync every 15 minutes (aligned to quarter-hour boundary)
-    syncPendingVisitorCounts();
+    // 来客カウント: 15分ごと（15分境界に合わせる）
+    void syncPendingVisitorCounts();
     const now = Date.now();
-    const nextBoundaryDelay =
-      VISITOR_SYNC_INTERVAL - (now % VISITOR_SYNC_INTERVAL);
+    const nextBoundaryDelay = VISITOR_SYNC_INTERVAL - (now % VISITOR_SYNC_INTERVAL);
     const boundaryTimeout = setTimeout(() => {
-      syncPendingVisitorCounts();
+      void syncPendingVisitorCounts();
       visitorSyncTimerRef.current = setInterval(() => {
-        syncPendingVisitorCounts();
+        void syncPendingVisitorCounts();
       }, VISITOR_SYNC_INTERVAL);
     }, nextBoundaryDelay);
 
-    // Sync when app comes to foreground
+    // アプリフォアグラウンド復帰時に同期
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
-        checkAndSync();
-        syncPendingVisitorCounts();
+        void checkAndSync().then(() => scheduleRetryIfNeeded());
+        void syncPendingVisitorCounts();
       }
     };
-
     const subscription = AppState.addEventListener('change', handleAppStateChange);
 
+    // Web: オンライン復帰イベントで即座に同期
+    const handleOnline = () => {
+      if (wasOfflineRef.current) {
+        wasOfflineRef.current = false;
+        void checkAndSync().then(() => scheduleRetryIfNeeded());
+        void syncPendingVisitorCounts();
+      }
+    };
+    const handleOffline = () => {
+      wasOfflineRef.current = true;
+    };
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('offline', handleOffline);
+    }
+
     return () => {
-      if (syncTimerRef.current) {
-        clearInterval(syncTimerRef.current);
-      }
-      if (visitorSyncTimerRef.current) {
-        clearInterval(visitorSyncTimerRef.current);
-      }
+      if (syncTimerRef.current) clearInterval(syncTimerRef.current);
+      if (retryTimerRef.current) clearInterval(retryTimerRef.current);
+      if (visitorSyncTimerRef.current) clearInterval(visitorSyncTimerRef.current);
       clearTimeout(boundaryTimeout);
       subscription.remove();
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+      }
     };
-  }, [checkAndSync, syncPendingVisitorCounts]);
+  }, [checkAndSync, scheduleRetryIfNeeded, syncPendingVisitorCounts]);
 
   return {
     syncNow: syncPendingTransactions,
     syncVisitorNow: syncPendingVisitorCounts,
     checkAndSync,
+    scheduleRetryIfNeeded,
   };
 };

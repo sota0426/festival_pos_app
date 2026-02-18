@@ -16,7 +16,7 @@ import type { Branch, LoginCode } from '../../types/database';
 
 // ─── CSV utilities ───
 
-const CSV_HEADER = 'branch_code,branch_name,password,sales_target,status';
+const CSV_HEADER = 'branch_code,branch_name,password,sales_target,status,login_code';
 
 const toCsvCell = (value: string | number): string => {
   const text = String(value ?? '');
@@ -52,6 +52,15 @@ const parseCsvLine = (line: string): string[] => {
   }
   cells.push(current.trim());
   return cells;
+};
+
+const normalizePassword = (raw: string): string => {
+  const value = raw.trim();
+  if (!value) return '';
+  if (/^\d+$/.test(value) && value.length < 4) {
+    return value.padStart(4, '0');
+  }
+  return value;
 };
 
 type CsvImportRow = {
@@ -95,6 +104,9 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importing, setImporting] = useState(false);
   const [showActionsModal, setShowActionsModal] = useState(false);
+  const [selectDeleteMode, setSelectDeleteMode] = useState(false);
+  const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const userId = authState.status === 'authenticated' ? authState.user.id : null;
   const subscriptionId =
@@ -153,6 +165,23 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     setRefreshing(true);
     loadData().finally(() => setRefreshing(false));
   }, [loadData]);
+
+  const toggleBranchSelection = (branchId: string) => {
+    setSelectedBranchIds((prev) =>
+      prev.includes(branchId) ? prev.filter((id) => id !== branchId) : [...prev, branchId]
+    );
+  };
+
+  const startSelectDeleteMode = () => {
+    setShowActionsModal(false);
+    setSelectDeleteMode(true);
+    setSelectedBranchIds([]);
+  };
+
+  const stopSelectDeleteMode = () => {
+    setSelectDeleteMode(false);
+    setSelectedBranchIds([]);
+  };
 
   // ─── Login code actions ───
 
@@ -478,11 +507,82 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     await executeDeleteStore();
   };
 
+  const handleBulkDeleteStores = async () => {
+    if (!userId) {
+      alertNotify('エラー', 'ログイン状態を確認できませんでした');
+      return;
+    }
+    if (selectedBranchIds.length === 0) {
+      alertNotify('未選択', '削除する店舗を選択してください');
+      return;
+    }
+
+    const targets = branches.filter((b) => selectedBranchIds.includes(b.id));
+    if (targets.length === 0) {
+      alertNotify('未選択', '削除する店舗を選択してください');
+      return;
+    }
+
+    const confirmed = await new Promise<boolean>((resolve) => {
+      const message = `${targets.length}店舗を削除します。関連するメニュー・履歴データも削除されます。続行しますか？`;
+      if (Platform.OS === 'web') {
+        resolve(window.confirm(message));
+      } else {
+        Alert.alert(
+          '複数店舗の削除',
+          message,
+          [
+            { text: 'キャンセル', onPress: () => resolve(false), style: 'cancel' },
+            { text: '削除', onPress: () => resolve(true), style: 'destructive' },
+          ],
+        );
+      }
+    });
+    if (!confirmed) return;
+
+    setBulkDeleting(true);
+    try {
+      const storedBranch = await getBranch();
+      const { error } = await supabase
+        .from('branches')
+        .delete()
+        .in('id', selectedBranchIds)
+        .eq('owner_id', userId);
+      if (error) throw error;
+
+      if (
+        storedBranch &&
+        targets.some((target) => target.id === storedBranch.id || target.branch_code === storedBranch.branch_code)
+      ) {
+        await clearBranch();
+      }
+
+      setBranches((prev) => prev.filter((b) => !selectedBranchIds.includes(b.id)));
+      setLoginCodes((prev) => {
+        const next = { ...prev };
+        selectedBranchIds.forEach((id) => {
+          delete next[id];
+        });
+        return next;
+      });
+      setSelectDeleteMode(false);
+      setSelectedBranchIds([]);
+      alertNotify('削除完了', `${targets.length}店舗を削除しました`);
+    } catch (e) {
+      console.error('Failed to bulk delete stores:', e);
+      const message = e instanceof Error ? e.message : '複数店舗の削除に失敗しました';
+      alertNotify('エラー', message);
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   // ─── CSV Export ───
 
   const buildCsv = (): string => {
     const lines: string[] = [CSV_HEADER];
     branches.forEach((b) => {
+      const loginCode = loginCodes[b.id]?.code ?? '';
       lines.push(
         [
           toCsvCell(b.branch_code),
@@ -490,6 +590,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           toCsvCell(b.password),
           toCsvCell(b.sales_target),
           toCsvCell(b.status),
+          toCsvCell(loginCode),
         ].join(',')
       );
     });
@@ -581,7 +682,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
       const rowNum = i + 1;
 
       const branchName = colIndex.branch_name >= 0 ? (cells[colIndex.branch_name] ?? '').trim() : '';
-      const password = colIndex.password >= 0 ? (cells[colIndex.password] ?? '').trim() : '';
+      const password = colIndex.password >= 0 ? normalizePassword(cells[colIndex.password] ?? '') : '';
       const salesTarget = colIndex.sales_target >= 0 ? parseInt(cells[colIndex.sales_target] ?? '0', 10) || 0 : 0;
       const statusRaw = colIndex.status >= 0 ? (cells[colIndex.status] ?? 'active').trim().toLowerCase() : 'active';
       const status: 'active' | 'inactive' = statusRaw === 'inactive' ? 'inactive' : 'active';
@@ -714,9 +815,21 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
 
   const renderStoreItem = ({ item }: { item: Branch }) => {
     const code = loginCodes[item.id];
+    const selected = selectedBranchIds.includes(item.id);
     return (
       <Card className={`mb-2 px-3 py-2 border ${item.status === 'active' ? 'border-blue-200 bg-white' : 'border-gray-200 bg-gray-100 opacity-60'}`}>
         <View className="flex-row items-start justify-between">
+          {selectDeleteMode && (
+            <TouchableOpacity
+              onPress={() => toggleBranchSelection(item.id)}
+              className={`mt-1 mr-2 w-6 h-6 rounded-md border items-center justify-center ${
+                selected ? 'bg-red-500 border-red-500' : 'bg-white border-gray-300'
+              }`}
+              activeOpacity={0.8}
+            >
+              <Text className={`text-xs font-bold ${selected ? 'text-white' : 'text-gray-300'}`}>✓</Text>
+            </TouchableOpacity>
+          )}
           {/* Left: store info */}
           <View className="flex-1 pr-2">
             <View className="flex-row items-center gap-1 mb-1">
@@ -770,27 +883,29 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
             )}
           </View>
           {/* Right: action buttons */}
-          <View className="items-end gap-1">
-            <TouchableOpacity
-              onPress={() => {
-                if (item.status === 'inactive') {
-                  alertNotify('停止中の店舗', '停止中の店舗には入れません。店舗設定で「稼働中」に変更してください。');
-                  return;
-                }
-                onEnterStore(item);
-              }}
-              activeOpacity={0.8}
-              className={`px-3 py-1.5 rounded ${item.status === 'active' ? 'bg-green-500' : 'bg-gray-400'}`}
-            >
-              <Text className="text-white text-xs font-semibold">店舗に入る</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => handleOpenRename(item)}
-              className="px-2 py-1 bg-blue-50 rounded"
-            >
-              <Text className="text-blue-600 text-xs font-medium">店舗設定</Text>
-            </TouchableOpacity>
-          </View>
+          {!selectDeleteMode && (
+            <View className="items-end gap-1">
+              <TouchableOpacity
+                onPress={() => {
+                  if (item.status === 'inactive') {
+                    alertNotify('停止中の店舗', '停止中の店舗には入れません。店舗設定で「稼働中」に変更してください。');
+                    return;
+                  }
+                  onEnterStore(item);
+                }}
+                activeOpacity={0.8}
+                className={`px-3 py-1.5 rounded ${item.status === 'active' ? 'bg-green-500' : 'bg-gray-400'}`}
+              >
+                <Text className="text-white text-xs font-semibold">店舗に入る</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => handleOpenRename(item)}
+                className="px-2 py-1 bg-blue-50 rounded"
+              >
+                <Text className="text-blue-600 text-xs font-medium">店舗設定</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </Card>
     );
@@ -822,6 +937,28 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           </View>
         }
       />
+
+      {selectDeleteMode && (
+        <View className="mx-4 mt-3 mb-1 p-3 rounded-xl border border-red-200 bg-red-50">
+          <View className="flex-row items-center justify-between">
+            <Text className="text-red-700 text-sm font-semibold">
+              削除対象を選択中: {selectedBranchIds.length}件
+            </Text>
+            <TouchableOpacity onPress={stopSelectDeleteMode} className="px-2 py-1 bg-white rounded-md border border-red-200">
+              <Text className="text-red-600 text-xs font-medium">終了</Text>
+            </TouchableOpacity>
+          </View>
+          <View className="mt-2">
+            <Button
+              title={bulkDeleting ? '削除中...' : '選択した店舗を削除'}
+              onPress={handleBulkDeleteStores}
+              variant="danger"
+              loading={bulkDeleting}
+              disabled={bulkDeleting || selectedBranchIds.length === 0}
+            />
+          </View>
+        </View>
+      )}
 
       {loading ? (
         <View className="flex-1 items-center justify-center">
@@ -967,6 +1104,21 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
                 {exporting ? 'CSV出力中...' : 'CSV一括ダウンロード'}
               </Text>
               <Text className="text-blue-600 text-xs">全店舗情報をCSVファイルで出力</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={startSelectDeleteMode}
+            disabled={branches.length === 0}
+            className={`flex-row items-center gap-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3 ${
+              branches.length === 0 ? 'opacity-50' : ''
+            }`}
+            activeOpacity={0.7}
+          >
+            <Text className="text-lg">🗑️</Text>
+            <View className="flex-1">
+              <Text className="text-red-800 font-semibold text-sm">複数選択して削除</Text>
+              <Text className="text-red-600 text-xs">削除したい店舗だけを選んで一括削除</Text>
             </View>
           </TouchableOpacity>
         </View>

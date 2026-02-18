@@ -8,7 +8,6 @@ import type { Branch } from '../../types/database';
 interface HQBranchReportsProps {
   focusBranchId?: string | null;
   onBack: () => void;
-  onBackToHQ: () => void;
 }
 
 interface BranchReportSummary {
@@ -25,10 +24,11 @@ interface BranchReportSummary {
   menuRows: { menu_name: string; quantity: number; subtotal: number }[];
 }
 
-export const HQBranchReports = ({ focusBranchId, onBack, onBackToHQ }: HQBranchReportsProps) => {
+export const HQBranchReports = ({ focusBranchId, onBack }: HQBranchReportsProps) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reports, setReports] = useState<BranchReportSummary[]>([]);
+  const [showComparison, setShowComparison] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!isSupabaseConfigured()) {
@@ -194,7 +194,14 @@ export const HQBranchReports = ({ focusBranchId, onBack, onBackToHQ }: HQBranchR
         subtitle="各店舗の報告書一覧"
         showBack
         onBack={onBack}
-        rightElement={<Button title="本部画面" onPress={onBackToHQ} variant="secondary" size="sm" />}
+        rightElement={
+          <Button
+            title={showComparison ? '一覧表示' : '比較表示'}
+            onPress={() => setShowComparison((prev) => !prev)}
+            variant="secondary"
+            size="sm"
+          />
+        }
       />
       {loading ? (
         <View className="flex-1 items-center justify-center">
@@ -215,88 +222,159 @@ export const HQBranchReports = ({ focusBranchId, onBack, onBackToHQ }: HQBranchR
             />
           }
         >
-          {sortedReports.map((report) => (
-            <Card
-              key={report.branch.id}
-              className={`mb-4 ${focusBranchId === report.branch.id ? 'border-2 border-blue-400' : ''}`}
-            >
-              <View className="flex-row items-center justify-between mb-2">
+          {showComparison ? (
+            <Card className="mb-4">
+              <Text className="text-gray-900 text-lg font-bold mb-3">店舗比較表</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator>
                 <View>
-                  <Text className="text-blue-700 font-bold">{report.branch.branch_code}</Text>
-                  <Text className="text-gray-900 text-lg font-bold">{report.branch.branch_name}</Text>
+                  <View className="flex-row border-b border-gray-200 bg-gray-100">
+                    <View className="w-36 px-3 py-2 border-r border-gray-200">
+                      <Text className="text-gray-700 text-xs font-semibold">店舗</Text>
+                    </View>
+                    <View className="w-28 px-3 py-2 border-r border-gray-200">
+                      <Text className="text-gray-700 text-xs font-semibold text-right">収入</Text>
+                    </View>
+                    <View className="w-28 px-3 py-2 border-r border-gray-200">
+                      <Text className="text-gray-700 text-xs font-semibold text-right">支出</Text>
+                    </View>
+                    <View className="w-28 px-3 py-2 border-r border-gray-200">
+                      <Text className="text-gray-700 text-xs font-semibold text-right">利益</Text>
+                    </View>
+                    <View className="w-24 px-3 py-2 border-r border-gray-200">
+                      <Text className="text-gray-700 text-xs font-semibold text-right">取引件数</Text>
+                    </View>
+                    <View className="w-28 px-3 py-2 border-r border-gray-200">
+                      <Text className="text-gray-700 text-xs font-semibold text-right">客単価</Text>
+                    </View>
+                    <View className="w-24 px-3 py-2">
+                      <Text className="text-gray-700 text-xs font-semibold text-right">達成率</Text>
+                    </View>
+                  </View>
+
+                  {sortedReports.map((report, index) => (
+                    <View
+                      key={`comparison-${report.branch.id}`}
+                      className={`flex-row border-b border-gray-100 ${
+                        focusBranchId === report.branch.id ? 'bg-blue-50' : index % 2 === 0 ? 'bg-white' : 'bg-gray-50'
+                      }`}
+                    >
+                      <View className="w-36 px-3 py-2 border-r border-gray-100">
+                        <Text className="text-gray-900 text-xs font-semibold">{report.branch.branch_code}</Text>
+                        <Text className="text-gray-600 text-xs" numberOfLines={1}>
+                          {report.branch.branch_name}
+                        </Text>
+                      </View>
+                      <View className="w-28 px-3 py-2 border-r border-gray-100">
+                        <Text className="text-gray-900 text-xs text-right">{report.totalSales.toLocaleString()}円</Text>
+                      </View>
+                      <View className="w-28 px-3 py-2 border-r border-gray-100">
+                        <Text className="text-gray-900 text-xs text-right">{report.totalExpense.toLocaleString()}円</Text>
+                      </View>
+                      <View className="w-28 px-3 py-2 border-r border-gray-100">
+                        <Text className={`text-xs text-right font-semibold ${report.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                          {report.profit.toLocaleString()}円
+                        </Text>
+                      </View>
+                      <View className="w-24 px-3 py-2 border-r border-gray-100">
+                        <Text className="text-gray-900 text-xs text-right">{report.transactionCount.toLocaleString()}</Text>
+                      </View>
+                      <View className="w-28 px-3 py-2 border-r border-gray-100">
+                        <Text className="text-gray-900 text-xs text-right">{report.averageOrder.toLocaleString()}円</Text>
+                      </View>
+                      <View className="w-24 px-3 py-2">
+                        <Text className={`text-xs text-right font-semibold ${report.targetAchievementRate >= 100 ? 'text-green-700' : 'text-orange-700'}`}>
+                          {report.targetAchievementRate}%
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
                 </View>
-                <View
-                  className={`px-2 py-1 rounded ${
-                    report.targetAchievementRate >= 100 ? 'bg-green-100' : 'bg-orange-100'
-                  }`}
-                >
-                  <Text
-                    className={`text-xs font-semibold ${
-                      report.targetAchievementRate >= 100 ? 'text-green-700' : 'text-orange-700'
+              </ScrollView>
+            </Card>
+          ) : (
+            sortedReports.map((report) => (
+              <Card
+                key={report.branch.id}
+                className={`mb-4 ${focusBranchId === report.branch.id ? 'border-2 border-blue-400' : ''}`}
+              >
+                <View className="flex-row items-center justify-between mb-2">
+                  <View>
+                    <Text className="text-blue-700 font-bold">{report.branch.branch_code}</Text>
+                    <Text className="text-gray-900 text-lg font-bold">{report.branch.branch_name}</Text>
+                  </View>
+                  <View
+                    className={`px-2 py-1 rounded ${
+                      report.targetAchievementRate >= 100 ? 'bg-green-100' : 'bg-orange-100'
                     }`}
                   >
-                    目標達成 {report.targetAchievementRate}%
-                  </Text>
-                </View>
-              </View>
-
-              <View className="flex-row gap-2 mb-3">
-                <View className="flex-1 bg-blue-50 rounded-lg p-2">
-                  <Text className="text-blue-700 text-xs">収入</Text>
-                  <Text className="text-blue-900 font-bold">{report.totalSales.toLocaleString()}円</Text>
-                </View>
-                <View className="flex-1 bg-rose-50 rounded-lg p-2">
-                  <Text className="text-rose-700 text-xs">支出</Text>
-                  <Text className="text-rose-900 font-bold">{report.totalExpense.toLocaleString()}円</Text>
-                </View>
-                <View className={`flex-1 rounded-lg p-2 ${report.profit >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
-                  <Text className={`text-xs ${report.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>利益</Text>
-                  <Text className={`font-bold ${report.profit >= 0 ? 'text-green-900' : 'text-red-900'}`}>
-                    {report.profit.toLocaleString()}円
-                  </Text>
-                </View>
-              </View>
-
-              <View className="flex-row items-center justify-between mb-3">
-                <Text className="text-gray-600 text-sm">取引 {report.transactionCount}件</Text>
-                <Text className="text-gray-600 text-sm">客単価 {report.averageOrder.toLocaleString()}円</Text>
-                <Text className="text-gray-600 text-sm">目標 {report.branch.sales_target.toLocaleString()}円</Text>
-              </View>
-
-              <View className="mb-3">
-                <Text className="text-gray-800 font-semibold mb-1">支払い内訳</Text>
-                <View className="flex-row gap-2">
-                  <View className="flex-1 bg-sky-50 rounded-lg p-2">
-                    <Text className="text-sky-700 text-xs">PayPay</Text>
-                    <Text className="text-sky-900 font-semibold">{report.paypaySales.toLocaleString()}円</Text>
-                  </View>
-                  <View className="flex-1 bg-yellow-50 rounded-lg p-2">
-                    <Text className="text-yellow-700 text-xs">金券</Text>
-                    <Text className="text-yellow-900 font-semibold">{report.voucherSales.toLocaleString()}円</Text>
-                  </View>
-                  <View className="flex-1 bg-emerald-50 rounded-lg p-2">
-                    <Text className="text-emerald-700 text-xs">現金</Text>
-                    <Text className="text-emerald-900 font-semibold">{report.cashSales.toLocaleString()}円</Text>
+                    <Text
+                      className={`text-xs font-semibold ${
+                        report.targetAchievementRate >= 100 ? 'text-green-700' : 'text-orange-700'
+                      }`}
+                    >
+                      目標達成 {report.targetAchievementRate}%
+                    </Text>
                   </View>
                 </View>
-              </View>
 
-              <View>
-                <Text className="text-gray-800 font-semibold mb-1">販売商品内訳</Text>
-                {report.menuRows.length === 0 ? (
-                  <Text className="text-gray-400 text-sm">販売データがありません</Text>
-                ) : (
-                  report.menuRows.slice(0, 6).map((row) => (
-                    <View key={row.menu_name} className="flex-row items-center justify-between py-1 border-b border-gray-100">
-                      <Text className="text-gray-700 text-sm">{row.menu_name}</Text>
-                      <Text className="text-gray-600 text-xs">{row.quantity}個</Text>
-                      <Text className="text-gray-900 text-sm font-semibold">{row.subtotal.toLocaleString()}円</Text>
+                <View className="flex-row gap-2 mb-3">
+                  <View className="flex-1 bg-blue-50 rounded-lg p-2">
+                    <Text className="text-blue-700 text-xs">収入</Text>
+                    <Text className="text-blue-900 font-bold">{report.totalSales.toLocaleString()}円</Text>
+                  </View>
+                  <View className="flex-1 bg-rose-50 rounded-lg p-2">
+                    <Text className="text-rose-700 text-xs">支出</Text>
+                    <Text className="text-rose-900 font-bold">{report.totalExpense.toLocaleString()}円</Text>
+                  </View>
+                  <View className={`flex-1 rounded-lg p-2 ${report.profit >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                    <Text className={`text-xs ${report.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>利益</Text>
+                    <Text className={`font-bold ${report.profit >= 0 ? 'text-green-900' : 'text-red-900'}`}>
+                      {report.profit.toLocaleString()}円
+                    </Text>
+                  </View>
+                </View>
+
+                <View className="flex-row items-center justify-between mb-3">
+                  <Text className="text-gray-600 text-sm">取引 {report.transactionCount}件</Text>
+                  <Text className="text-gray-600 text-sm">客単価 {report.averageOrder.toLocaleString()}円</Text>
+                  <Text className="text-gray-600 text-sm">目標 {report.branch.sales_target.toLocaleString()}円</Text>
+                </View>
+
+                <View className="mb-3">
+                  <Text className="text-gray-800 font-semibold mb-1">支払い内訳</Text>
+                  <View className="flex-row gap-2">
+                    <View className="flex-1 bg-sky-50 rounded-lg p-2">
+                      <Text className="text-sky-700 text-xs">PayPay</Text>
+                      <Text className="text-sky-900 font-semibold">{report.paypaySales.toLocaleString()}円</Text>
                     </View>
-                  ))
-                )}
-              </View>
-            </Card>
-          ))}
+                    <View className="flex-1 bg-yellow-50 rounded-lg p-2">
+                      <Text className="text-yellow-700 text-xs">金券</Text>
+                      <Text className="text-yellow-900 font-semibold">{report.voucherSales.toLocaleString()}円</Text>
+                    </View>
+                    <View className="flex-1 bg-emerald-50 rounded-lg p-2">
+                      <Text className="text-emerald-700 text-xs">現金</Text>
+                      <Text className="text-emerald-900 font-semibold">{report.cashSales.toLocaleString()}円</Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View>
+                  <Text className="text-gray-800 font-semibold mb-1">販売商品内訳</Text>
+                  {report.menuRows.length === 0 ? (
+                    <Text className="text-gray-400 text-sm">販売データがありません</Text>
+                  ) : (
+                    report.menuRows.slice(0, 6).map((row) => (
+                      <View key={row.menu_name} className="flex-row items-center justify-between py-1 border-b border-gray-100">
+                        <Text className="text-gray-700 text-sm">{row.menu_name}</Text>
+                        <Text className="text-gray-600 text-xs">{row.quantity}個</Text>
+                        <Text className="text-gray-900 text-sm font-semibold">{row.subtotal.toLocaleString()}円</Text>
+                      </View>
+                    ))
+                  )}
+                </View>
+              </Card>
+            ))
+          )}
           {sortedReports.length === 0 && (
             <Card>
               <Text className="text-gray-500 text-center">表示できる店舗データがありません</Text>

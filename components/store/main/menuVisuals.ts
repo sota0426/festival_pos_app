@@ -87,7 +87,12 @@ export const sortMenusByDisplay = (menus: Menu[]) =>
   });
 
 export const getCategoryMetaMap = (categories: MenuCategory[]) => {
-  const orderedCategories = [...categories].sort((a, b) => a.sort_order - b.sort_order);
+  // MenuManagement と同じ sort_order 基準でソート（同値時は id でタイブレーク）
+  const orderedCategories = [...categories].sort((a, b) => {
+    const diff = a.sort_order - b.sort_order;
+    if (diff !== 0) return diff;
+    return a.id.localeCompare(b.id, 'ja', { numeric: true });
+  });
   const map = new Map<string, CategoryMeta>();
 
   orderedCategories.forEach((category, index) => {

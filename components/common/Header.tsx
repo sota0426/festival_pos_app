@@ -5,10 +5,11 @@ interface HeaderProps {
   subtitle?: string;
   showBack?: boolean;
   onBack?: () => void;
+  titleLeftElement?: React.ReactNode;
   rightElement?: React.ReactNode;
 }
 
-export const Header = ({ title, subtitle, showBack = false, onBack, rightElement }: HeaderProps) => {
+export const Header = ({ title, subtitle, showBack = false, onBack, titleLeftElement, rightElement }: HeaderProps) => {
   return (
     <View className="bg-white border-b border-gray-200 px-4 py-4">
       <View className="flex-row items-center justify-between">
@@ -19,7 +20,10 @@ export const Header = ({ title, subtitle, showBack = false, onBack, rightElement
             </TouchableOpacity>
           )}
           <View className="flex-1">
-            <Text className="text-xl font-bold text-gray-900">{title}</Text>
+            <View className="flex-row items-center gap-2">
+              {titleLeftElement}
+              <Text className="text-xl font-bold text-gray-900 flex-shrink">{title}</Text>
+            </View>
             {subtitle && <Text className="text-sm text-gray-500 mt-0.5">{subtitle}</Text>}
           </View>
         </View>

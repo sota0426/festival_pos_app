@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { Button, Card, Header } from '../common';
+import { Button, Card, Header, Modal } from '../common';
 import { alertNotify } from '../../lib/alertUtils';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { createZipFromTextFiles, uint8ArrayToBase64 } from '../../lib/zip';
@@ -110,6 +110,8 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [exportingCsv, setExportingCsv] = useState(false);
+  const [exportingJson, setExportingJson] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
 
   const [totalSales, setTotalSales] = useState<SalesAggregation>({
     total_sales: 0,
@@ -510,6 +512,97 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
     }
   };
 
+  const handleExportDashboardJson = async () => {
+    try {
+      setExportingJson(true);
+      if (branchSales.length === 0) {
+        alertNotify('JSON出力', '出力対象のデータがありません');
+        return;
+      }
+
+      const dateLabel = toDateLabel(new Date().toISOString());
+      const payload = {
+        exported_at: new Date().toISOString(),
+        summary: {
+          total_sales: totalSales.total_sales,
+          total_expense: branchSales.reduce((sum, b) => sum + b.total_expense, 0),
+          total_profit: branchSales.reduce((sum, b) => sum + b.profit, 0),
+          total_transactions: totalSales.transaction_count,
+          total_visitors: totalVisitors,
+          achievement_rate: achievementRate,
+        },
+        branches: branchSales.map((branch) => {
+          const branchTx = transactionRows.filter((tx) => tx.branch_id === branch.branch_id);
+          const branchExpenses = expenseRows.filter((expense) => expense.branch_id === branch.branch_id);
+          const branchVisitorsRaw = visitorRows.filter((visitor) => visitor.branch_id === branch.branch_id);
+          const branchMenuSummary = Array.from(menuSummaryByBranch.get(branch.branch_id)?.entries() ?? [])
+            .map(([menu_name, row]) => ({ menu_name, ...row }))
+            .sort((a, b) => b.subtotal - a.subtotal);
+          const branchItemRows = transactionItemRows.filter((item) => transactionToBranch.get(item.transaction_id) === branch.branch_id);
+
+          return {
+            branch_id: branch.branch_id,
+            branch_code: branch.branch_code,
+            branch_name: branch.branch_name,
+            summary: {
+              total_sales: branch.total_sales,
+              total_expense: branch.total_expense,
+              profit: branch.profit,
+              transaction_count: branch.transaction_count,
+              average_order: branch.average_order,
+              achievement_rate: branch.achievement_rate,
+              paypay_sales: branch.paypay_sales,
+              voucher_sales: branch.voucher_sales,
+              cash_sales: branch.total_sales - branch.paypay_sales - branch.voucher_sales,
+            },
+            transactions: branchTx,
+            menu_sales_summary: branchMenuSummary,
+            menu_sales_rows: branchItemRows,
+            expenses: branchExpenses,
+            visitors_quarter_hourly: quarterHourlyVisitors.map((slot) => ({
+              time_slot: slot.time_slot,
+              count: slot.by_branch[branch.branch_id] ?? 0,
+            })),
+            visitors_raw: branchVisitorsRaw,
+          };
+        }),
+      };
+
+      const jsonContent = JSON.stringify(payload, null, 2);
+      const filename = `hq_dashboard_${dateLabel}.json`;
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        alertNotify('JSON出力', 'JSONをダウンロードしました');
+        return;
+      }
+
+      const baseDir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
+      if (!baseDir) throw new Error('保存先ディレクトリを取得できませんでした');
+      const fileUri = `${baseDir}${filename}`;
+      await FileSystem.writeAsStringAsync(fileUri, jsonContent, { encoding: 'utf8' });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(fileUri, { mimeType: 'application/json', dialogTitle: 'ダッシュボードJSONを共有' });
+      } else {
+        alertNotify('JSON出力', `JSONを保存しました: ${fileUri}`);
+      }
+    } catch (error: any) {
+      console.error('Dashboard JSON export error:', error);
+      alertNotify('エラー', `JSON出力に失敗しました: ${error?.message ?? 'unknown error'}`);
+    } finally {
+      setExportingJson(false);
+    }
+  };
+
   const salesRanking = useMemo(() => [...branchSales].sort((a, b) => b.total_sales - a.total_sales), [branchSales]);
   const profitRanking = useMemo(() => [...branchSales].sort((a, b) => b.profit - a.profit), [branchSales]);
   const avgOrderRanking = useMemo(() => [...branchSales].sort((a, b) => b.average_order - a.average_order), [branchSales]);
@@ -565,7 +658,7 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
   }) => (
     <Card className="mb-4">
       <Text className="text-gray-900 text-2xl font-bold mb-3">{title}</Text>
-      {rows.slice(0, 5).map((row, index) => {
+      {rows.map((row, index) => {
         const rowView = (
           <View
             className={`flex-row items-center justify-between rounded-lg px-3 py-2 mb-2 ${index === 0 ? accentBg : 'bg-gray-50'}`}
@@ -596,14 +689,63 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
         onBack={onBack}
         rightElement={
           <Button
-            title={exportingCsv ? '出力中...' : 'CSV一括出力'}
-            onPress={handleExportDashboardCsv}
+            title={exportingCsv || exportingJson ? '出力中...' : '一括出力'}
+            onPress={() => setShowExportModal(true)}
             size="sm"
-            disabled={exportingCsv}
-            loading={exportingCsv}
+            disabled={exportingCsv || exportingJson}
+            loading={exportingCsv || exportingJson}
           />
         }
       />
+      <Modal
+        visible={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        title="一括出力"
+      >
+        <View className="gap-3">
+          <TouchableOpacity
+            onPress={() => {
+              setShowExportModal(false);
+              handleExportDashboardCsv();
+            }}
+            disabled={exportingCsv || exportingJson}
+            className={`flex-row items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 ${
+              exportingCsv || exportingJson ? 'opacity-50' : ''
+            }`}
+            activeOpacity={0.8}
+          >
+            <Text className="text-xl">📄</Text>
+            <View className="flex-1">
+              <Text className="text-blue-800 font-semibold">CSV出力</Text>
+              <Text className="text-blue-600 text-xs">店舗ごとにCSVを作成（複数店舗時はZIP）</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => {
+              setShowExportModal(false);
+              handleExportDashboardJson();
+            }}
+            disabled={exportingCsv || exportingJson}
+            className={`flex-row items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 ${
+              exportingCsv || exportingJson ? 'opacity-50' : ''
+            }`}
+            activeOpacity={0.8}
+          >
+            <Text className="text-xl">{'{ }'}</Text>
+            <View className="flex-1">
+              <Text className="text-emerald-800 font-semibold">JSON出力</Text>
+              <Text className="text-emerald-600 text-xs">全店舗データを1ファイルでまとめて出力</Text>
+            </View>
+          </TouchableOpacity>
+
+          <Button
+            title="キャンセル"
+            onPress={() => setShowExportModal(false)}
+            variant="secondary"
+          />
+        </View>
+      </Modal>
       <View className="flex-row bg-white border-b border-gray-200">
         <TouchableOpacity
           className={`flex-1 py-3 items-center ${activeTab === 'dashboard' ? 'bg-blue-600' : 'bg-white'}`}

@@ -10,7 +10,7 @@ import { SubscriptionProvider } from './contexts/SubscriptionContext';
 import { DemoProvider } from './contexts/DemoContext';
 
 import { HQLogin, HQDashboard, HQBranchReports, HQPresentation } from './components/hq';
-import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, BudgetManager } from './components/store';
+import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, PrepInventory, BudgetManager } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
 import { HQHome } from 'components/hq/HQHome';
@@ -27,7 +27,7 @@ import { LoginCodeEntry } from './components/auth/LoginCodeEntry';
 import { AccountDashboard } from './components/account/AccountDashboard';
 import { PricingScreen } from './components/account/PricingScreen';
 import { MyStores } from './components/account/MyStores';
-import { DemoBanner } from './components/common';
+import { DemoBanner, SyncStatusBanner } from './components/common';
 
 type Screen =
   // 新画面
@@ -51,6 +51,7 @@ type Screen =
   | 'store_history'
   | 'store_counter'
   | 'store_order_board'
+  | 'store_prep'
   | 'store_budget'
   | 'store_budget_expense'
   | 'store_budget_breakeven';
@@ -323,7 +324,6 @@ function AppContent() {
             <HQBranchReports
               focusBranchId={hqBranchInfoFocusBranchId}
               onBack={() => setCurrentScreen(hqBranchInfoReturnScreen)}
-              onBackToHQ={() => setCurrentScreen('hq_home')}
             />
           </>
         );
@@ -365,6 +365,7 @@ function AppContent() {
         return (
           <>
             <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
             <StoreHome
               branch={currentBranch}
               onNavigateToRegister={() => setCurrentScreen('store_register')}
@@ -372,6 +373,7 @@ function AppContent() {
               onNavigateToHistory={() => setCurrentScreen('store_history')}
               onNavigateToCounter={() => setCurrentScreen('store_counter')}
               onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
+              onNavigateToPrep={() => setCurrentScreen('store_prep')}
               onNavigateToBudget={() => setCurrentScreen('store_budget')}
               onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
               onNavigateToBudgetBreakeven={() => setCurrentScreen('store_budget_breakeven')}
@@ -389,6 +391,7 @@ function AppContent() {
         return (
           <>
             <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
             <MenuManagement
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -404,6 +407,7 @@ function AppContent() {
         return (
           <>
             <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
             <Register
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -421,6 +425,7 @@ function AppContent() {
         return (
           <>
             <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
             <SalesHistory
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -436,6 +441,7 @@ function AppContent() {
         return (
           <>
             <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
             <ManualCounterScreen
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -451,7 +457,24 @@ function AppContent() {
         return (
           <>
             <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
             <OrderBoard
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+            />
+          </>
+        );
+
+      case 'store_prep':
+        if (!currentBranch) {
+          setCurrentScreen('store_login');
+          return null;
+        }
+        return (
+          <>
+            <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
+            <PrepInventory
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
             />
@@ -466,6 +489,7 @@ function AppContent() {
         return (
           <>
             <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
             <BudgetManager
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -481,6 +505,7 @@ function AppContent() {
         return (
           <>
             <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
             <BudgetExpenseRecorder
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -496,6 +521,7 @@ function AppContent() {
         return (
           <>
             <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
             <BudgetManager
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}

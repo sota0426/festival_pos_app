@@ -245,7 +245,7 @@ export const ManualCounterScreen = ({ branch, onBack }: Props) => {
      {/* 説明文 */}
       <View className="mt-6 items-end">
         <Text className="text-gray-600 text-center text-xs pb-3 pr-2">
-          ※ 長押しで名称変更・数値変更ができます
+          ※ ボタン長押し：各種設定
         </Text>
       </View>
 

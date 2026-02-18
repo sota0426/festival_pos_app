@@ -6,6 +6,9 @@ import { getStoreSettings, saveStoreSettings, saveAdminPassword, verifyAdminPass
 import { alertConfirm, alertNotify } from '../../lib/alertUtils';
 import type { Branch, PaymentMethodSettings, RestrictionSettings } from '../../types/database';
 import { isSupabaseConfigured, supabase } from 'lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
+import { useSubscription } from '../../contexts/SubscriptionContext';
+import { LoginCodeEntry } from 'components/auth/LoginCodeEntry';
 
 type TabKey = 'main' | 'sub' | 'budget' | 'settings';
 
@@ -16,6 +19,7 @@ interface StoreHomeProps {
   onNavigateToHistory: () => void;
   onNavigateToCounter: () => void;
   onNavigateToOrderBoard: () => void;
+  onNavigateToPrep: () => void;
   onNavigateToBudget: () => void;
   onNavigateToBudgetExpense: () => void;
   onNavigateToBudgetBreakeven: () => void;
@@ -37,12 +41,15 @@ export const StoreHome = ({
   onNavigateToHistory,
   onNavigateToCounter,
   onNavigateToOrderBoard,
+  onNavigateToPrep,
   onNavigateToBudget,
   onNavigateToBudgetExpense,
   onNavigateToBudgetBreakeven,
   onBranchUpdated,
   onLogout,
 }: StoreHomeProps) => {
+  const { authState } = useAuth();
+  const { isOrgPlan } = useSubscription();
   const [activeTab, setActiveTab] = useState<TabKey>('main');
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodSettings>({
     cash: false,
@@ -72,6 +79,7 @@ export const StoreHome = ({
   const [adminGuardInput, setAdminGuardInput] = useState('');
   const [adminGuardError, setAdminGuardError] = useState('');
   const [adminGuardCallback, setAdminGuardCallback] = useState<(() => void) | null>(null);
+  const [switchableBranches, setSwitchableBranches] = useState<Branch[]>([]);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -97,13 +105,42 @@ export const StoreHome = ({
         .eq('id', branch.id)
         .maybeSingle();
       if (error || !data) return;
-      if (data.branch_name !== branch.branch_name) {
+      if (
+        data.branch_name !== branch.branch_name ||
+        data.password !== branch.password ||
+        data.status !== branch.status
+      ) {
         await saveBranch(data);
         onBranchUpdated?.(data);
       }
     };
     refreshBranchName();
-  }, [branch.id, branch.branch_name, onBranchUpdated]);
+  }, [branch.id, branch.branch_name, branch.password, branch.status, onBranchUpdated]);
+
+  useEffect(() => {
+    const loadSwitchableBranches = async () => {
+      if (!isSupabaseConfigured() || !isOrgPlan || authState.status !== 'authenticated') {
+        setSwitchableBranches([]);
+        return;
+      }
+
+      const ownerId = authState.user.id;
+      const { data, error } = await supabase
+        .from('branches')
+        .select('*')
+        .eq('owner_id', ownerId)
+        .order('branch_code', { ascending: true });
+
+      if (error) {
+        console.error('Failed to load switchable branches:', error);
+        setSwitchableBranches([]);
+        return;
+      }
+      setSwitchableBranches(data ?? []);
+    };
+
+    loadSwitchableBranches();
+  }, [authState, isOrgPlan]);
 
   // --- Admin guard helpers ---
   const openAdminGuard = (onSuccess: () => void) => {
@@ -203,6 +240,26 @@ export const StoreHome = ({
 
     setSavingPassword(true);
     try {
+      const nextPassword = newPassword.trim();
+
+      if (isSupabaseConfigured()) {
+        const { data, error } = await supabase
+          .from('branches')
+          .update({ password: nextPassword })
+          .eq('id', branch.id)
+          .select('*')
+          .single();
+        if (error) throw error;
+        if (!data) throw new Error('店舗データの更新に失敗しました');
+
+        await saveBranch(data);
+        onBranchUpdated?.(data);
+      } else {
+        const updatedBranch: Branch = { ...branch, password: nextPassword };
+        await saveBranch(updatedBranch);
+        onBranchUpdated?.(updatedBranch);
+      }
+
       await saveAdminPassword(newPassword);
       setShowPasswordModal(false);
       resetPasswordForm();
@@ -276,10 +333,37 @@ export const StoreHome = ({
       onLogout();
   };
 
+  const currentBranchIndex = switchableBranches.findIndex((b) => b.id === branch.id);
+  const canSwitchBranch = isOrgPlan && authState.status === 'authenticated' && switchableBranches.length > 1 && currentBranchIndex >= 0;
+
+  const moveBranch = async (direction: -1 | 1) => {
+    if (!canSwitchBranch) return;
+    const nextIndex = (currentBranchIndex + direction + switchableBranches.length) % switchableBranches.length;
+    const nextBranch = switchableBranches[nextIndex];
+    if (!nextBranch) return;
+    await saveBranch(nextBranch);
+    onBranchUpdated?.(nextBranch);
+  };
+
+  const branchSwitcher = canSwitchBranch ? (
+    <View className="flex-row items-center rounded-full border border-blue-200 bg-blue-50 px-1 py-0.5">
+      <TouchableOpacity onPress={() => moveBranch(-1)} className="w-7 h-7 items-center justify-center rounded-full bg-white" activeOpacity={0.8}>
+        <Text className="text-blue-700 font-bold">{'<'}</Text>
+      </TouchableOpacity>
+      <Text className="text-[11px] text-blue-700 font-semibold px-1.5">
+        {currentBranchIndex + 1}/{switchableBranches.length}
+      </Text>
+      <TouchableOpacity onPress={() => moveBranch(1)} className="w-7 h-7 items-center justify-center rounded-full bg-white" activeOpacity={0.8}>
+        <Text className="text-blue-700 font-bold">{'>'}</Text>
+      </TouchableOpacity>
+    </View>
+  ) : null;
+
   return (
     <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
       <Header
         title={branch.branch_name}
+        titleLeftElement={branchSwitcher}
         subtitle={`支店番号: ${branch.branch_code}`}
         rightElement={
           <Button title="トップ画面" onPress={handleBackToTop} variant="secondary" size="sm" />
@@ -351,6 +435,13 @@ export const StoreHome = ({
               <Card className="bg-purple-500 px-12 py-8">
                 <Text className="text-white text-2xl  font-bold text-center">来客カウンター</Text>
                 <Text className="text-purple-100 text-center mt-2">ボタンをタップして来場者数を記録</Text>
+              </Card>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={onNavigateToPrep} activeOpacity={0.8}>
+              <Card className="bg-rose-500 px-12 py-8">
+                <Text className="text-white text-2xl font-bold text-center">調理の下準備</Text>
+                <Text className="text-rose-100 text-center mt-2">材料登録・在庫共有を行う</Text>
               </Card>
             </TouchableOpacity>
           </View>

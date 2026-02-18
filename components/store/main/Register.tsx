@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Card, Header, Modal } from '../../common';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
-import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings, getMenuCategories, saveMenuCategories } from '../../../lib/storage';
+import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings, getMenuCategories, saveMenuCategories, getPendingTransactions } from '../../../lib/storage';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
 import type { Branch, Menu, MenuCategory, CartItem, PendingTransaction, PaymentMethodSettings } from '../../../types/database';
 import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
@@ -44,6 +44,14 @@ export const Register = ({
   const [quickOrderInput, setQuickOrderInput] = useState('');
   const [showQuickOrder, setShowQuickOrder] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [todaySoldByMenu, setTodaySoldByMenu] = useState<Record<string, number>>({});
+  const [showActionsModal, setShowActionsModal] = useState(false);
+  const [showSelloutModal, setShowSelloutModal] = useState(false);
+
+  // 最初の販売時刻を追跡（完売予測の起点に使用）
+  const firstSaleTimeRef = useRef<Date | null>(null);
+  // 過去30分販売ログ: { menu_id, quantity, sold_at }
+  const saleLogRef = useRef<{ menu_id: string; quantity: number; sold_at: number }[]>([]);
 
 const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
@@ -116,8 +124,74 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     }
   }, [branch.id, sortMenus]);
 
+  const loadTodaySoldByMenu = useCallback(async () => {
+    try {
+      const sold: Record<string, number> = {};
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const tomorrowStart = new Date(todayStart);
+      tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+
+      // 初回ロード時に firstSaleTime を最古のトランザクション時刻から復元する
+      let earliestSaleTime: Date | null = null;
+
+      const localPending = await getPendingTransactions();
+      localPending
+        .filter((tx) => tx.branch_id === branch.id && !tx.synced)
+        .filter((tx) => {
+          const created = new Date(tx.created_at);
+          return created >= todayStart && created < tomorrowStart;
+        })
+        .forEach((tx) => {
+          tx.items.forEach((item) => {
+            sold[item.menu_id] = (sold[item.menu_id] ?? 0) + item.quantity;
+          });
+          const txTime = new Date(tx.created_at);
+          if (!earliestSaleTime || txTime < earliestSaleTime) earliestSaleTime = txTime;
+        });
+
+      if (isSupabaseConfigured()) {
+        const { data: txData, error: txError } = await supabase
+          .from('transactions')
+          .select('id, created_at')
+          .eq('branch_id', branch.id)
+          .eq('status', 'completed')
+          .gte('created_at', todayStart.toISOString())
+          .lt('created_at', tomorrowStart.toISOString());
+
+        if (!txError && txData && txData.length > 0) {
+          const txIds = txData.map((tx) => tx.id);
+          txData.forEach((tx) => {
+            const txTime = new Date(tx.created_at);
+            if (!earliestSaleTime || txTime < earliestSaleTime) earliestSaleTime = txTime;
+          });
+          const { data: itemData, error: itemError } = await supabase
+            .from('transaction_items')
+            .select('menu_id,quantity')
+            .in('transaction_id', txIds);
+
+          if (!itemError) {
+            (itemData ?? []).forEach((row) => {
+              sold[row.menu_id] = (sold[row.menu_id] ?? 0) + (row.quantity ?? 0);
+            });
+          }
+        }
+      }
+
+      if (earliestSaleTime && !firstSaleTimeRef.current) {
+        firstSaleTimeRef.current = earliestSaleTime;
+      }
+
+      setTodaySoldByMenu(sold);
+    } catch (error) {
+      console.error('Failed to load today sold summary:', error);
+      setTodaySoldByMenu({});
+    }
+  }, [branch.id]);
+
   useEffect(() => {
     fetchMenus();
+    loadTodaySoldByMenu();
     const loadSettings = async () => {
       const settings = await getStoreSettings();
       if (settings.payment_methods) {
@@ -125,7 +199,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       }
     };
     loadSettings();
-  }, [fetchMenus]);
+  }, [fetchMenus, loadTodaySoldByMenu]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -434,6 +508,22 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       }
 
       // Clear cart and show success
+      const saletime = Date.now();
+      // 最初の販売時刻を記録
+      if (!firstSaleTimeRef.current) {
+        firstSaleTimeRef.current = new Date(saletime);
+      }
+      // 販売ログに追記（過去30分集計用）
+      cart.forEach((item) => {
+        saleLogRef.current.push({ menu_id: item.menu_id, quantity: item.quantity, sold_at: saletime });
+      });
+      setTodaySoldByMenu((prev) => {
+        const next = { ...prev };
+        cart.forEach((item) => {
+          next[item.menu_id] = (next[item.menu_id] ?? 0) + item.quantity;
+        });
+        return next;
+      });
       setCart([]);
       setShowCart(false);
       setShowCashModal(false);
@@ -519,6 +609,61 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     return { color: 'text-gray-500', text: `残${menu.stock_quantity}` };
   };
 
+  // 過去30分間の販売個数を返す（saleLogRef を参照）
+  const getLast30MinSold = useCallback((menuId: string): number => {
+    const cutoff = Date.now() - 30 * 60 * 1000;
+    return saleLogRef.current
+      .filter((log) => log.menu_id === menuId && log.sold_at >= cutoff)
+      .reduce((sum, log) => sum + log.quantity, 0);
+  }, []);
+
+  const getSelloutHours = useCallback(
+    (menu: Menu): number | null => {
+      if (!menu.stock_management || menu.stock_quantity <= 0) return null;
+      const soldToday = todaySoldByMenu[menu.id] ?? 0;
+      if (soldToday <= 0) return null;
+
+      const now = new Date();
+      // 起点を「最初の販売時刻」にする。なければ現在時刻（= 販売前なので予測不能）
+      const saleStart = firstSaleTimeRef.current;
+      if (!saleStart) return null;
+      const elapsedHours = Math.max((now.getTime() - saleStart.getTime()) / 3600000, 1 / 60);
+      const perHour = soldToday / elapsedHours;
+      if (perHour <= 0.01) return null;
+      return menu.stock_quantity / perHour;
+    },
+    [todaySoldByMenu],
+  );
+
+  // 完売予測時刻を Date で返す（null = 予測不能）
+  const getSelloutAt = useCallback(
+    (menu: Menu): Date | null => {
+      const hoursLeft = getSelloutHours(menu);
+      if (hoursLeft == null) return null;
+      return new Date(Date.now() + hoursLeft * 3600000);
+    },
+    [getSelloutHours],
+  );
+
+  // 完売予測モーダル用: 在庫管理メニューを完売予測が早い順に並べた一覧
+  const selloutForecastList = useMemo(() => {
+    return menus
+      .filter((m) => m.stock_management)
+      .map((menu) => ({
+        menu,
+        hoursLeft: getSelloutHours(menu),
+        selloutAt: getSelloutAt(menu),
+        last30min: getLast30MinSold(menu.id),
+      }))
+      .sort((a, b) => {
+        // 予測あり → 早い順, 予測なし → 後ろ
+        if (a.hoursLeft == null && b.hoursLeft == null) return 0;
+        if (a.hoursLeft == null) return 1;
+        if (b.hoursLeft == null) return -1;
+        return a.hoursLeft - b.hoursLeft;
+      });
+  }, [menus, getSelloutHours, getSelloutAt, getLast30MinSold]);
+
   // Helper to render a group of menu cards
   const renderMenuCards = (
     menuList: Menu[],
@@ -563,9 +708,23 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
                   {menu.price.toLocaleString()}円
                 </Text>
                 {menu.stock_management && (
-                  <Text className={`text-sm mt-1 ${stockStatus.color}`}>
-                    {stockStatus.text}
-                  </Text>
+                  <>
+                    <Text className={`text-sm mt-1 ${stockStatus.color}`}>
+                      {stockStatus.text}
+                    </Text>
+                    {(() => {
+                      const h = getSelloutHours(menu);
+                      if (h == null || h > 8) return null;
+                      const label = h < 1
+                        ? `完売予測: 約${Math.max(1, Math.round(h * 60))}分`
+                        : `完売予測: 約${h.toFixed(1)}時間`;
+                      return (
+                        <Text className="text-[11px] mt-0.5 text-red-500 font-semibold">
+                          {label}
+                        </Text>
+                      );
+                    })()}
+                  </>
                 )}
                 {cartItem && (
                   <View className="absolute top-1 right-1 bg-blue-500 rounded-full w-6 h-6 items-center justify-center">
@@ -580,8 +739,52 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     </View>
   );
 
-  // Check if any menu has a category assigned
-  const hasCategories = categories.length > 0 && menus.some((m) => m.category_id !== null);
+  // MenuManagement と同じロジックでカテゴリ別セクションを構築
+  const defaultCategoryId = useMemo(() => {
+    if (orderedCategories.length === 0) return null;
+    const food = orderedCategories.find((c) => c.category_name.trim() === 'フード');
+    return food?.id ?? orderedCategories[0]?.id ?? null;
+  }, [orderedCategories]);
+
+  const menuSections = useMemo(() => {
+    if (orderedCategories.length === 0) return null; // カテゴリなし → フラット表示
+
+    let sections = orderedCategories
+      .map((category) => {
+        const categoryMeta = categoryMetaMap.get(category.id);
+        return {
+          id: category.id,
+          title: category.category_name,
+          code: categoryMeta?.code ?? '1',
+          visual: categoryMeta?.visual ?? UNCATEGORIZED_VISUAL,
+          menus: sortMenus(menus.filter((m) => m.category_id === category.id)),
+        };
+      })
+      .filter((s) => s.menus.length > 0);
+
+    const uncategorized = sortMenus(
+      menus.filter((m) => !m.category_id || !categories.find((c) => c.id === m.category_id)),
+    );
+
+    if (uncategorized.length > 0) {
+      const fallback = sections.find((s) => s.id === defaultCategoryId);
+      if (fallback) {
+        sections = sections.map((s) =>
+          s.id === fallback.id ? { ...s, menus: sortMenus([...s.menus, ...uncategorized]) } : s,
+        );
+      } else {
+        sections.push({
+          id: 'uncategorized',
+          title: 'フード',
+          code: '1',
+          visual: UNCATEGORIZED_VISUAL,
+          menus: uncategorized,
+        });
+      }
+    }
+
+    return sections.filter((s) => s.menus.length > 0);
+  }, [orderedCategories, categoryMetaMap, categories, menus, sortMenus, defaultCategoryId]);
 
   // Menu Grid Component
   const MenuGrid = React.memo(() => {
@@ -596,46 +799,17 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
         className="flex-1"
         keyboardShouldPersistTaps="always"
       >
-        {hasCategories ? (
-          <>
-            {/* Render menus grouped by category */}
-            {orderedCategories.map((category) => {
-              const categoryMenus = sortMenus(menus.filter((m) => m.category_id === category.id));
-              if (categoryMenus.length === 0) return null;
-
-              const categoryMeta = categoryMetaMap.get(category.id);
-              const visual = categoryMeta?.visual ?? UNCATEGORIZED_VISUAL;
-
-              return (
-                <View key={category.id} className="mb-4">
-                  <View className={`mx-1 mb-2 px-3 py-2 rounded-lg ${visual.headerBgClass}`}>
-                    <Text className={`font-bold ${visual.headerTextClass}`}>
-                      {category.sort_order + 1} {category.category_name}
-                    </Text>
-                  </View>
-                  {renderMenuCards(categoryMenus, visual)}
-                </View>
-              );
-            })}
-
-            {/* Render uncategorized menus */}
-            {(() => {
-              const uncategorized = menus.filter(
-                (m) => !m.category_id || !categories.find((c) => c.id === m.category_id)
-              );
-              const sortedUncategorized = sortMenus(uncategorized);
-              if (sortedUncategorized.length === 0) return null;
-
-              return (
-                <View key="uncategorized" className="mb-4">
-                  <View className={`mx-1 mb-2 px-3 py-2 rounded-lg ${UNCATEGORIZED_VISUAL.headerBgClass}`}>
-                    <Text className={`font-bold ${UNCATEGORIZED_VISUAL.headerTextClass}`}>0 その他</Text>
-                  </View>
-                  {renderMenuCards(sortedUncategorized, UNCATEGORIZED_VISUAL)}
-                </View>
-              );
-            })()}
-          </>
+        {menuSections ? (
+          menuSections.map((section) => (
+            <View key={section.id} className="mb-4">
+              <View className={`mx-1 mb-2 px-3 py-2 rounded-lg ${section.visual.headerBgClass}`}>
+                <Text className={`font-bold ${section.visual.headerTextClass}`}>
+                  {section.code} {section.title}
+                </Text>
+              </View>
+              {renderMenuCards(section.menus, section.visual)}
+            </View>
+          ))
         ) : (
           renderMenuCards(sortMenus(menus), UNCATEGORIZED_VISUAL)
         )}
@@ -705,15 +879,13 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
   );
 
   const registerHeaderRight = (
-    <View className="flex-row items-center gap-2">
-      <Button
-        title={showQuickOrder ? '番号入力:ON' : '番号入力:OFF'}
-        onPress={toggleQuickOrder}
-        size="sm"
-        variant={showQuickOrder ? 'primary' : 'secondary'}
-      />
-      <Button title="履歴" onPress={onNavigateToHistory} size="sm" variant="secondary" />
-    </View>
+    <TouchableOpacity
+      onPress={() => setShowActionsModal(true)}
+      className="w-9 h-9 bg-gray-100 rounded-lg items-center justify-center"
+      activeOpacity={0.7}
+    >
+      <Text className="text-gray-700 text-lg font-bold leading-none">☰</Text>
+    </TouchableOpacity>
   );
 
   // Cart Component
@@ -1042,6 +1214,168 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
   );
 
 
+  // 完売予測モーダル
+  const selloutModal = (
+    <Modal
+      visible={showSelloutModal}
+      onClose={() => setShowSelloutModal(false)}
+      title="完売予測"
+    >
+      <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false}>
+        {selloutForecastList.length === 0 ? (
+          <Text className="text-gray-400 text-center py-4">在庫管理中のメニューがありません</Text>
+        ) : (
+          <>
+            {/* ヘッダー行 */}
+            <View className="flex-row mb-1 px-1">
+              <Text className="flex-1 text-xs text-gray-400 font-semibold">メニュー</Text>
+              <Text className="w-20 text-xs text-gray-400 font-semibold text-center">残在庫</Text>
+              <Text className="w-20 text-xs text-gray-400 font-semibold text-center">30分販売</Text>
+              <Text className="w-28 text-xs text-gray-400 font-semibold text-right">完売予測時刻</Text>
+            </View>
+            {selloutForecastList.map((row) => {
+              const isSoldOut = row.menu.stock_quantity <= 0;
+              const isUrgent = row.hoursLeft != null && row.hoursLeft <= 1;
+              const isWarning = row.hoursLeft != null && row.hoursLeft <= 2.5 && !isUrgent;
+              let timeLabel = '—';
+              if (isSoldOut) {
+                timeLabel = '売切';
+              } else if (row.selloutAt) {
+                const h = row.selloutAt.getHours().toString().padStart(2, '0');
+                const m = row.selloutAt.getMinutes().toString().padStart(2, '0');
+                timeLabel = `${h}:${m}頃`;
+              }
+              return (
+                <View
+                  key={row.menu.id}
+                  className={`flex-row items-center py-2 px-1 mb-1 rounded-lg ${
+                    isSoldOut ? 'bg-gray-100' : isUrgent ? 'bg-red-50' : isWarning ? 'bg-orange-50' : 'bg-white'
+                  }`}
+                >
+                  <Text
+                    className={`flex-1 text-sm font-semibold ${isSoldOut ? 'text-gray-400' : 'text-gray-800'}`}
+                    numberOfLines={2}
+                  >
+                    {row.menu.menu_name}
+                  </Text>
+                  <Text className={`w-20 text-sm text-center ${isSoldOut ? 'text-gray-400' : 'text-gray-700'}`}>
+                    {isSoldOut ? '0' : row.menu.stock_quantity}
+                  </Text>
+                  <Text className="w-20 text-sm text-center text-blue-600 font-semibold">
+                    {row.last30min > 0 ? `+${row.last30min}` : '—'}
+                  </Text>
+                  <Text
+                    className={`w-28 text-sm text-right font-semibold ${
+                      isSoldOut
+                        ? 'text-gray-400'
+                        : isUrgent
+                          ? 'text-red-600'
+                          : isWarning
+                            ? 'text-orange-500'
+                            : 'text-gray-600'
+                    }`}
+                  >
+                    {timeLabel}
+                  </Text>
+                </View>
+              );
+            })}
+            {!firstSaleTimeRef.current && (
+              <Text className="text-xs text-gray-400 text-center mt-2">
+                ※ 最初の販売後に完売予測時刻が表示されます
+              </Text>
+            )}
+          </>
+        )}
+      </ScrollView>
+    </Modal>
+  );
+
+  // ハンバーガー（アクション）モーダル
+  const actionsModal = (
+    <Modal
+      visible={showActionsModal}
+      onClose={() => setShowActionsModal(false)}
+      title="メニュー操作"
+    >
+      <View className="gap-3">
+        {/* 完売予測 */}
+        <TouchableOpacity
+          onPress={() => {
+            setShowActionsModal(false);
+            setShowSelloutModal(true);
+          }}
+          className="flex-row items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-4 py-3"
+          activeOpacity={0.7}
+        >
+          <Text className="text-lg">📊</Text>
+          <View className="flex-1">
+            <Text className="text-orange-800 font-semibold text-sm">完売予測</Text>
+            <Text className="text-orange-600 text-xs">各メニューの完売予測時刻・販売ペースを確認</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* 番号入力 ON/OFF */}
+        <TouchableOpacity
+          onPress={() => {
+            setShowQuickOrder((prev) => {
+              const next = !prev;
+              if (next) {
+                requestAnimationFrame(() => {
+                  quickOrderInputRef.current?.focus();
+                });
+              }
+              return next;
+            });
+          }}
+          className={`flex-row items-center gap-3 rounded-lg px-4 py-3 border ${
+            showQuickOrder
+              ? 'bg-blue-50 border-blue-300'
+              : 'bg-gray-50 border-gray-200'
+          }`}
+          activeOpacity={0.7}
+        >
+          <Text className="text-lg">🔢</Text>
+          <View className="flex-1">
+            <Text className={`font-semibold text-sm ${showQuickOrder ? 'text-blue-800' : 'text-gray-800'}`}>
+              番号入力: {showQuickOrder ? 'ON' : 'OFF'}
+            </Text>
+            <Text className={`text-xs ${showQuickOrder ? 'text-blue-600' : 'text-gray-500'}`}>
+              メニュー番号で素早く注文追加
+            </Text>
+          </View>
+          <View
+            className={`w-10 h-6 rounded-full items-center justify-center ${
+              showQuickOrder ? 'bg-blue-500' : 'bg-gray-300'
+            }`}
+          >
+            <View
+              className={`w-4 h-4 rounded-full bg-white ${
+                showQuickOrder ? 'ml-auto mr-0.5' : '-ml-4'
+              }`}
+            />
+          </View>
+        </TouchableOpacity>
+
+        {/* 販売履歴 */}
+        <TouchableOpacity
+          onPress={() => {
+            setShowActionsModal(false);
+            onNavigateToHistory();
+          }}
+          className="flex-row items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3"
+          activeOpacity={0.7}
+        >
+          <Text className="text-lg">📋</Text>
+          <View className="flex-1">
+            <Text className="text-gray-800 font-semibold text-sm">販売履歴</Text>
+            <Text className="text-gray-500 text-xs">売上確認・取消</Text>
+          </View>
+        </TouchableOpacity>
+      </View>
+    </Modal>
+  );
+
   const discountNumpadKeys = [
     ['1', '2', '3'],
     ['4', '5', '6'],
@@ -1204,6 +1538,8 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
         {cashModal}
         {clearConfirmModal}
         {discountModal}
+        {selloutModal}
+        {actionsModal}
       </SafeAreaView>
     );
   }
@@ -1235,6 +1571,8 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       {cashModal}
       {clearConfirmModal}
       {discountModal}
+      {selloutModal}
+      {actionsModal}
     </SafeAreaView>
   );
 };

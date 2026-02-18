@@ -116,6 +116,12 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const [adminGuardCallback, setAdminGuardCallback] = useState<(() => void) | null>(null);
 
   const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
+  const defaultCategoryId = useMemo(() => {
+    if (categories.length === 0) return null;
+    const ordered = [...categories].sort((a, b) => a.sort_order - b.sort_order);
+    const foodCategory = ordered.find((category) => category.category_name.trim() === 'フード');
+    return foodCategory?.id ?? ordered[0]?.id ?? null;
+  }, [categories]);
 
   const getNextSortOrder = useCallback(
     (categoryId: string | null, targetMenus: Menu[]) => {
@@ -283,9 +289,22 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
 
       if (error) throw error;
 
-      const sortedMenus = sortMenus(data || []);
-      setMenus(sortedMenus);
-      await saveMenus(sortedMenus);
+      const remoteMenus = data || [];
+      const remoteIds = new Set(remoteMenus.map((m) => m.id));
+      const localOnlyMenus = branchMenus.filter((m) => !remoteIds.has(m.id));
+
+      if (localOnlyMenus.length > 0) {
+        for (const localMenu of localOnlyMenus) {
+          const { error: insertError } = await supabase.from('menus').insert(localMenu);
+          if (insertError) {
+            console.log('Local menu sync skipped:', insertError.message);
+          }
+        }
+      }
+
+      const mergedMenus = sortMenus([...remoteMenus, ...localOnlyMenus]);
+      setMenus(mergedMenus);
+      await saveMenus(mergedMenus);
     } catch (error: any) {
       if (error?.name === 'AbortError') return;
       console.error('Error fetching menus:', {
@@ -311,7 +330,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const resetForm = () => {
     setMenuName('');
     setPrice('');
-    setSelectedCategoryId(null);
+    setSelectedCategoryId(defaultCategoryId);
     setStockManagement(false);
     setStockQuantity('');
   };
@@ -386,14 +405,17 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         updated_at: new Date().toISOString(),
       };
 
-      if (isSupabaseConfigured()) {
-        const { error } = await supabase.from('menus').insert(newMenu);
-        if (error) throw error;
-      }
-
       const updatedMenus = sortMenus([...menus, newMenu]);
       setMenus(updatedMenus);
       await saveMenus(updatedMenus);
+
+      if (isSupabaseConfigured()) {
+        const { error } = await supabase.from('menus').insert(newMenu);
+        if (error) {
+          console.log('Menu saved locally; remote sync deferred:', error.message);
+          Alert.alert('オフライン保存', 'メニューを端末に保存しました。通信復帰後に同期されます。');
+        }
+      }
 
       setShowAddModal(false);
       resetForm();
@@ -931,7 +953,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     setEditingMenu(menu);
     setMenuName(menu.menu_name);
     setPrice(menu.price.toString());
-    setSelectedCategoryId(menu.category_id ?? null);
+    setSelectedCategoryId(menu.category_id ?? defaultCategoryId);
     setStockManagement(menu.stock_management);
     setStockQuantity(menu.stock_quantity.toString());
     setShowEditModal(true);
@@ -1121,7 +1143,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   };
 
   const menuSections = useMemo(() => {
-      const sections = orderedCategories
+      let sections = orderedCategories
       .map((category) => ({
         id: category.id,
         title: category.category_name,
@@ -1135,16 +1157,38 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       menus.filter((menu) => !menu.category_id || !categories.find((c) => c.id === menu.category_id)),
     );
     if (uncategorized.length > 0) {
-      sections.push({
-        id: 'uncategorized',
-        title: 'フード',
-        categoryCode: '1',
-        visual: UNCATEGORIZED_VISUAL,
-        menus: uncategorized,
-      });
+      const fallbackCategory = orderedCategories.find((category) => category.id === defaultCategoryId);
+      const fallbackInSections = sections.find((s) => s.id === defaultCategoryId);
+      if (fallbackCategory && fallbackInSections) {
+        // fallback category has directly-assigned menus → merge uncategorized into it
+        sections = sections.map((section) =>
+          section.id === fallbackCategory.id
+            ? { ...section, menus: sortMenus([...section.menus, ...uncategorized]) }
+            : section,
+        );
+      } else if (fallbackCategory && !fallbackInSections) {
+        // fallback category exists but was filtered out (no direct menus) → restore it with uncategorized
+        const meta = categoryMetaMap.get(fallbackCategory.id);
+        sections.push({
+          id: fallbackCategory.id,
+          title: fallbackCategory.category_name,
+          categoryCode: meta?.code ?? '1',
+          visual: meta?.visual ?? UNCATEGORIZED_VISUAL,
+          menus: uncategorized,
+        });
+      } else {
+        // no fallback category at all → create a generic uncategorized section
+        sections.push({
+          id: 'uncategorized',
+          title: 'フード',
+          categoryCode: '1',
+          visual: UNCATEGORIZED_VISUAL,
+          menus: uncategorized,
+        });
+      }
     }
-    return sections;
-  }, [orderedCategories, categoryMetaMap, categories, menus, sortMenus]);
+    return sections.filter((section) => section.menus.length > 0);
+  }, [orderedCategories, categoryMetaMap, categories, menus, sortMenus, defaultCategoryId]);
 
   const renderMenuItem = ({
     item,
@@ -1320,17 +1364,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           <Text className="text-gray-700 font-medium mb-2">カテゴリ</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View className="flex-row gap-2">
-              <TouchableOpacity
-                onPress={() => setSelectedCategoryId(null)}
-                className={`px-3 py-2 rounded-lg border ${
-                  selectedCategoryId === null ? 'bg-blue-500 border-blue-500' : 'bg-white border-gray-300'
-                }`}
-              >
-                <Text className={selectedCategoryId === null ? 'text-white font-medium' : 'text-gray-700'}>
-                  なし
-                </Text>
-              </TouchableOpacity>
-              {categories.map((cat) => (
+              {orderedCategories.map((cat) => (
                 <TouchableOpacity
                   key={cat.id}
                   onPress={() => setSelectedCategoryId(cat.id)}
@@ -1405,7 +1439,16 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         rightElement={
           viewMode === 'menus' ? (
             <View className="flex-row gap-1">
-              <Button title="+ メニュー追加" onPress={() => withMenuRestrictionCheck('menu_add', () => setShowAddModal(true))} size="sm" />
+              <Button
+                title="+ メニュー追加"
+                onPress={() =>
+                  withMenuRestrictionCheck('menu_add', () => {
+                    resetForm();
+                    setShowAddModal(true);
+                  })
+                }
+                size="sm"
+              />
               <TouchableOpacity
                 onPress={() => setShowMenuActionsModal(true)}
                 className="w-9 h-9 bg-gray-100 rounded-lg items-center justify-center"
@@ -1453,7 +1496,15 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           {menuSections.length === 0 ? (
             <View className="items-center py-12">
               <Text className="text-gray-500 mb-4">メニューが登録されていません</Text>
-              <Button title="メニューを追加" onPress={() => withMenuRestrictionCheck('menu_add', () => setShowAddModal(true))} />
+              <Button
+                title="メニューを追加"
+                onPress={() =>
+                  withMenuRestrictionCheck('menu_add', () => {
+                    resetForm();
+                    setShowAddModal(true);
+                  })
+                }
+              />
             </View>
           ) : (
             menuSections.map((section) => (
