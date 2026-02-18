@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import type {
   Branch,
   Menu,
@@ -419,6 +420,77 @@ export const saveRestrictions = async (r: RestrictionSettings): Promise<void> =>
 export const getRestrictions = async (): Promise<RestrictionSettings> => {
   const data = await AsyncStorage.getItem(STORAGE_KEYS.RESTRICTIONS);
   return data ? { ...DEFAULT_RESTRICTIONS, ...JSON.parse(data) } : DEFAULT_RESTRICTIONS;
+};
+
+// ------------------------------------------------------------------
+// Kiosk (tablet customer-order) mode
+//
+// キオスクモードが有効な間はリロードしても customer_order 画面に固定される。
+// Web では localStorage を使用 (ブラウザを閉じても維持)。
+// Native では AsyncStorage を使用。
+// ------------------------------------------------------------------
+
+const KIOSK_STORAGE_KEY = '@festival_pos/kiosk_mode';
+
+export interface KioskModeData {
+  /** キオスクモードが有効かどうか */
+  enabled: boolean;
+  /** 注文画面に渡す branch_code */
+  branchCode: string;
+  /** 端末名 (タブレットモード時のみ) */
+  deviceName: string;
+}
+
+/** キオスクモードを有効にして保存する */
+export const saveKioskMode = async (data: KioskModeData): Promise<void> => {
+  const json = JSON.stringify(data);
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    localStorage.setItem(KIOSK_STORAGE_KEY, json);
+  } else {
+    await AsyncStorage.setItem(KIOSK_STORAGE_KEY, json);
+  }
+};
+
+/** キオスクモードを解除する */
+export const clearKioskMode = async (): Promise<void> => {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    localStorage.removeItem(KIOSK_STORAGE_KEY);
+  } else {
+    await AsyncStorage.removeItem(KIOSK_STORAGE_KEY);
+  }
+};
+
+/**
+ * キオスクモード設定を同期的に読み取る (Web の localStorage のみ)。
+ * App.tsx の useState イニシャライザから呼ばれる。
+ */
+export const getKioskModeSync = (): KioskModeData | null => {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  try {
+    const json = localStorage.getItem(KIOSK_STORAGE_KEY);
+    if (!json) return null;
+    const data = JSON.parse(json) as KioskModeData;
+    return data.enabled ? data : null;
+  } catch {
+    return null;
+  }
+};
+
+/** キオスクモード設定を非同期で読み取る (Native 用) */
+export const getKioskMode = async (): Promise<KioskModeData | null> => {
+  try {
+    let json: string | null = null;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      json = localStorage.getItem(KIOSK_STORAGE_KEY);
+    } else {
+      json = await AsyncStorage.getItem(KIOSK_STORAGE_KEY);
+    }
+    if (!json) return null;
+    const data = JSON.parse(json) as KioskModeData;
+    return data.enabled ? data : null;
+  } catch {
+    return null;
+  }
 };
 
 // Get all local storage data

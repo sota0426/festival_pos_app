@@ -11,8 +11,10 @@ import { DemoProvider } from './contexts/DemoContext';
 
 import { HQLogin, HQDashboard, HQBranchReports, HQPresentation } from './components/hq';
 import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, PrepInventory, BudgetManager } from './components/store';
+import { CustomerOrderScreen } from './components/store/main/CustomerOrderScreen';
 import { useSync } from './hooks/useSync';
 import type { Branch } from './types/database';
+import { getKioskModeSync, saveKioskMode, clearKioskMode } from './lib/storage';
 import { HQHome } from 'components/hq/HQHome';
 
 import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
@@ -37,6 +39,8 @@ type Screen =
   | 'account_dashboard'
   | 'pricing'
   | 'my_stores'
+  // 客向けモバイルオーダー (認証不要・公開)
+  | 'customer_order'
   // 既存画面
   | 'home'
   | 'hq_login'
@@ -56,9 +60,58 @@ type Screen =
   | 'store_budget_expense'
   | 'store_budget_breakeven';
 
+/** 客向けオーダー画面のパラメータ */
+interface CustomerOrderParams {
+  branchCode: string;
+  tableNumber: string | null;
+  deviceName: string | null;
+}
+
 function AppContent() {
   const { authState, enterDemo, refreshSubscription } = useAuth();
-  const [currentScreen, setCurrentScreen] = useState<Screen>('landing');
+
+  // 客向けオーダーURL (?branch=S001&table=3) またはキオスクモード復元を
+  // 初期レンダリング前に検出する。useState のイニシャライザで行うことで画面フラッシュを防ぐ。
+  const [customerOrderParams, setCustomerOrderParams] = useState<CustomerOrderParams | null>(() => {
+    if (Platform.OS !== 'web') return null;
+    try {
+      // 優先1: キオスクモード (タブレット固定モード) の復元
+      const kiosk = getKioskModeSync();
+      if (kiosk) {
+        return {
+          branchCode: kiosk.branchCode,
+          tableNumber: null,
+          deviceName: kiosk.deviceName,
+        };
+      }
+      // 優先2: QRコードURLパラメータ
+      const params = new URLSearchParams(window.location.search);
+      const branchCode = params.get('branch');
+      if (!branchCode) return null;
+      return {
+        branchCode,
+        tableNumber: params.get('table'),
+        deviceName: null,
+      };
+    } catch {
+      return null;
+    }
+  });
+
+  const [currentScreen, setCurrentScreen] = useState<Screen>(() => {
+    if (Platform.OS !== 'web') return 'landing';
+    try {
+      // キオスクモード復元: リロード後も customer_order 固定
+      const kiosk = getKioskModeSync();
+      if (kiosk) return 'customer_order';
+      // QRコードURLパラメータ
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('branch')) return 'customer_order';
+    } catch {
+      // ignore
+    }
+    return 'landing';
+  });
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [hqBranchInfoReturnScreen, setHqBranchInfoReturnScreen] = useState<'hq_home' | 'hq_dashboard'>('hq_home');
   const [hqBranchInfoFocusBranchId, setHqBranchInfoFocusBranchId] = useState<string | null>(null);
@@ -194,6 +247,40 @@ function AppContent() {
 
   const renderScreen = () => {
     switch (currentScreen) {
+      // ===== 客向けモバイルオーダー (認証不要・公開) =====
+      case 'customer_order':
+        if (!customerOrderParams) {
+          // パラメータがない場合は Landing へ
+          return (
+            <Landing
+              onNavigateToDemo={() => { enterDemo(); setCurrentScreen('home'); }}
+              onNavigateToAuth={() => setCurrentScreen('auth_signin')}
+              onNavigateToLoginCode={() => setCurrentScreen('login_code_entry')}
+            />
+          );
+        }
+        {
+          // キオスクモード (タブレット固定) かどうかを判定:
+          //   - deviceName がある → タブレットモード → キオスクモード → onBack を渡さない
+          //   - tableNumber がある → QRモード → onBack を渡さない (そもそも戻り先がない)
+          //   - 両方 null → 念のため onBack なし
+          const isKioskMode = !!customerOrderParams.deviceName || !customerOrderParams.tableNumber;
+          return (
+            <CustomerOrderScreen
+              branchCode={customerOrderParams.branchCode}
+              tableNumber={customerOrderParams.tableNumber}
+              deviceName={customerOrderParams.deviceName}
+              isKioskMode={isKioskMode}
+              onExitKiosk={async () => {
+                // キオスクモード解除: localStorage をクリアして管理画面へ
+                await clearKioskMode();
+                setCustomerOrderParams(null);
+                setCurrentScreen('store_home');
+              }}
+            />
+          );
+        }
+
       // ===== 新画面 =====
       case 'landing':
         return (
@@ -377,6 +464,19 @@ function AppContent() {
               onNavigateToBudget={() => setCurrentScreen('store_budget')}
               onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
               onNavigateToBudgetBreakeven={() => setCurrentScreen('store_budget_breakeven')}
+              onNavigateToCustomerOrder={async () => {
+                // タブレットモード: キオスクモードを localStorage に保存してから遷移。
+                // 端末名は CustomerOrderScreen 内で入力・確定後に上書き保存される。
+                const params: CustomerOrderParams = {
+                  branchCode: currentBranch.branch_code,
+                  tableNumber: null,
+                  deviceName: null, // CustomerOrderScreen 内で端末名入力後に確定
+                };
+                setCustomerOrderParams(params);
+                setCurrentScreen('customer_order');
+                // ※ キオスクモードの localStorage 保存は CustomerOrderScreen 側で
+                //   端末名確定後に行う (deviceName が確定してから保存したいため)
+              }}
               onBranchUpdated={(updatedBranch) => setCurrentBranch(updatedBranch)}
               onLogout={handleBranchLogout}
             />

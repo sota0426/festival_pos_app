@@ -8,6 +8,8 @@ import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getSto
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
 import type { Branch, Menu, MenuCategory, CartItem, PendingTransaction, PaymentMethodSettings } from '../../../types/database';
 import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
+import { useCustomerOrders } from '../../../hooks/useCustomerOrders';
+import type { CustomerOrderWithItems } from '../../../types/database';
 
 interface RegisterProps {
   branch: Branch;
@@ -47,6 +49,8 @@ export const Register = ({
   const [todaySoldByMenu, setTodaySoldByMenu] = useState<Record<string, number>>({});
   const [showActionsModal, setShowActionsModal] = useState(false);
   const [showSelloutModal, setShowSelloutModal] = useState(false);
+  // 客からの注文
+  const [showCustomerOrdersModal, setShowCustomerOrdersModal] = useState(false);
 
   // 最初の販売時刻を追跡（完売予測の起点に使用）
   const firstSaleTimeRef = useRef<Date | null>(null);
@@ -54,6 +58,9 @@ export const Register = ({
   const saleLogRef = useRef<{ menu_id: string; quantity: number; sold_at: number }[]>([]);
 
 const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
+
+  // 客向けモバイルオーダー: 受付中注文の監視
+  const { pendingOrders, acceptOrder, cancelOrder } = useCustomerOrders(branch.id);
 
   const { width, height } = useWindowDimensions();
   const isMobile = width < 768;
@@ -1066,6 +1073,133 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     ['clear', '0', 'backspace'],
   ];
 
+  // ------------------------------------------------------------------
+  // 客向けモバイルオーダー: 注文をカートに読み込む
+  // ------------------------------------------------------------------
+  const loadOrderToCart = useCallback(
+    (order: CustomerOrderWithItems) => {
+      setCart((prev) => {
+        const next = [...prev];
+        order.items.forEach((item) => {
+          const existingIdx = next.findIndex((c) => c.menu_id === (item.menu_id ?? `snapshot-${item.menu_name}`));
+          if (existingIdx >= 0) {
+            const existing = next[existingIdx];
+            const newQty = existing.quantity + item.quantity;
+            next[existingIdx] = {
+              ...existing,
+              quantity: newQty,
+              subtotal: (existing.unit_price - existing.discount) * newQty,
+            };
+          } else {
+            next.push({
+              menu_id: item.menu_id ?? `snapshot-${item.menu_name}`,
+              menu_name: item.menu_name,
+              unit_price: item.unit_price,
+              discount: 0,
+              quantity: item.quantity,
+              subtotal: item.unit_price * item.quantity,
+            });
+          }
+        });
+        return next;
+      });
+      // 承認済みに更新 (楽観的 UI は useCustomerOrders 側で処理)
+      void acceptOrder(order.id);
+      setShowCustomerOrdersModal(false);
+    },
+    [acceptOrder],
+  );
+
+  // 受付中注文バナー (pendingOrders が1件以上あるときのみ表示)
+  const customerOrdersBanner =
+    pendingOrders.length > 0 ? (
+      <TouchableOpacity
+        onPress={() => setShowCustomerOrdersModal(true)}
+        className="bg-orange-500 px-4 py-3 flex-row items-center justify-between"
+        activeOpacity={0.85}
+      >
+        <Text className="text-white font-bold text-sm">
+          🔔 受付中の注文 {pendingOrders.length}件
+        </Text>
+        <Text className="text-white text-sm font-semibold">開く →</Text>
+      </TouchableOpacity>
+    ) : null;
+
+  // 受付中注文モーダル
+  const customerOrdersModal = (
+    <Modal
+      visible={showCustomerOrdersModal}
+      onClose={() => setShowCustomerOrdersModal(false)}
+      title={`受付中の注文 (${pendingOrders.length}件)`}
+    >
+      <ScrollView style={{ maxHeight: 480 }} showsVerticalScrollIndicator={false}>
+        {pendingOrders.length === 0 ? (
+          <Text className="text-gray-400 text-center py-6">受付中の注文はありません</Text>
+        ) : (
+          pendingOrders.map((order) => {
+            const timeStr = new Date(order.created_at).toLocaleTimeString('ja-JP', {
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+            const total = order.items.reduce((s, i) => s + i.subtotal, 0);
+            return (
+              <View key={order.id} className="mb-4 border border-gray-200 rounded-xl p-3">
+                {/* 注文ヘッダー */}
+                <View className="flex-row justify-between items-center mb-2">
+                  <View>
+                    <Text className="font-bold text-gray-900 text-base">
+                      {order.display_label}
+                    </Text>
+                    <Text className="text-gray-400 text-xs">注文番号: {order.order_number}</Text>
+                  </View>
+                  <Text className="text-gray-400 text-xs">{timeStr}</Text>
+                </View>
+
+                {/* 注文明細 */}
+                {order.items.map((item) => (
+                  <View key={item.id} className="flex-row justify-between py-1">
+                    <Text className="text-gray-700 text-sm flex-1 mr-2" numberOfLines={1}>
+                      {item.menu_name} × {item.quantity}
+                    </Text>
+                    <Text className="text-gray-600 text-sm">
+                      ¥{item.subtotal.toLocaleString()}
+                    </Text>
+                  </View>
+                ))}
+
+                {/* 合計 */}
+                <View className="flex-row justify-between pt-2 border-t border-gray-100 mt-1">
+                  <Text className="text-gray-500 text-sm">合計</Text>
+                  <Text className="font-bold text-blue-600">
+                    ¥{total.toLocaleString()}
+                  </Text>
+                </View>
+
+                {/* アクションボタン */}
+                <View className="flex-row gap-2 mt-3">
+                  <TouchableOpacity
+                    onPress={() => { void cancelOrder(order.id); }}
+                    className="flex-1 py-2.5 bg-gray-200 rounded-lg items-center"
+                    activeOpacity={0.7}
+                  >
+                    <Text className="text-gray-700 font-semibold text-sm">キャンセル</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => loadOrderToCart(order)}
+                    className="flex-1 py-2.5 bg-blue-600 rounded-lg items-center"
+                    activeOpacity={0.8}
+                  >
+                    <Text className="text-white font-bold text-sm">レジに読み込む</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          })
+        )}
+      </ScrollView>
+    </Modal>
+  );
+
   const cashModal = (
     <Modal
       visible={showCashModal}
@@ -1506,6 +1640,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
           onBack={onBack}
           rightElement={registerHeaderRight}
         />
+        {customerOrdersBanner}
 
         {showCart ? (
           <CartPanel />
@@ -1540,6 +1675,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
         {discountModal}
         {selloutModal}
         {actionsModal}
+        {customerOrdersModal}
       </SafeAreaView>
     );
   }
@@ -1555,6 +1691,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
         onBack={onBack}
         rightElement={registerHeaderRight}
       />
+      {customerOrdersBanner}
 
       <View className="flex-1 flex-row">
         {/* Left: Menu List */}
@@ -1573,6 +1710,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       {discountModal}
       {selloutModal}
       {actionsModal}
+      {customerOrdersModal}
     </SafeAreaView>
   );
 };

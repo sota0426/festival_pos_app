@@ -20,7 +20,8 @@
       "Bash(supabase db push:*)",
       "Bash(supabase functions deploy:*)",
       "Bash(supabase functions list:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git log:*)"
     ]
   }
 }

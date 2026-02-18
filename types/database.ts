@@ -306,3 +306,56 @@ export interface BranchVisitors {
   total_visitors: number;
   half_hourly: HalfHourlyVisitors[];
 }
+
+// ============================================================
+// Customer Order types (客向けモバイルオーダー機能)
+// ============================================================
+
+/** QRコード（卓番号）か タブレット端末名 かの識別種別 */
+export type CustomerIdentifierType = 'table' | 'device';
+
+/** 客の注文ステータス */
+export type CustomerOrderStatus = 'pending' | 'accepted' | 'completed' | 'cancelled';
+
+/** branches_public ビュー (未ログインでも取得可能な公開フィールドのみ) */
+export interface BranchPublic {
+  id: string;
+  branch_code: string;
+  branch_name: string;
+}
+
+/** 客からの注文ヘッダー */
+export interface CustomerOrder {
+  id: string;
+  branch_id: string;
+  /** ブラウザ sessionStorage に保存されるクライアント生成 UUID */
+  session_id: string;
+  identifier_type: CustomerIdentifierType;
+  /** 生の識別値: "3" (卓番号) or "タブレットA" (端末名) */
+  table_identifier: string;
+  /** 表示用ラベル: "テーブル3番" or "タブレットA" */
+  display_label: string;
+  status: CustomerOrderStatus;
+  /** スタッフ向け短縮コード: "S001-0421" */
+  order_number: string;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 注文明細 (注文時点のメニュー情報をスナップショット保存) */
+export interface CustomerOrderItem {
+  id: string;
+  order_id: string;
+  /** メニューが削除された場合は null になる可能性あり */
+  menu_id: string | null;
+  menu_name: string;
+  unit_price: number;
+  quantity: number;
+  subtotal: number;
+}
+
+/** Register.tsx の受信注文モーダルで使用する結合型 */
+export interface CustomerOrderWithItems extends CustomerOrder {
+  items: CustomerOrderItem[];
+}
