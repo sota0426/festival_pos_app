@@ -119,7 +119,7 @@ export const Landing = ({
               { title: 'メニュー管理', desc: '在庫管理・CSV一括登録' },
               { title: '売上ダッシュボード', desc: 'リアルタイム売上集計' },
               { title: '来客カウンター', desc: 'グループ別に集計' },
-              { title: '予算管理', desc: '損益分岐点分析・経費記録' },
+              { title: '会計管理', desc: '損益分岐点分析・経費記録' },
               { title: '注文ボード', desc: 'キッチン表示・提供状況管理' },
             ].map((feature) => (
               <View

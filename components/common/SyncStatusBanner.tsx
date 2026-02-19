@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppState, Platform, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getPendingTransactions, getPendingVisitorCounts } from '../../lib/storage';
 import { getSyncEnabled } from '../../lib/syncMode';
 import { hasSupabaseEnvConfigured } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface SyncStatusBannerProps {
   branchId: string | null;
 }
 
 export const SyncStatusBanner = ({ branchId }: SyncStatusBannerProps) => {
+  const { authState } = useAuth();
+  const insets = useSafeAreaInsets();
   const [pendingTx, setPendingTx] = useState(0);
   const [pendingVisitors, setPendingVisitors] = useState(0);
   const [online, setOnline] = useState(true);
@@ -97,14 +101,20 @@ export const SyncStatusBanner = ({ branchId }: SyncStatusBannerProps) => {
     if (isLocalMode) return null; // ローカルモードは表示しない
     if (!online) return { bg: 'bg-red-100', text: 'text-red-700', label: 'オフライン（端末に保存）' };
     if (pendingTotal > 0) return { bg: 'bg-yellow-100', text: 'text-yellow-700', label: '未同期データあり' };
-    return null; // オンライン・同期済みは表示しない
+    return null; // クレジット
   }, [isLocalMode, online, pendingTotal]);
+
+  // デモ時は未同期表示を出さない
+  if (authState.status === 'demo') return null;
 
   // 表示する必要がない状態（オンライン正常）は何も描画しない
   if (!branchId || style === null) return null;
 
   return (
-    <View className={`${style.bg} px-4 py-2 border-b border-gray-200`}>
+    <View
+      className={`${style.bg} px-4 pb-2 border-b border-gray-200`}
+      style={{ paddingTop: Math.max(insets.top, 8) }}
+    >
       <View className="flex-row items-center justify-between">
         <Text className={`${style.text} text-xs font-semibold`}>{style.label}</Text>
         {pendingTotal > 0 && (

@@ -5,6 +5,8 @@ import { Card, Header, Button } from '../../common';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { getPendingTransactions, addServedTransactionId, getServedTransactionIds } from '../../../lib/storage';
 import type { Branch, Transaction, TransactionItem, OrderBoardItem } from '../../../types/database';
+import { useAuth } from '../../../contexts/AuthContext';
+import { DEMO_TRANSACTIONS, resolveDemoBranchId } from '../../../data/demoData';
 
 interface OrderBoardProps {
   branch: Branch;
@@ -12,6 +14,11 @@ interface OrderBoardProps {
 }
 
 export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
+  const { authState } = useAuth();
+  const isDemo = authState.status === 'demo';
+  const demoBranchId = resolveDemoBranchId(branch);
+  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+
   const [orders, setOrders] = useState<OrderBoardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -21,7 +28,7 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
 
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
-  const canRemoteRefresh = isSupabaseConfigured();
+  const canRemoteRefresh = canSyncToSupabase;
 
     // Fetch active orders
   const fetchActiveOrders = useCallback(async (isRefresh = false) => {
@@ -30,6 +37,43 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
     }
 
     try {
+      if (isDemo && demoBranchId) {
+        const nowMs = Date.now();
+        const demoMinutesAgo = [1, 4, 10];
+        const demoOrders: OrderBoardItem[] = (DEMO_TRANSACTIONS[demoBranchId] ?? [])
+          .slice(0, 3)
+          .map((t, index) => {
+            const minutesAgo = demoMinutesAgo[index] ?? 1; // 1分前, 4分前, 10分前
+            const createdAt = new Date(nowMs - minutesAgo * 60 * 1000).toISOString();
+            return {
+            transaction: {
+              id: t.id,
+              branch_id: branch.id,
+              transaction_code: t.transaction_code,
+              total_amount: t.total_amount,
+              payment_method: t.payment_method,
+              status: 'completed',
+              fulfillment_status: 'pending',
+              created_at: createdAt,
+              cancelled_at: null,
+              served_at: null,
+            },
+            items: t.items.map((item, index) => ({
+              id: `${t.id}-${index}`,
+              transaction_id: t.id,
+              ...item,
+            })),
+          };
+          })
+          .sort((a, b) => new Date(a.transaction.created_at).getTime() - new Date(b.transaction.created_at).getTime());
+
+        setOrders(demoOrders);
+        setLastRefreshed(new Date());
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
@@ -63,7 +107,7 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
           })),
         }));
 
-      if (!isSupabaseConfigured()) {
+      if (!canSyncToSupabase) {
         setOrders(
           localOrders.sort(
             (a, b) => new Date(a.transaction.created_at).getTime() - new Date(b.transaction.created_at).getTime()
@@ -111,7 +155,7 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [branch.id]);
+  }, [branch.id, isDemo, demoBranchId, canSyncToSupabase]);
   
   // Auto-refresh orders + update elapsed time every 30s
   useEffect(() => {
@@ -139,9 +183,11 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
       const servedAt = new Date().toISOString();
 
       // ローカルに提供済みIDを記録（再取得時に除外するため）
-      await addServedTransactionId(transactionId);
+      if (!isDemo) {
+        await addServedTransactionId(transactionId);
+      }
 
-      if (isSupabaseConfigured()) {
+      if (canSyncToSupabase) {
         const { error } = await supabase
           .from('transactions')
           .update({ fulfillment_status: 'served', served_at: servedAt })

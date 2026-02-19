@@ -20,6 +20,13 @@ import {
 } from '../../../lib/storage';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
+import { useAuth } from '../../../contexts/AuthContext';
+import {
+  DEMO_BUDGET_EXPENSES,
+  DEMO_BUDGET_SETTINGS,
+  DEMO_TRANSACTIONS,
+  resolveDemoBranchId,
+} from '../../../data/demoData';
 import type {
   Branch,
   BudgetExpense,
@@ -66,7 +73,7 @@ const CATEGORY_COLORS: Record<ExpenseCategory, { bg: string; text: string }> = {
 
 const PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
   cash: '現金',
-  online: 'オンライン',
+  online: 'クレジット',
   cashless: 'キャッシュレス',
 };
 
@@ -79,6 +86,11 @@ const BREAKEVEN_HINTS: Record<string, string> = {
 
 // ------- component -------
 export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManagerProps) => {
+  const { authState } = useAuth();
+  const isDemo = authState.status === 'demo';
+  const demoBranchId = resolveDemoBranchId(branch);
+  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+
   const [activeTab, setActiveTab] = useState<BudgetTab>('dashboard');
   const [loading, setLoading] = useState(true);
 
@@ -141,10 +153,22 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
   const breakevenDraftLoadedRef = useRef(false);
 
   const syncExpenses = useCallback(async () => {
+    if (isDemo) {
+      const demoExpenses = (demoBranchId ? DEMO_BUDGET_EXPENSES[demoBranchId] ?? [] : [])
+        .slice(0, 6)
+        .map((expense) => ({
+          ...expense,
+          branch_id: branch.id,
+          synced: true,
+        }));
+      setExpenses(demoExpenses);
+      return demoExpenses;
+    }
+
     const allLocal = await getBudgetExpenses();
     const branchLocal = allLocal.filter((expense) => expense.branch_id === branch.id);
 
-    if (!isSupabaseConfigured()) {
+    if (!canSyncToSupabase) {
       setExpenses(branchLocal);
       return branchLocal;
     }
@@ -210,9 +234,44 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
     } finally {
       setSyncingExpenses(false);
     }
-  }, [branch.id]);
+  }, [branch.id, isDemo, demoBranchId, canSyncToSupabase]);
 
   const loadSalesDetails = useCallback(async () => {
+    if (isDemo) {
+      const demoTransactions = demoBranchId ? DEMO_TRANSACTIONS[demoBranchId] ?? [] : [];
+      const summary = new Map<string, { menu_name: string; quantity: number; subtotal: number }>();
+      let rawSales = 0;
+
+      demoTransactions.forEach((transaction) => {
+        rawSales += transaction.total_amount;
+        transaction.items.forEach((item) => {
+          const current = summary.get(item.menu_name) ?? {
+            menu_name: item.menu_name,
+            quantity: 0,
+            subtotal: 0,
+          };
+          current.quantity += item.quantity;
+          current.subtotal += item.subtotal;
+          summary.set(item.menu_name, current);
+        });
+      });
+
+      const targetSales = branch.sales_target > 0
+        ? Math.round(branch.sales_target * 0.7)
+        : 35000;
+      const safeRawSales = rawSales > 0 ? rawSales : 1;
+      const scale = targetSales / safeRawSales;
+      const scaledRows = Array.from(summary.values()).map((row) => ({
+        menu_name: row.menu_name,
+        quantity: Math.max(1, Math.round(row.quantity * scale)),
+        subtotal: Math.max(100, Math.round(row.subtotal * scale)),
+      }));
+
+      setTotalSales(targetSales);
+      setMenuSalesRows(scaledRows.sort((a, b) => b.subtotal - a.subtotal));
+      return;
+    }
+
     const pending = await getPendingTransactions();
     const localPending = pending.filter((transaction) => transaction.branch_id === branch.id);
     const localSales = localPending.reduce((sum, transaction) => sum + transaction.total_amount, 0);
@@ -231,7 +290,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       });
     });
 
-    if (!isSupabaseConfigured()) {
+    if (!canSyncToSupabase) {
       setTotalSales(localSales);
       setMenuSalesRows(Array.from(summary.values()).sort((a, b) => b.subtotal - a.subtotal));
       return;
@@ -270,11 +329,30 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       setTotalSales(localSales);
       setMenuSalesRows(Array.from(summary.values()).sort((a, b) => b.subtotal - a.subtotal));
     }
-  }, [branch.id]);
+  }, [branch.id, branch.sales_target, isDemo, demoBranchId, canSyncToSupabase]);
 
   // ------- load data -------
   const loadData = useCallback(async () => {
     try {
+      if (isDemo) {
+        const seededSettings =
+          (demoBranchId ? DEMO_BUDGET_SETTINGS[demoBranchId] : null) ?? {
+            branch_id: branch.id,
+            initial_budget: 30000,
+            target_sales: 80000,
+          };
+        const normalizedSettings: BudgetSettings = {
+          ...seededSettings,
+          branch_id: branch.id,
+        };
+        setSettings(normalizedSettings);
+        setBudgetInput(String(normalizedSettings.initial_budget));
+        setTargetInput(String(normalizedSettings.target_sales));
+        setExpRecorder('デモ担当');
+        await Promise.all([syncExpenses(), loadSalesDetails()]);
+        return;
+      }
+
       const [budgetSettings, defaultRecorder] = await Promise.all([
         getBudgetSettings(branch.id),
         getDefaultExpenseRecorder(branch.id),
@@ -290,7 +368,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
     } finally {
       setLoading(false);
     }
-  }, [branch.id, loadSalesDetails, syncExpenses]);
+  }, [branch.id, isDemo, demoBranchId, loadSalesDetails, syncExpenses]);
 
   useEffect(() => {
     loadData();
@@ -383,9 +461,13 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       target_sales: parseInt(targetInput, 10) || 0,
     };
     setSettings(newSettings);
+    if (isDemo) {
+      alertNotify('保存完了', 'デモの予算設定を更新しました');
+      return;
+    }
     await saveBudgetSettings(newSettings);
 
-    if (isSupabaseConfigured()) {
+    if (canSyncToSupabase) {
       try {
         await supabase.from('budget_settings').upsert({
           branch_id: branch.id,
@@ -427,10 +509,14 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       synced: false,
     };
 
-    await saveDefaultExpenseRecorder(branch.id, recorderName);
-    await saveBudgetExpense(expense);
+    if (!isDemo) {
+      await saveDefaultExpenseRecorder(branch.id, recorderName);
+      await saveBudgetExpense(expense);
+    }
     setExpenses((prev) => [...prev, expense]);
-    await syncExpenses();
+    if (!isDemo) {
+      await syncExpenses();
+    }
 
     setExpAmount('');
     setExpMemo('');
@@ -439,10 +525,12 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
 
   const handleDeleteExpense = (id: string) => {
     alertConfirm('確認', 'この支出を削除しますか？', async () => {
-      await deleteBudgetExpense(id);
+      if (!isDemo) {
+        await deleteBudgetExpense(id);
+      }
       setExpenses((prev) => prev.filter((e) => e.id !== id));
 
-      if (isSupabaseConfigured()) {
+      if (canSyncToSupabase) {
         try {
           await supabase.from('budget_expenses').delete().eq('id', id);
         } catch (e) {
@@ -880,7 +968,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
   if (loading) {
     return (
       <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
-        <Header title="予算管理" showBack onBack={onBack} />
+        <Header title="会計管理" showBack onBack={onBack} />
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" />
           <Text className="text-gray-500 mt-2">読み込み中...</Text>
@@ -1086,12 +1174,19 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
   return (
     <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
       <Header
-        title="予算管理"
+        title="会計処理"
         subtitle={`${branch.branch_code} - ${branch.branch_name}`}
         showBack
         onBack={onBack}
         rightElement={
-          isSupabaseConfigured() ? (
+          activeTab === 'report' ? (
+            <Button
+              title={exportingCsv ? '出力中...' : 'CSV出力'}
+              onPress={handleExportCsv}
+              size="sm"
+              disabled={exportingCsv}
+            />
+          ) : canSyncToSupabase ? (
             <Button
               title={syncingExpenses ? '同期中...' : '同期'}
               onPress={() => {
@@ -1128,7 +1223,11 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       </View>
 
       {activeTab === 'dashboard' && (
-        <ScrollView className="flex-1 p-4" showsVerticalScrollIndicator={false}>
+        <ScrollView
+          className="flex-1 p-4"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 80 }}
+        >
           <Text className="text-gray-900 text-lg font-bold mb-3">ダッシュボード</Text>
           {/* Stats Grid */}
           <View className="gap-3 mb-4">
@@ -1228,15 +1327,13 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       )}
 
       {activeTab === 'report' && (
-        <ScrollView className="flex-1 p-4" showsVerticalScrollIndicator={false}>
-          <View className="flex-row items-center justify-between mb-3">
+        <ScrollView
+          className="flex-1 p-4"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 80 }}
+        >
+          <View className="mb-3">
             <Text className="text-gray-900 text-lg font-bold">報告書</Text>
-            <Button
-              title={exportingCsv ? '出力中...' : 'CSV出力'}
-              onPress={handleExportCsv}
-              size="sm"
-              disabled={exportingCsv}
-            />
           </View>
           {/* Basic Info */}
           <Card className="mb-4">
@@ -1337,7 +1434,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
             {expenseByCategory.filter((c) => c.total > 0).length === 0 ? (
               <Text className="text-gray-400 text-center py-4">支出データがありません</Text>
             ) : (
-              <View className="gap-2">
+              <View className="gap-1">
                 {expenseByCategory
                   .filter((c) => c.total > 0)
                   .map((c) => (
@@ -1345,12 +1442,13 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
                       key={c.category}
                       className="flex-row items-center justify-between py-2 border-b border-gray-100"
                     >
-                      <CategoryBadge category={c.category} />
-                      <Text className="text-gray-900 font-semibold">
+                      <View className="flex-1 min-w-0 mr-2">
+                        <CategoryBadge category={c.category} />
+                      </View>
+                      <Text className="text-gray-500 text-sm w-16 text-right">{c.count}件</Text>
+                      <Text className="text-gray-900 font-semibold w-24 text-right">
                         ¥{c.total.toLocaleString()}
                       </Text>
-                      <Text className="text-gray-500 text-sm">{c.count}件</Text>
-                      <Text className="text-gray-500 text-sm">{c.percent}%</Text>
                     </View>
                   ))}
               </View>
@@ -1369,24 +1467,37 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
                 {expenseWithNumbers.map((exp) => (
                   <View
                     key={exp.id}
-                    className="flex-row items-center justify-between py-2 border-b border-gray-100"
+                    className="py-2.5 border-b border-gray-100"
                   >
-                    <View className="bg-gray-200 rounded px-1.5 py-0.5 mr-1">
-                      <Text className="text-gray-600 text-xs font-bold">No.{exp.expenseNo}</Text>
+                    <View className="flex-row items-center">
+                      <View className="bg-gray-200 rounded px-1.5 py-0.5 mr-2">
+                        <Text className="text-gray-600 text-xs font-bold">No.{exp.expenseNo}</Text>
+                      </View>
+                      <Text className="text-gray-400 text-xs">{exp.date}</Text>
                     </View>
-                    <Text className="text-gray-400 text-xs w-16">{exp.date}</Text>
-                    <CategoryBadge category={exp.category} />
-                    <Text className="text-gray-700 text-sm flex-1 mx-2" numberOfLines={1}>
+
+                    <View className="flex-row items-center mt-1.5">
+                      <View className="mr-2">
+                        <CategoryBadge category={exp.category} />
+                      </View>
+                      <View className="bg-gray-100 rounded px-2 py-0.5">
+                        <Text className="text-gray-600 text-[10px]">
+                          {PAYMENT_METHOD_LABELS[exp.payment_method]}
+                        </Text>
+                      </View>
+                      <Text
+                        className="text-gray-500 text-xs ml-2 flex-1"
+                        numberOfLines={1}
+                      >
+                        {exp.recorded_by || '未設定'}
+                      </Text>
+                      <Text className="text-gray-900 font-semibold w-24 text-right">
+                        ¥{exp.amount.toLocaleString()}
+                      </Text>
+                    </View>
+
+                    <Text className="text-gray-700 text-sm mt-1" numberOfLines={2}>
                       {exp.memo || '-'}
-                    </Text>
-                    <Text className="text-gray-500 text-xs w-16" numberOfLines={1}>
-                      {exp.recorded_by || '未設定'}
-                    </Text>
-                    <View className="bg-gray-100 rounded px-2 py-0.5 mr-1">
-                      <Text className="text-gray-600 text-[10px]">{PAYMENT_METHOD_LABELS[exp.payment_method]}</Text>
-                    </View>
-                    <Text className="text-gray-900 font-semibold w-20 text-right">
-                      ¥{exp.amount.toLocaleString()}
                     </Text>
                   </View>
                 ))}

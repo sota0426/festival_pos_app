@@ -8,6 +8,8 @@ import { alertNotify } from '../../../lib/alertUtils';
 import { getPrepIngredients, savePrepIngredients } from '../../../lib/storage';
 import { getSyncEnabled } from '../../../lib/syncMode';
 import type { Branch, PrepIngredient } from '../../../types/database';
+import { useAuth } from '../../../contexts/AuthContext';
+import { DEMO_PREP_INGREDIENTS, resolveDemoBranchId } from '../../../data/demoData';
 
 interface PrepInventoryProps {
   branch: Branch;
@@ -15,6 +17,11 @@ interface PrepInventoryProps {
 }
 
 export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
+  const { authState } = useAuth();
+  const isDemo = authState.status === 'demo';
+  const demoBranchId = resolveDemoBranchId(branch);
+  const canSyncToSupabase = isSupabaseConfigured() && getSyncEnabled() && !isDemo;
+
   const [ingredients, setIngredients] = useState<PrepIngredient[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -48,11 +55,20 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
   const fetchIngredients = useCallback(async () => {
     setLoading(true);
     try {
+      if (isDemo && demoBranchId) {
+        const seeded = (DEMO_PREP_INGREDIENTS[demoBranchId] ?? []).map((item) =>
+          normalizeIngredient({ ...item, branch_id: branch.id }),
+        );
+        setIngredients(seeded);
+        setNoteDrafts(buildNoteDrafts(seeded));
+        return;
+      }
+
       const local = (await getPrepIngredients(branch.id)).map(normalizeIngredient);
       setIngredients(local);
       setNoteDrafts(buildNoteDrafts(local));
 
-      if (!isSupabaseConfigured() || !getSyncEnabled()) return;
+      if (!canSyncToSupabase) return;
 
       const { data, error } = await supabase
         .from('prep_ingredients')
@@ -70,11 +86,11 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
     } finally {
       setLoading(false);
     }
-  }, [branch.id]);
+  }, [branch.id, isDemo, demoBranchId, canSyncToSupabase]);
 
   const refreshIngredientsSilently = useCallback(async () => {
     try {
-      if (!isSupabaseConfigured() || !getSyncEnabled()) return;
+      if (!canSyncToSupabase) return;
       const { data, error } = await supabase
         .from('prep_ingredients')
         .select('*')
@@ -88,14 +104,14 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
     } catch (error) {
       console.error('Failed to refresh prep ingredients:', error);
     }
-  }, [branch.id]);
+  }, [branch.id, canSyncToSupabase]);
 
   useEffect(() => {
     fetchIngredients();
   }, [fetchIngredients]);
 
   useEffect(() => {
-    if (!isSupabaseConfigured() || !getSyncEnabled()) return;
+    if (!canSyncToSupabase) return;
 
     // Web環境ではWS接続失敗が出やすいため、Realtime購読は使わずポーリングで同期
     let channel: ReturnType<typeof supabase.channel> | null = null;
@@ -125,7 +141,7 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
       clearInterval(pollTimer);
       if (channel) supabase.removeChannel(channel);
     };
-  }, [branch.id, refreshIngredientsSilently]);
+  }, [branch.id, refreshIngredientsSilently, canSyncToSupabase]);
 
   const resetAddForm = () => {
     setNewName('');
@@ -163,9 +179,11 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
     try {
       const nextLocal = [...ingredients, nextIngredient];
       setIngredients(nextLocal);
-      await savePrepIngredients(branch.id, nextLocal);
+      if (!isDemo) {
+        await savePrepIngredients(branch.id, nextLocal);
+      }
 
-      if (isSupabaseConfigured() && getSyncEnabled()) {
+      if (canSyncToSupabase) {
         const { error } = await supabase.from('prep_ingredients').insert(nextIngredient);
         if (error) throw error;
       }
@@ -192,9 +210,11 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
     );
 
     setIngredients(nextList);
-    await savePrepIngredients(branch.id, nextList);
+    if (!isDemo) {
+      await savePrepIngredients(branch.id, nextList);
+    }
 
-    if (isSupabaseConfigured() && getSyncEnabled()) {
+    if (canSyncToSupabase) {
       const { error } = await supabase
         .from('prep_ingredients')
         .update({ current_stock: nextStock, updated_at: now })
@@ -217,9 +237,11 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
     );
 
     setIngredients(nextList);
-    await savePrepIngredients(branch.id, nextList);
+    if (!isDemo) {
+      await savePrepIngredients(branch.id, nextList);
+    }
 
-    if (isSupabaseConfigured() && getSyncEnabled()) {
+    if (canSyncToSupabase) {
       const { error } = await supabase
         .from('prep_ingredients')
         .update({ note: nextNote, updated_at: now })
@@ -252,9 +274,11 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
     try {
       const next = ingredients.filter((item) => item.id !== ingredient.id);
       setIngredients(next);
-      await savePrepIngredients(branch.id, next);
+      if (!isDemo) {
+        await savePrepIngredients(branch.id, next);
+      }
 
-      if (isSupabaseConfigured() && getSyncEnabled()) {
+      if (canSyncToSupabase) {
         const { error } = await supabase.from('prep_ingredients').delete().eq('id', ingredient.id);
         if (error) throw error;
       }

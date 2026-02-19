@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, hasSupabaseEnvConfigured } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
 import type { Profile, Subscription, Branch } from '../types/database';
@@ -30,6 +31,12 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const LOGIN_CODE_SESSION_KEY = '@festival_pos/login_code_session';
+
+type LoginCodeSession = {
+  branch: Branch;
+  loginCode: string;
+};
 
 export const useAuth = (): AuthContextValue => {
   const ctx = useContext(AuthContext);
@@ -39,6 +46,27 @@ export const useAuth = (): AuthContextValue => {
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [authState, setAuthState] = useState<AuthState>({ status: 'loading' });
+
+  const saveLoginCodeSession = useCallback(async (branch: Branch, loginCode: string) => {
+    const payload: LoginCodeSession = { branch, loginCode };
+    await AsyncStorage.setItem(LOGIN_CODE_SESSION_KEY, JSON.stringify(payload));
+  }, []);
+
+  const clearLoginCodeSession = useCallback(async () => {
+    await AsyncStorage.removeItem(LOGIN_CODE_SESSION_KEY);
+  }, []);
+
+  const restoreLoginCodeSession = useCallback(async (): Promise<LoginCodeSession | null> => {
+    try {
+      const data = await AsyncStorage.getItem(LOGIN_CODE_SESSION_KEY);
+      if (!data) return null;
+      const parsed = JSON.parse(data) as Partial<LoginCodeSession>;
+      if (!parsed?.branch || !parsed?.loginCode) return null;
+      return { branch: parsed.branch as Branch, loginCode: String(parsed.loginCode) };
+    } catch {
+      return null;
+    }
+  }, []);
 
   const generateNextBranchCode = useCallback(async (): Promise<string> => {
     const { data, error } = await supabase
@@ -205,23 +233,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         profile,
         subscription,
       });
+      await clearLoginCodeSession();
     } catch {
       const { profile, subscription } = await ensureUserBootstrapData(user);
       setAuthState({ status: 'authenticated', user, profile, subscription });
+      await clearLoginCodeSession();
     }
-  }, [ensureUserBootstrapData]);
+  }, [ensureUserBootstrapData, clearLoginCodeSession]);
 
   useEffect(() => {
-    if (!hasSupabaseEnvConfigured()) {
+    const fallbackToLoginCodeOrUnauthenticated = async () => {
+      const restored = await restoreLoginCodeSession();
+      if (restored) {
+        setAuthState({ status: 'login_code', branch: restored.branch, loginCode: restored.loginCode });
+        return;
+      }
       setAuthState({ status: 'unauthenticated' });
+    };
+
+    if (!hasSupabaseEnvConfigured()) {
+      void fallbackToLoginCodeOrUnauthenticated();
       return;
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user) {
-        fetchProfileAndSubscription(session.user);
+        await fetchProfileAndSubscription(session.user);
       } else {
-        setAuthState({ status: 'unauthenticated' });
+        await fallbackToLoginCodeOrUnauthenticated();
       }
     });
 
@@ -229,16 +268,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       data: { subscription: authListener },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
-        fetchProfileAndSubscription(session.user);
+        void fetchProfileAndSubscription(session.user);
       } else {
-        setAuthState({ status: 'unauthenticated' });
+        void fallbackToLoginCodeOrUnauthenticated();
       }
     });
 
     return () => {
       authListener.unsubscribe();
     };
-  }, [fetchProfileAndSubscription]);
+  }, [fetchProfileAndSubscription, restoreLoginCodeSession]);
 
   const signInWithGoogle = useCallback(async () => {
     const redirectTo =
@@ -267,7 +306,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
     setAuthState({ status: 'unauthenticated' });
-  }, []);
+    await clearLoginCodeSession();
+  }, [clearLoginCodeSession]);
 
   const enterDemo = useCallback(() => {
     setAuthState({ status: 'demo' });
@@ -278,12 +318,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const enterWithLoginCode = useCallback((branch: Branch, code: string) => {
-    setAuthState({ status: 'login_code', branch, loginCode: code });
-  }, []);
+    const normalized = code.toUpperCase().trim();
+    setAuthState({ status: 'login_code', branch, loginCode: normalized });
+    void saveLoginCodeSession(branch, normalized);
+  }, [saveLoginCodeSession]);
 
   const exitLoginCode = useCallback(() => {
     setAuthState({ status: 'unauthenticated' });
-  }, []);
+    void clearLoginCodeSession();
+  }, [clearLoginCodeSession]);
 
   const refreshProfile = useCallback(async () => {
     if (authState.status !== 'authenticated') return;

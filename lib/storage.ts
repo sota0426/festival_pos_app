@@ -13,6 +13,9 @@ import type {
   VisitorCounterGroup,
   RestrictionSettings,
   PrepIngredient,
+  BranchRecorder,
+  BranchRecorderConfig,
+  RecorderAccessLog,
 } from '../types/database';
 import { setSyncEnabled } from './syncMode';
 
@@ -35,6 +38,10 @@ const VISITOR_GROUPS_KEY_PREFIX = '@festival_pos/visitor_groups';
 const PREP_INGREDIENTS_KEY_PREFIX = '@festival_pos/prep_ingredients';
 const BREAKEVEN_DRAFT_KEY_PREFIX = '@festival_pos/breakeven_draft';
 const EXPENSE_RECORDER_KEY_PREFIX = '@festival_pos/expense_recorder';
+const BRANCH_RECORDERS_KEY_PREFIX = '@festival_pos/branch_recorders';
+const RECORDER_ACCESS_LOGS_KEY_PREFIX = '@festival_pos/recorder_access_logs';
+const RECORDER_CONFIG_KEY_PREFIX = '@festival_pos/recorder_config';
+const DEVICE_ID_KEY = '@festival_pos/device_id';
 
 export interface BreakevenDraft {
   product_name: string;
@@ -313,6 +320,18 @@ export const clearAllData = async (): Promise<void> => {
   if (prepIngredientKeys.length > 0) {
     await AsyncStorage.multiRemove(prepIngredientKeys);
   }
+  const recorderProfileKeys = allKeys.filter((key) => key.startsWith(`${BRANCH_RECORDERS_KEY_PREFIX}/`));
+  if (recorderProfileKeys.length > 0) {
+    await AsyncStorage.multiRemove(recorderProfileKeys);
+  }
+  const recorderLogKeys = allKeys.filter((key) => key.startsWith(`${RECORDER_ACCESS_LOGS_KEY_PREFIX}/`));
+  if (recorderLogKeys.length > 0) {
+    await AsyncStorage.multiRemove(recorderLogKeys);
+  }
+  const recorderConfigKeys = allKeys.filter((key) => key.startsWith(`${RECORDER_CONFIG_KEY_PREFIX}/`));
+  if (recorderConfigKeys.length > 0) {
+    await AsyncStorage.multiRemove(recorderConfigKeys);
+  }
 };
 
 // Budget settings storage
@@ -375,6 +394,56 @@ export const saveDefaultExpenseRecorder = async (
 export const getDefaultExpenseRecorder = async (branchId: string): Promise<string> => {
   const data = await AsyncStorage.getItem(`${EXPENSE_RECORDER_KEY_PREFIX}/${branchId}`);
   return data ?? '';
+};
+
+export const saveBranchRecorders = async (branchId: string, recorders: BranchRecorder[]): Promise<void> => {
+  await AsyncStorage.setItem(`${BRANCH_RECORDERS_KEY_PREFIX}/${branchId}`, JSON.stringify(recorders));
+};
+
+export const getBranchRecorders = async (branchId: string): Promise<BranchRecorder[]> => {
+  const data = await AsyncStorage.getItem(`${BRANCH_RECORDERS_KEY_PREFIX}/${branchId}`);
+  return data ? (JSON.parse(data) as BranchRecorder[]) : [];
+};
+
+export const saveRecorderAccessLogs = async (branchId: string, logs: RecorderAccessLog[]): Promise<void> => {
+  await AsyncStorage.setItem(`${RECORDER_ACCESS_LOGS_KEY_PREFIX}/${branchId}`, JSON.stringify(logs));
+};
+
+export const getRecorderAccessLogs = async (branchId: string): Promise<RecorderAccessLog[]> => {
+  const data = await AsyncStorage.getItem(`${RECORDER_ACCESS_LOGS_KEY_PREFIX}/${branchId}`);
+  return data ? (JSON.parse(data) as RecorderAccessLog[]) : [];
+};
+
+export const saveBranchRecorderConfig = async (
+  branchId: string,
+  config: BranchRecorderConfig,
+): Promise<void> => {
+  await AsyncStorage.setItem(`${RECORDER_CONFIG_KEY_PREFIX}/${branchId}`, JSON.stringify(config));
+};
+
+export const getBranchRecorderConfig = async (branchId: string): Promise<BranchRecorderConfig> => {
+  const data = await AsyncStorage.getItem(`${RECORDER_CONFIG_KEY_PREFIX}/${branchId}`);
+  if (!data) {
+    return {
+      branch_id: branchId,
+      registration_mode: 'restricted',
+      updated_at: new Date().toISOString(),
+    };
+  }
+  const parsed = JSON.parse(data) as Partial<BranchRecorderConfig>;
+  return {
+    branch_id: branchId,
+    registration_mode: parsed.registration_mode === 'open' ? 'open' : 'restricted',
+    updated_at: typeof parsed.updated_at === 'string' ? parsed.updated_at : new Date().toISOString(),
+  };
+};
+
+export const getOrCreateDeviceId = async (): Promise<string> => {
+  const existing = await AsyncStorage.getItem(DEVICE_ID_KEY);
+  if (existing) return existing;
+  const generated = `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  await AsyncStorage.setItem(DEVICE_ID_KEY, generated);
+  return generated;
 };
 
 // Admin password storage

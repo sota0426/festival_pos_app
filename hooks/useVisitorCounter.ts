@@ -14,7 +14,15 @@ import type {
   VisitorGroup,
 } from "types/database";
 
-export const useVisitorCounter = (branchId: string) => {
+interface UseVisitorCounterOptions {
+  persist?: boolean;
+}
+
+export const useVisitorCounter = (
+  branchId: string,
+  options?: UseVisitorCounterOptions,
+) => {
+  const shouldPersist = options?.persist ?? true;
   const [branchCounts, setBranchCounts] = useState<PendingVisitorCount[]>([]);
   const [lastCountTime, setLastCountTime] = useState<string | null>(null);
 
@@ -62,6 +70,12 @@ export const useVisitorCounter = (branchId: string) => {
   };
 
   const loadBranchCounts = useCallback(async () => {
+    if (!shouldPersist) {
+      setBranchCounts([]);
+      setLastCountTime(null);
+      return;
+    }
+
     const all = await getPendingVisitorCounts();
     const currentBranchCounts = all
       .filter((count) => count.branch_id === branchId)
@@ -76,7 +90,7 @@ export const useVisitorCounter = (branchId: string) => {
     setLastCountTime(
       todayCounts.length > 0 ? todayCounts[todayCounts.length - 1].timestamp : null,
     );
-  }, [branchId]);
+  }, [branchId, shouldPersist]);
 
   useEffect(() => {
     loadBranchCounts();
@@ -120,7 +134,9 @@ export const useVisitorCounter = (branchId: string) => {
     safeVibrate(40);
 
     try {
-      await savePendingVisitorCount(visitor);
+      if (shouldPersist) {
+        await savePendingVisitorCount(visitor);
+      }
       setBranchCounts((prev) => [...prev, visitor]);
       setLastCountTime(now);
     } catch {
@@ -176,7 +192,9 @@ export const useVisitorCounter = (branchId: string) => {
 
   const resetTodayCounts = async () => {
     try {
-      await clearPendingVisitorCountsByBranchAndDate(branchId, todayKey);
+      if (shouldPersist) {
+        await clearPendingVisitorCountsByBranchAndDate(branchId, todayKey);
+      }
       setBranchCounts((prev) =>
         prev.filter(
           (count) => toLocalDateKey(new Date(count.timestamp)) !== todayKey,
@@ -190,7 +208,9 @@ export const useVisitorCounter = (branchId: string) => {
 
   const resetAllCounts = async () => {
     try {
-      await clearPendingVisitorCountsByBranch(branchId);
+      if (shouldPersist) {
+        await clearPendingVisitorCountsByBranch(branchId);
+      }
       setBranchCounts([]);
       setLastCountTime(null);
     } catch {

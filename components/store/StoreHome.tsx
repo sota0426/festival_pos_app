@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -12,11 +12,23 @@ import {
   saveMenus, saveMenuCategories, clearPendingVisitorCountsByBranch,
   saveBudgetSettings, saveBudgetExpenses, savePrepIngredients,
   getMenus, getMenuCategories, getPendingTransactions, savePendingTransaction,
-  getPendingVisitorCounts, savePendingVisitorCount, getVisitorGroups, saveVisitorGroups,
-  getBudgetSettings, getBudgetExpenses, getPrepIngredients,
+  getPendingVisitorCounts, savePendingVisitorCount, getVisitorGroups, saveVisitorGroups, getOrCreateDeviceId,
+  getBudgetSettings, getBudgetExpenses, getPrepIngredients, saveDefaultExpenseRecorder,
 } from '../../lib/storage';
+import {
+  createBranchRecorder,
+  deactivateBranchRecorder,
+  fetchBranchRecorders,
+  fetchBranchRecorderConfig,
+  fetchRecorderAccessLogs,
+  registerRecorderAccess,
+  saveBranchRecorderRegistrationMode,
+  updateBranchRecorder,
+} from '../../lib/recorderRegistry';
 import { alertNotify } from '../../lib/alertUtils';
 import type {
+  BranchRecorder,
+  RecorderRegistrationMode,
   Branch,
   BudgetExpense,
   BudgetSettings,
@@ -27,6 +39,7 @@ import type {
   PendingVisitorCount,
   PrepIngredient,
   RestrictionSettings,
+  RecorderAccessLog,
   Transaction,
   TransactionItem,
   VisitorCounterGroup,
@@ -49,7 +62,7 @@ type StoreBackupPayload = {
 };
 
 type TabKey = 'main' | 'sub' | 'budget' | 'settings';
-type SettingsView = 'top' | 'payment' | 'admin';
+type SettingsView = 'top' | 'payment' | 'admin' | 'recorder';
 
 interface StoreHomeProps {
   branch: Branch;
@@ -71,7 +84,7 @@ interface StoreHomeProps {
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'main', label: 'メイン画面' },
   { key: 'sub', label: 'サブ画面' },
-  { key: 'budget', label: '予算管理' },
+  { key: 'budget', label: '会計管理' },
   { key: 'settings', label: '設定' },
 ];
 
@@ -90,6 +103,9 @@ const DATA_CATEGORY_LABELS: Record<ExportableCategory, string> = {
   budget: '会計データ',
   prep: '下準備データ',
 };
+
+const MANAGER_RECORDER_PREFIX = '管理者';
+const isManagerRecorderName = (name: string): boolean => name.trim().startsWith(MANAGER_RECORDER_PREFIX);
 
 const toCsvCell = (value: unknown): string => {
   const normalized =
@@ -247,6 +263,40 @@ export const StoreHome = ({
   const [branchLoginCode, setBranchLoginCode] = useState<string | null>(null);
   const [showLoginCodeModal, setShowLoginCodeModal] = useState(false);
   const [copiedLoginCode, setCopiedLoginCode] = useState(false);
+  const [recorders, setRecorders] = useState<BranchRecorder[]>([]);
+  const [newRecorderName, setNewRecorderName] = useState('');
+  const [newRecorderNote, setNewRecorderNote] = useState('');
+  const [newRecorderGroupId, setNewRecorderGroupId] = useState<number>(1);
+  const [useGroupForNewRecorder, setUseGroupForNewRecorder] = useState(false);
+  const [recorderSortKey, setRecorderSortKey] = useState<'group_name' | 'name_asc' | 'name_desc' | 'recent_access'>('name_asc');
+  const [recorderRegistrationMode, setRecorderRegistrationMode] = useState<RecorderRegistrationMode>('restricted');
+  const [showRecorderLogsModal, setShowRecorderLogsModal] = useState(false);
+  const [selectedRecorderForLogs, setSelectedRecorderForLogs] = useState<BranchRecorder | null>(null);
+  const [selectedRecorderLogs, setSelectedRecorderLogs] = useState<RecorderAccessLog[]>([]);
+  const [selectedRecorderEditName, setSelectedRecorderEditName] = useState('');
+  const [selectedRecorderEditNote, setSelectedRecorderEditNote] = useState('');
+  const [selectedRecorderEditGroupId, setSelectedRecorderEditGroupId] = useState<number>(1);
+  const [savingRecorderEdit, setSavingRecorderEdit] = useState(false);
+  const [deletingRecorder, setDeletingRecorder] = useState(false);
+  const [allRecorderLogs, setAllRecorderLogs] = useState<RecorderAccessLog[]>([]);
+  const [showRecorderSessionModal, setShowRecorderSessionModal] = useState(false);
+  const [sessionRecorderId, setSessionRecorderId] = useState('');
+  const [sessionDeviceName, setSessionDeviceName] = useState('');
+  const [savingRecorderSession, setSavingRecorderSession] = useState(false);
+  const [recorderSessionRegistered, setRecorderSessionRegistered] = useState(false);
+  const [recorderSessionChecked, setRecorderSessionChecked] = useState(false);
+  const [currentDeviceId, setCurrentDeviceId] = useState('');
+  const [recorderLogsLoaded, setRecorderLogsLoaded] = useState(false);
+  const canSyncToSupabase = isSupabaseConfigured() && authState.status !== 'demo';
+  const managerRecorderDefaultName = useMemo(() => {
+    if (authState.status !== 'authenticated') return null;
+    const raw =
+      authState.profile.display_name?.trim() ||
+      authState.user.user_metadata?.full_name?.trim() ||
+      authState.user.email?.split('@')[0]?.trim() ||
+      'オーナー';
+    return `${MANAGER_RECORDER_PREFIX}（${raw}）`;
+  }, [authState]);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -321,8 +371,8 @@ export const StoreHome = ({
 
   useEffect(() => {
     const loadBranchLoginCode = async () => {
-      if (authState.status === 'login_code' && authState.branch.id === branch.id) {
-        setBranchLoginCode(authState.loginCode);
+      if (authState.status !== 'authenticated') {
+        setBranchLoginCode(null);
         return;
       }
       if (!isSupabaseConfigured()) {
@@ -350,6 +400,369 @@ export const StoreHome = ({
     };
     loadBranchLoginCode();
   }, [authState, branch.id]);
+
+  useEffect(() => {
+    const loadRecorders = async () => {
+      let items = await fetchBranchRecorders(branch.id, canSyncToSupabase);
+
+      if (authState.status === 'authenticated' && managerRecorderDefaultName) {
+        const hasManager = items.some((item) => isManagerRecorderName(item.recorder_name));
+        if (!hasManager) {
+          const created = await createBranchRecorder(
+            branch.id,
+            managerRecorderDefaultName,
+            '管理者',
+            1,
+            canSyncToSupabase,
+          );
+          items = created.recorders;
+        }
+      }
+
+      setRecorders(items);
+      if (items.length > 0 && !sessionRecorderId) {
+        const manager = items.find((item) => isManagerRecorderName(item.recorder_name));
+        setSessionRecorderId(manager?.id ?? items[0].id);
+      }
+    };
+    loadRecorders();
+  }, [authState.status, branch.id, canSyncToSupabase, managerRecorderDefaultName, sessionRecorderId]);
+
+  useEffect(() => {
+    const loadRecorderConfig = async () => {
+      const config = await fetchBranchRecorderConfig(branch.id, canSyncToSupabase);
+      setRecorderRegistrationMode(config.registration_mode);
+    };
+    loadRecorderConfig();
+  }, [branch.id, canSyncToSupabase]);
+
+  useEffect(() => {
+    if (!sessionRecorderId) return;
+    if (recorders.some((item) => item.id === sessionRecorderId)) return;
+    setSessionRecorderId(recorders[0]?.id ?? '');
+  }, [recorders, sessionRecorderId]);
+
+  useEffect(() => {
+    const loadDeviceId = async () => {
+      const id = await getOrCreateDeviceId();
+      setCurrentDeviceId(id);
+    };
+    loadDeviceId();
+  }, []);
+
+  useEffect(() => {
+    const loadRecorderLogs = async () => {
+      setRecorderLogsLoaded(false);
+      const logs = await fetchRecorderAccessLogs(branch.id, canSyncToSupabase);
+      setAllRecorderLogs(logs);
+      setRecorderLogsLoaded(true);
+    };
+    loadRecorderLogs();
+  }, [branch.id, canSyncToSupabase]);
+
+  useEffect(() => {
+    if (!currentDeviceId) return;
+    if (!recorderLogsLoaded) return;
+
+    const existing = allRecorderLogs.find((log) => log.device_id === currentDeviceId);
+    if (existing) {
+      setRecorderSessionRegistered(true);
+      if (!sessionDeviceName.trim()) {
+        setSessionDeviceName(existing.device_name ?? '');
+      }
+      const matchedRecorder = recorders.find(
+        (recorder) =>
+          recorder.id === existing.recorder_id || recorder.recorder_name === existing.recorder_name,
+      );
+      if (matchedRecorder) {
+        setSessionRecorderId(matchedRecorder.id);
+      }
+    } else {
+      setRecorderSessionRegistered(false);
+    }
+    setRecorderSessionChecked(true);
+  }, [allRecorderLogs, currentDeviceId, recorderLogsLoaded, recorders, sessionDeviceName]);
+
+  useEffect(() => {
+    if (authState.status !== 'authenticated') return;
+    if (activeTab !== 'main') return;
+    if (!recorderSessionChecked) return;
+    if (recorderSessionRegistered) return;
+    if (recorders.length === 0) return;
+    setShowRecorderSessionModal(true);
+  }, [authState.status, activeTab, branch.id, recorderSessionRegistered, recorders.length, recorderSessionChecked]);
+
+  useEffect(() => {
+    setRecorderSessionRegistered(false);
+    setRecorderSessionChecked(false);
+    setRecorderLogsLoaded(false);
+    setShowRecorderSessionModal(false);
+    setSessionDeviceName('');
+    setSessionRecorderId('');
+  }, [branch.id]);
+
+  const handleAddRecorder = async () => {
+    const name = newRecorderName.trim();
+    if (!name) {
+      alertNotify('エラー', '登録者名を入力してください');
+      return;
+    }
+
+    const result = await createBranchRecorder(
+      branch.id,
+      name,
+      newRecorderNote,
+      newRecorderGroupId,
+      canSyncToSupabase,
+    );
+    if (!result.ok) {
+      if (result.reason === 'duplicate') {
+        alertNotify('エラー', '同名の登録者が既に存在します');
+      } else {
+        alertNotify('エラー', '登録者の追加に失敗しました');
+      }
+      setRecorders(result.recorders);
+      return;
+    }
+
+    setRecorders(result.recorders);
+    setNewRecorderName('');
+    setNewRecorderNote('');
+    setNewRecorderGroupId(1);
+    setUseGroupForNewRecorder(false);
+    alertNotify('保存完了', '登録者を追加しました');
+  };
+
+  const handleChangeRecorderRegistrationMode = async (mode: RecorderRegistrationMode) => {
+    try {
+      const saved = await saveBranchRecorderRegistrationMode(branch.id, mode, canSyncToSupabase);
+      setRecorderRegistrationMode(saved.registration_mode);
+      alertNotify('保存完了', saved.registration_mode === 'open' ? '自由登録可能に変更しました' : '登録制限に変更しました');
+    } catch (error: any) {
+      alertNotify('エラー', `登録方式の保存に失敗しました: ${error?.message ?? ''}`);
+    }
+  };
+
+  const openRecorderLogs = async (recorder: BranchRecorder) => {
+    const logs = await fetchRecorderAccessLogs(branch.id, canSyncToSupabase);
+    const filtered = logs
+      .filter((log) => log.recorder_id === recorder.id || (!log.recorder_id && log.recorder_name === recorder.recorder_name))
+      .sort((a, b) => new Date(b.accessed_at).getTime() - new Date(a.accessed_at).getTime());
+    setSelectedRecorderForLogs(recorder);
+    setSelectedRecorderLogs(filtered);
+    setSelectedRecorderEditName(recorder.recorder_name);
+    setSelectedRecorderEditNote(recorder.note ?? '');
+    setSelectedRecorderEditGroupId(recorder.group_id ?? 1);
+    setShowRecorderLogsModal(true);
+  };
+
+  const handleUpdateRecorder = async () => {
+    if (!selectedRecorderForLogs) return;
+    const rawName = selectedRecorderEditName.trim();
+    const isManager = isManagerRecorderName(selectedRecorderForLogs.recorder_name);
+    const name =
+      isManager && !isManagerRecorderName(rawName)
+        ? `${MANAGER_RECORDER_PREFIX}（${rawName || 'オーナー'}）`
+        : rawName;
+    if (!name) {
+      alertNotify('エラー', '登録者名を入力してください');
+      return;
+    }
+
+    try {
+      setSavingRecorderEdit(true);
+      const result = await updateBranchRecorder(
+        branch.id,
+        selectedRecorderForLogs.id,
+        {
+          recorderName: name,
+          note: selectedRecorderEditNote,
+          groupId: selectedRecorderEditGroupId,
+        },
+        canSyncToSupabase,
+      );
+      if (!result.ok) {
+        if (result.reason === 'duplicate') {
+          alertNotify('エラー', '同名の登録者が既に存在します');
+        } else {
+          alertNotify('エラー', '登録者の更新に失敗しました');
+        }
+        setRecorders(result.recorders);
+        return;
+      }
+      setRecorders(result.recorders);
+      const updated = result.recorders.find((item) => item.id === selectedRecorderForLogs.id);
+      if (updated) {
+        setSelectedRecorderForLogs(updated);
+      }
+      if (sessionRecorderId === selectedRecorderForLogs.id) {
+        await saveDefaultExpenseRecorder(branch.id, name);
+      }
+      const logs = await fetchRecorderAccessLogs(branch.id, canSyncToSupabase);
+      setAllRecorderLogs(logs);
+      const filtered = logs
+        .filter((log) => log.recorder_id === selectedRecorderForLogs.id || (!log.recorder_id && log.recorder_name === name))
+        .sort((a, b) => new Date(b.accessed_at).getTime() - new Date(a.accessed_at).getTime());
+      setSelectedRecorderLogs(filtered);
+      alertNotify('保存完了', '登録者情報を更新しました');
+    } finally {
+      setSavingRecorderEdit(false);
+    }
+  };
+
+  const handleDeleteRecorder = async () => {
+    if (!selectedRecorderForLogs) return;
+    if (isManagerRecorderName(selectedRecorderForLogs.recorder_name)) {
+      alertNotify('案内', '管理者の登録者は削除できません');
+      return;
+    }
+    if (recorders.length <= 1) {
+      alertNotify('エラー', '最後の1名は削除できません');
+      return;
+    }
+
+    try {
+      setDeletingRecorder(true);
+      const result = await deactivateBranchRecorder(branch.id, selectedRecorderForLogs.id, canSyncToSupabase);
+      if (!result.ok) {
+        setRecorders(result.recorders);
+        alertNotify('エラー', '登録者の削除に失敗しました');
+        return;
+      }
+      setRecorders(result.recorders);
+      if (sessionRecorderId === selectedRecorderForLogs.id) {
+        setSessionRecorderId(result.recorders[0]?.id ?? '');
+      }
+      setShowRecorderLogsModal(false);
+      setSelectedRecorderForLogs(null);
+      setSelectedRecorderLogs([]);
+      alertNotify('削除完了', '登録者を削除しました');
+    } finally {
+      setDeletingRecorder(false);
+    }
+  };
+
+  const handleSaveRecorderSession = async () => {
+    const selected = recorders.find((item) => item.id === sessionRecorderId);
+    if (!selected) {
+      alertNotify('エラー', '登録者を選択してください');
+      return;
+    }
+    if (!sessionDeviceName.trim()) {
+      alertNotify('エラー', '端末名を入力してください');
+      return;
+    }
+
+    try {
+      setSavingRecorderSession(true);
+      const deviceId = await getOrCreateDeviceId();
+      await registerRecorderAccess(
+        {
+          branchId: branch.id,
+          recorderId: selected.id,
+          recorderName: selected.recorder_name,
+          deviceId,
+          deviceName: sessionDeviceName.trim(),
+        },
+        canSyncToSupabase,
+      );
+      await saveDefaultExpenseRecorder(branch.id, selected.recorder_name);
+      setRecorderSessionRegistered(true);
+      setRecorderSessionChecked(true);
+      setShowRecorderSessionModal(false);
+      const logs = await fetchRecorderAccessLogs(branch.id, canSyncToSupabase);
+      setAllRecorderLogs(logs);
+      setRecorderLogsLoaded(true);
+      alertNotify('保存完了', '登録者と端末情報を保存しました');
+    } finally {
+      setSavingRecorderSession(false);
+    }
+  };
+
+  const lastAccessByRecorder = useMemo(() => {
+    const map = new Map<string, RecorderAccessLog>();
+    allRecorderLogs.forEach((log) => {
+      const existing = map.get(log.recorder_name);
+      if (!existing || new Date(existing.accessed_at).getTime() < new Date(log.accessed_at).getTime()) {
+        map.set(log.recorder_name, log);
+      }
+    });
+    return map;
+  }, [allRecorderLogs]);
+
+  const uniqueGroupIds = useMemo(
+    () => Array.from(new Set(recorders.map((item) => item.group_id))).sort((a, b) => a - b),
+    [recorders],
+  );
+  const hasMultipleGroups = uniqueGroupIds.length > 1;
+  const nextSuggestedGroupId = useMemo(
+    () => (uniqueGroupIds.length > 0 ? Math.max(...uniqueGroupIds) + 1 : 2),
+    [uniqueGroupIds],
+  );
+
+  const sortedRecorders = useMemo(() => {
+    const items = [...recorders];
+    if (recorderSortKey === 'name_asc') {
+      items.sort((a, b) => a.recorder_name.localeCompare(b.recorder_name, 'ja'));
+      return items;
+    }
+    if (recorderSortKey === 'name_desc') {
+      items.sort((a, b) => b.recorder_name.localeCompare(a.recorder_name, 'ja'));
+      return items;
+    }
+    if (recorderSortKey === 'recent_access') {
+      items.sort((a, b) => {
+        const aTs = new Date(lastAccessByRecorder.get(a.recorder_name)?.accessed_at ?? 0).getTime();
+        const bTs = new Date(lastAccessByRecorder.get(b.recorder_name)?.accessed_at ?? 0).getTime();
+        return bTs - aTs;
+      });
+      return items;
+    }
+    items.sort((a, b) => {
+      if (a.group_id !== b.group_id) return a.group_id - b.group_id;
+      return a.recorder_name.localeCompare(b.recorder_name, 'ja');
+    });
+    return items;
+  }, [recorders, recorderSortKey, lastAccessByRecorder]);
+
+  const recordersByGroup = useMemo(() => {
+    const map = new Map<number, BranchRecorder[]>();
+    sortedRecorders.forEach((recorder) => {
+      const arr = map.get(recorder.group_id) ?? [];
+      arr.push(recorder);
+      map.set(recorder.group_id, arr);
+    });
+    return map;
+  }, [sortedRecorders]);
+
+  const currentRecorderName = useMemo(() => {
+    const bySelected = recorders.find((item) => item.id === sessionRecorderId)?.recorder_name;
+    if (bySelected) return bySelected;
+    if (!currentDeviceId) return null;
+    const latestByDevice = allRecorderLogs
+      .filter((log) => log.device_id === currentDeviceId)
+      .sort((a, b) => new Date(b.accessed_at).getTime() - new Date(a.accessed_at).getTime())[0];
+    return latestByDevice?.recorder_name ?? null;
+  }, [allRecorderLogs, currentDeviceId, recorders, sessionRecorderId]);
+
+  const selectedRecorderDevices = useMemo(() => {
+    const latestByDevice = new Map<string, RecorderAccessLog>();
+    selectedRecorderLogs.forEach((log) => {
+      const existing = latestByDevice.get(log.device_id);
+      if (!existing || new Date(existing.accessed_at).getTime() < new Date(log.accessed_at).getTime()) {
+        latestByDevice.set(log.device_id, log);
+      }
+    });
+    return Array.from(latestByDevice.values()).sort(
+      (a, b) => new Date(b.accessed_at).getTime() - new Date(a.accessed_at).getTime(),
+    );
+  }, [selectedRecorderLogs]);
+
+  useEffect(() => {
+    if (recorderSortKey === 'group_name' && !hasMultipleGroups) {
+      setRecorderSortKey('name_asc');
+    }
+  }, [hasMultipleGroups, recorderSortKey]);
 
   // --- Admin guard helpers ---
   const openAdminGuard = (onSuccess: () => void) => {
@@ -948,7 +1361,7 @@ export const StoreHome = ({
   };
 
   const payloadFromCsvFiles = (
-    files: Array<{ name: string; content: string }>,
+    files: { name: string; content: string }[],
   ): StoreBackupPayload | null => {
     const data: Partial<Record<ExportableCategory, unknown>> = {};
 
@@ -1326,6 +1739,7 @@ export const StoreHome = ({
   const maskedLoginCode = branchLoginCode
     ? `${branchLoginCode.slice(0, 1)}${'＊'.repeat(Math.max(0, branchLoginCode.length - 1))}`
     : null;
+  const canShowLoginCodeInHeader = authState.status === 'authenticated';
 
   const handleCopyLoginCode = async () => {
     if (!branchLoginCode) return;
@@ -1376,16 +1790,24 @@ export const StoreHome = ({
         subtitleElement={
           <View className="flex-row items-center gap-2 mt-0.5">
             <Text className="text-sm text-gray-500">支店番号: {branch.branch_code}</Text>
-            {maskedLoginCode ? (
+
+            
+              <View className="px-2 py-0.5 rounded-full border border-emerald-200 bg-emerald-50">
+                <Text className="text-xs font-medium text-emerald-700">
+                  使用者: {currentRecorderName ?? '未設定'}
+                </Text>
+               </View>
+
+            {canShowLoginCodeInHeader && maskedLoginCode ? (
               <TouchableOpacity
                 onPress={() => setShowLoginCodeModal(true)}
                 activeOpacity={0.8}
                 className="px-2 py-0.5 rounded-full border border-blue-200 bg-blue-50"
               >
-                <Text className="text-[11px] font-medium text-blue-700">ログインコード: {maskedLoginCode}</Text>
+                <Text className="text-xs font-medium text-blue-700">ログインコード: {maskedLoginCode}</Text>
               </TouchableOpacity>
-            ) : null}
-          </View>
+            ) : null}               
+              </View>
         }
         rightElement={
           <Button title="トップ画面" onPress={handleBackToTop} variant="secondary" size="sm" />
@@ -1481,8 +1903,8 @@ export const StoreHome = ({
 
             <TouchableOpacity onPress={onNavigateToBudgetExpense} activeOpacity={0.8}>
               <Card className="bg-emerald-500 p-6">
-                <Text className="text-white text-2xl  font-bold text-center">支出記録</Text>
-                <Text className="text-emerald-100 text-center mt-2">予算管理とは別担当が支出を入力</Text>
+                <Text className="text-white text-2xl  font-bold text-center">支出管理</Text>
+                <Text className="text-emerald-100 text-center mt-2">支出の記録・確認</Text>
               </Card>
             </TouchableOpacity>
 
@@ -1514,6 +1936,13 @@ export const StoreHome = ({
                   <Card className="bg-blue-500 p-6">
                     <Text className="text-white text-2xl font-bold text-center">支払い設定</Text>
                     <Text className="text-blue-100 text-center mt-2">レジで使用する支払い方法を選択</Text>
+                  </Card>
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => setSettingsView('recorder')} activeOpacity={0.8}>
+                  <Card className="bg-emerald-500 p-6">
+                    <Text className="text-white text-2xl font-bold text-center">登録者設定</Text>
+                    <Text className="text-emerald-100 text-center mt-2">登録者の追加とアクセス端末の確認</Text>
                   </Card>
                 </TouchableOpacity>
 
@@ -1593,6 +2022,237 @@ export const StoreHome = ({
                     <Text className="text-gray-500 text-xs mt-0.5">金券・チケットでの支払い</Text>
                   </View>
                 </TouchableOpacity>
+              </>
+            )}
+
+            {settingsView === 'recorder' && (
+              <>
+                <TouchableOpacity onPress={() => setSettingsView('top')} activeOpacity={0.7} className="flex-row items-center mb-2">
+                  <Text className="text-blue-600 text-base">← 戻る</Text>
+                </TouchableOpacity>
+
+                <Card className="mb-2">
+                  <Text className="text-gray-900 text-lg font-bold mb-2">登録方式</Text>
+                  <View className="flex-row gap-2 mb-2">
+                    <TouchableOpacity
+                      onPress={() => handleChangeRecorderRegistrationMode('open')}
+                      className={`flex-1 rounded-xl border px-3 py-3 ${
+                        recorderRegistrationMode === 'open'
+                          ? 'bg-emerald-500 border-emerald-500'
+                          : 'bg-white border-gray-300'
+                      }`}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        className={`text-center font-semibold ${
+                          recorderRegistrationMode === 'open' ? 'text-white' : 'text-gray-700'
+                        }`}
+                      >
+                        自由登録可能
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleChangeRecorderRegistrationMode('restricted')}
+                      className={`flex-1 rounded-xl border px-3 py-3 ${
+                        recorderRegistrationMode === 'restricted'
+                          ? 'bg-indigo-500 border-indigo-500'
+                          : 'bg-white border-gray-300'
+                      }`}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        className={`text-center font-semibold ${
+                          recorderRegistrationMode === 'restricted' ? 'text-white' : 'text-gray-700'
+                        }`}
+                      >
+                        登録制限
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text className="text-gray-500 text-xs">
+                    {recorderRegistrationMode === 'open'
+                      ? 'ログインコード入力後に、未登録の人もその場で名前入力して登録できます。'
+                      : 'ログインコード入力後は、事前登録済みの登録者のみ選択できます。'}
+                  </Text>
+                </Card>
+
+                <Card className="mb-2">
+                  <Text className="text-gray-900 text-lg font-bold mb-2">登録者を追加</Text>
+                  <Input
+                    label="登録者名"
+                    value={newRecorderName}
+                    onChangeText={setNewRecorderName}
+                    placeholder="例：山田 太郎"
+                  />
+                  <Input
+                    label="備考"
+                    value={newRecorderNote}
+                    onChangeText={setNewRecorderNote}
+                    placeholder="例：レジ担当、食材発注担当 など"
+                  />
+                  <TouchableOpacity
+                    onPress={() => setUseGroupForNewRecorder((prev) => !prev)}
+                    className="rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 mb-2"
+                    activeOpacity={0.8}
+                  >
+                    <Text className="text-gray-700 text-sm font-semibold">
+                      {useGroupForNewRecorder ? 'グループ設定を閉じる' : 'グループ設定（任意）を開く'}
+                    </Text>
+                    <Text className="text-gray-500 text-xs mt-0.5">通常は未設定のままでOK（グループ1）</Text>
+                  </TouchableOpacity>
+                  {useGroupForNewRecorder ? (
+                    <View className="rounded-lg border border-gray-200 px-3 py-2 mb-3">
+                      <Text className="text-gray-700 text-sm mb-2">グループID（任意）</Text>
+                      <View className="flex-row flex-wrap gap-2 mb-2">
+                        <TouchableOpacity
+                          onPress={() => setNewRecorderGroupId(1)}
+                          className={`px-3 py-1.5 rounded-full border ${
+                            newRecorderGroupId === 1 ? 'bg-indigo-500 border-indigo-500' : 'bg-white border-gray-300'
+                          }`}
+                          activeOpacity={0.8}
+                        >
+                          <Text className={`text-xs font-semibold ${newRecorderGroupId === 1 ? 'text-white' : 'text-gray-700'}`}>標準（G1）</Text>
+                        </TouchableOpacity>
+                        {uniqueGroupIds
+                          .filter((groupId) => groupId !== 1)
+                          .map((groupId) => (
+                            <TouchableOpacity
+                              key={`new-recorder-group-${groupId}`}
+                              onPress={() => setNewRecorderGroupId(groupId)}
+                              className={`px-3 py-1.5 rounded-full border ${
+                                newRecorderGroupId === groupId ? 'bg-indigo-500 border-indigo-500' : 'bg-white border-gray-300'
+                              }`}
+                              activeOpacity={0.8}
+                            >
+                              <Text className={`text-xs font-semibold ${newRecorderGroupId === groupId ? 'text-white' : 'text-gray-700'}`}>
+                                G{groupId}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        <TouchableOpacity
+                          onPress={() => setNewRecorderGroupId(nextSuggestedGroupId)}
+                          className={`px-3 py-1.5 rounded-full border ${
+                            newRecorderGroupId === nextSuggestedGroupId
+                              ? 'bg-indigo-500 border-indigo-500'
+                              : 'bg-white border-gray-300'
+                          }`}
+                          activeOpacity={0.8}
+                        >
+                          <Text className={`text-xs font-semibold ${newRecorderGroupId === nextSuggestedGroupId ? 'text-white' : 'text-gray-700'}`}>
+                            新規G{nextSuggestedGroupId}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      <Text className="text-gray-500 text-xs">通常は「標準（G1）」のままで問題ありません。</Text>
+                    </View>
+                  ) : null}
+                  <Button title="登録者を追加" onPress={handleAddRecorder} disabled={!newRecorderName.trim()} />
+                </Card>
+
+                <Card>
+                  <Text className="text-gray-900 text-lg font-bold mb-2">登録者一覧</Text>
+                  <Text className="text-gray-600 text-sm mb-1">並び替え</Text>
+                  <View className="flex-row flex-wrap gap-2 mb-3">
+                    {[
+                      ...(hasMultipleGroups ? [{ key: 'group_name', label: 'グループ順' as const }] : []),
+                      { key: 'name_asc', label: '名前昇順' },
+                      { key: 'name_desc', label: '名前降順' },
+                      { key: 'recent_access', label: '最近アクセス順' },
+                    ].map((opt) => (
+                      <TouchableOpacity
+                        key={opt.key}
+                        onPress={() => setRecorderSortKey(opt.key as 'group_name' | 'name_asc' | 'name_desc' | 'recent_access')}
+                        className={`px-3 py-1.5 rounded-full border ${
+                          recorderSortKey === opt.key ? 'bg-indigo-500 border-indigo-500' : 'bg-white border-gray-300'
+                        }`}
+                        activeOpacity={0.8}
+                      >
+                        <Text className={`text-xs font-semibold ${recorderSortKey === opt.key ? 'text-white' : 'text-gray-700'}`}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {recorders.length === 0 ? (
+                    <Text className="text-gray-500 text-sm">登録者はまだありません</Text>
+                  ) : (
+                    <View className="gap-2">
+                      {hasMultipleGroups && recorderSortKey === 'group_name'
+                        ? Array.from(recordersByGroup.entries())
+                            .sort((a, b) => a[0] - b[0])
+                            .map(([groupId, list]) => (
+                              <View key={`group-${groupId}`} className="mb-1">
+                                <View className="bg-indigo-50 rounded-lg px-3 py-1.5 mb-1">
+                                  <Text className="text-indigo-700 text-xs font-bold">グループ {groupId}</Text>
+                                </View>
+                                <View className="gap-2">
+                                  {list.map((recorder) => {
+                                    const latest = lastAccessByRecorder.get(recorder.recorder_name);
+                                    return (
+                                      <TouchableOpacity
+                                        key={recorder.id}
+                                        onPress={() => openRecorderLogs(recorder)}
+                                        activeOpacity={0.8}
+                                        className="rounded-xl border border-gray-200 bg-white px-3 py-3"
+                                      >
+                                        <Text className="text-gray-900 font-semibold">{recorder.recorder_name}</Text>
+                                        {isManagerRecorderName(recorder.recorder_name) ? (
+                                          <Text className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold mt-1 self-start">
+                                            役職: 管理者
+                                          </Text>
+                                        ) : null}
+                                        {recorder.note ? (
+                                          <Text className="text-gray-500 text-xs mt-0.5">備考: {recorder.note}</Text>
+                                        ) : null}
+                                        <Text className="text-gray-500 text-xs mt-1">
+                                          端末: {latest?.device_name ?? '未アクセス'}
+                                        </Text>
+                                        <Text className="text-gray-500 text-xs mt-0.5">
+                                          最終アクセス: {latest ? new Date(latest.accessed_at).toLocaleString('ja-JP') : '未アクセス'}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    );
+                                  })}
+                                </View>
+                              </View>
+                            ))
+                        : sortedRecorders.map((recorder) => {
+                            const latest = lastAccessByRecorder.get(recorder.recorder_name);
+                            return (
+                              <TouchableOpacity
+                                key={recorder.id}
+                                onPress={() => openRecorderLogs(recorder)}
+                                activeOpacity={0.8}
+                                className="rounded-xl border border-gray-200 bg-white px-3 py-3"
+                              >
+                                <View className="flex-row items-center gap-2">
+                                  <Text className="text-gray-900 font-semibold">{recorder.recorder_name}</Text>
+                                  {isManagerRecorderName(recorder.recorder_name) ? (
+                                    <Text className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">
+                                      管理者
+                                    </Text>
+                                  ) : null}
+                                  {hasMultipleGroups ? (
+                                    <Text className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-semibold">
+                                      G{recorder.group_id}
+                                    </Text>
+                                  ) : null}
+                                </View>
+                                {recorder.note ? (
+                                  <Text className="text-gray-500 text-xs mt-0.5">備考: {recorder.note}</Text>
+                                ) : null}
+                                <Text className="text-gray-500 text-xs mt-1">
+                                  端末: {latest?.device_name ?? '未アクセス'}
+                                </Text>
+                                <Text className="text-gray-500 text-xs mt-0.5">
+                                  最終アクセス: {latest ? new Date(latest.accessed_at).toLocaleString('ja-JP') : '未アクセス'}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                    </View>
+                  )}
+                </Card>
               </>
             )}
 
@@ -1814,6 +2474,159 @@ export const StoreHome = ({
             />
           </View>
         </View>
+      </Modal>
+
+      <Modal
+        visible={showRecorderSessionModal}
+        onClose={() => {
+          if (recorders.length > 0 && !recorderSessionRegistered) {
+            alertNotify('案内', '最初に登録者と端末名の登録を行ってください');
+            return;
+          }
+          setShowRecorderSessionModal(false);
+        }}
+        title="登録者と端末の登録"
+      >
+        <Text className="text-gray-600 text-sm mb-2">
+          この端末で利用する登録者と端末名を設定してください
+        </Text>
+        <Text className="text-gray-600 text-sm mb-1">登録者</Text>
+        <View className="flex-row flex-wrap gap-2 mb-3">
+          {recorders.map((recorder) => (
+            <TouchableOpacity
+              key={recorder.id}
+              onPress={() => setSessionRecorderId(recorder.id)}
+              className={`px-3 py-1.5 rounded-full border ${
+                sessionRecorderId === recorder.id ? 'bg-indigo-500 border-indigo-500' : 'bg-white border-gray-300'
+              }`}
+              activeOpacity={0.8}
+            >
+              <Text className={`text-xs font-semibold ${sessionRecorderId === recorder.id ? 'text-white' : 'text-gray-700'}`}>
+                {hasMultipleGroups ? `G${recorder.group_id} ` : ''}{recorder.recorder_name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <Input
+          label="端末名"
+          value={sessionDeviceName}
+          onChangeText={setSessionDeviceName}
+          placeholder="例：iPhone-レジ前"
+        />
+
+        <View className="mt-2">
+          <Button
+            title="保存して開始"
+            onPress={handleSaveRecorderSession}
+            loading={savingRecorderSession}
+            disabled={recorders.length === 0 || !sessionRecorderId || !sessionDeviceName.trim()}
+          />
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showRecorderLogsModal}
+        onClose={() => {
+          setShowRecorderLogsModal(false);
+          setSelectedRecorderForLogs(null);
+          setSelectedRecorderLogs([]);
+          setSelectedRecorderEditName('');
+          setSelectedRecorderEditNote('');
+          setSelectedRecorderEditGroupId(1);
+        }}
+        title={selectedRecorderForLogs ? `${selectedRecorderForLogs.recorder_name} のアクセス履歴` : 'アクセス履歴'}
+      >
+        {selectedRecorderForLogs ? (
+          <ScrollView style={{ maxHeight: 460 }}>
+            <View className="gap-3">
+              <View className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+                <Text className="text-gray-900 text-sm font-semibold mb-2">登録者情報</Text>
+                {selectedRecorderForLogs && isManagerRecorderName(selectedRecorderForLogs.recorder_name) ? (
+                  <Text className="text-amber-700 text-xs mb-2">役職: 管理者（削除不可）</Text>
+                ) : null}
+                <Input
+                  label="登録者名"
+                  value={selectedRecorderEditName}
+                  onChangeText={setSelectedRecorderEditName}
+                  placeholder="登録者名"
+                />
+                <Input
+                  label="備考"
+                  value={selectedRecorderEditNote}
+                  onChangeText={setSelectedRecorderEditNote}
+                  placeholder="備考"
+                />
+                <Text className="text-gray-600 text-xs mb-1">グループID</Text>
+                <View className="flex-row flex-wrap gap-2 mb-2">
+                  {[1, ...uniqueGroupIds.filter((groupId) => groupId !== 1), nextSuggestedGroupId]
+                    .filter((groupId, index, arr) => arr.indexOf(groupId) === index)
+                    .map((groupId) => (
+                      <TouchableOpacity
+                        key={`recorder-edit-group-${groupId}`}
+                        onPress={() => setSelectedRecorderEditGroupId(groupId)}
+                        className={`px-3 py-1.5 rounded-full border ${
+                          selectedRecorderEditGroupId === groupId
+                            ? 'bg-indigo-500 border-indigo-500'
+                            : 'bg-white border-gray-300'
+                        }`}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          className={`text-xs font-semibold ${
+                            selectedRecorderEditGroupId === groupId ? 'text-white' : 'text-gray-700'
+                          }`}
+                        >
+                          {groupId === 1 ? '標準（1）' : `G${groupId}`}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                </View>
+                <View className="flex-row gap-2">
+                  <View className="flex-1">
+                    <Button
+                      title="変更を保存"
+                      onPress={handleUpdateRecorder}
+                      loading={savingRecorderEdit}
+                      disabled={!selectedRecorderEditName.trim()}
+                    />
+                  </View>
+                  <View className="flex-1">
+                    <Button
+                      title="登録者を削除"
+                      onPress={handleDeleteRecorder}
+                      loading={deletingRecorder}
+                      variant="secondary"
+                      disabled={!!selectedRecorderForLogs && isManagerRecorderName(selectedRecorderForLogs.recorder_name)}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              <View className="rounded-lg border border-gray-200 bg-white px-3 py-3">
+                <Text className="text-gray-900 text-sm font-semibold mb-2">アクセス端末</Text>
+                {selectedRecorderDevices.length === 0 ? (
+                  <Text className="text-gray-500 text-sm">アクセス端末はありません</Text>
+                ) : (
+                  <View className="gap-2">
+                    {selectedRecorderDevices.map((log) => (
+                      <View key={`device-${log.device_id}`} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                        <Text className="text-gray-900 text-sm font-semibold">端末: {log.device_name || '未設定'}</Text>
+                        <Text className="text-gray-500 text-xs mt-0.5">デバイスID: {log.device_id}</Text>
+                        <Text className="text-gray-500 text-xs mt-0.5">
+                          最終アクセス: {new Date(log.accessed_at).toLocaleString('ja-JP')}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+
+            </View>
+          </ScrollView>
+        ) : (
+          <Text className="text-gray-500 text-sm">登録者を選択してください</Text>
+        )}
       </Modal>
 
       {/* Data Delete Modal */}

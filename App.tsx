@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { ActivityIndicator, Platform, Text, View } from 'react-native';
+import { ActivityIndicator, Modal as RNModal, Platform, Text, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 
 import './global.css';
 
@@ -119,7 +119,21 @@ function AppContent() {
   const [checkoutProcessing, setCheckoutProcessing] = useState(false);
 
   // Initialize sync
-  useSync();
+  const {
+    syncDialog,
+    closeSyncDialog,
+    handleConfirmSync,
+    handleConfirmClearLocal,
+  } = useSync();
+
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      console.log('[DEBUG] session:', data?.session);
+      console.log('[DEBUG] session error:', error);
+    };
+    void checkSession();
+  }, []);
 
   const isUuid = useCallback(
     (value: string): boolean =>
@@ -183,7 +197,17 @@ function AppContent() {
         return;
       }
       const resolved = await resolveBranchForStore(authState.branch);
-      if (!resolved) return;
+      if (!resolved) {
+        console.error('[App] login_code resolve failed: branch could not be resolved', {
+          branchId: authState.branch.id,
+          branchCode: authState.branch.branch_code,
+        });
+        return;
+      }
+      console.log('[App] login_code resolve success: transitioning to store_home', {
+        branchId: resolved.id,
+        branchCode: resolved.branch_code,
+      });
       setCurrentBranch(resolved);
       setCurrentScreen('store_home');
     };
@@ -661,6 +685,100 @@ function AppContent() {
     <>
       {renderScreen()}
       <StatusBar style="auto" />
+
+      {/* ── 同期確認ダイアログ ──────────────────────────── */}
+      <RNModal
+        visible={syncDialog.visible && syncDialog.type === 'confirm_sync'}
+        transparent
+        animationType="fade"
+        onRequestClose={closeSyncDialog}
+      >
+        <TouchableWithoutFeedback onPress={closeSyncDialog}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+            <TouchableWithoutFeedback>
+              <View style={{ backgroundColor: 'white', borderRadius: 16, width: '100%', maxWidth: 400, padding: 20 }}>
+                {/* アイコン + タイトル */}
+                <View style={{ alignItems: 'center', marginBottom: 12 }}>
+                  <Text style={{ fontSize: 32, marginBottom: 6 }}>🔄</Text>
+                  <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1f2937' }}>未同期データがあります</Text>
+                </View>
+                <Text style={{ color: '#6b7280', fontSize: 14, textAlign: 'center', marginBottom: 4 }}>
+                  {syncDialog.pendingCount ? `${syncDialog.pendingCount}件` : ''}のローカルデータがSupabaseと未同期です。
+                </Text>
+                <Text style={{ color: '#6b7280', fontSize: 14, textAlign: 'center', marginBottom: 20 }}>
+                  今すぐ同期しますか？
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={closeSyncDialog}
+                    style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#f3f4f6', alignItems: 'center' }}
+                  >
+                    <Text style={{ color: '#374151', fontWeight: '600' }}>後で</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleConfirmSync}
+                    style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#3b82f6', alignItems: 'center' }}
+                  >
+                    <Text style={{ color: 'white', fontWeight: '600' }}>同期する</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </RNModal>
+
+      {/* ── 同期エラー → ローカル削除確認ダイアログ ──────── */}
+      <RNModal
+        visible={syncDialog.visible && syncDialog.type === 'sync_error_clear'}
+        transparent
+        animationType="fade"
+        onRequestClose={closeSyncDialog}
+      >
+        <TouchableWithoutFeedback onPress={closeSyncDialog}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+            <TouchableWithoutFeedback>
+              <View style={{ backgroundColor: 'white', borderRadius: 16, width: '100%', maxWidth: 400, padding: 20 }}>
+                {/* アイコン + タイトル */}
+                <View style={{ alignItems: 'center', marginBottom: 12 }}>
+                  <Text style={{ fontSize: 32, marginBottom: 6 }}>⚠️</Text>
+                  <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#dc2626' }}>同期エラーが発生しました</Text>
+                </View>
+                {/* エラー詳細 */}
+                <View style={{ backgroundColor: '#fef2f2', borderRadius: 8, padding: 10, marginBottom: 12 }}>
+                  <Text style={{ color: '#b91c1c', fontSize: 12, lineHeight: 18 }}>
+                    {syncDialog.errorMessage}
+                  </Text>
+                </View>
+                <Text style={{ color: '#6b7280', fontSize: 13, textAlign: 'center', marginBottom: 6 }}>
+                  DBリセット後などに古いローカルデータが残っている可能性があります。
+                </Text>
+                <Text style={{ color: '#dc2626', fontSize: 13, fontWeight: '600', textAlign: 'center', marginBottom: 20 }}>
+                  ローカルの未同期データを削除しますか？{'\n'}（この操作は取り消せません）
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={closeSyncDialog}
+                    style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#f3f4f6', alignItems: 'center' }}
+                  >
+                    <Text style={{ color: '#374151', fontWeight: '600' }}>キャンセル</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (syncDialog.branchId) {
+                        void handleConfirmClearLocal(syncDialog.branchId);
+                      }
+                    }}
+                    style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#ef4444', alignItems: 'center' }}
+                  >
+                    <Text style={{ color: 'white', fontWeight: '600' }}>削除する</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </RNModal>
     </>
   );
 }

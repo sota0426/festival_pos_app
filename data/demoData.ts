@@ -6,6 +6,7 @@ import type {
   PendingVisitorCount,
   BudgetSettings,
   BudgetExpense,
+  PrepIngredient,
 } from '../types/database';
 
 // ============================================================
@@ -50,6 +51,12 @@ export const DEMO_BRANCHES: Branch[] = [
   },
 ];
 
+export const resolveDemoBranchId = (branch: Pick<Branch, 'id' | 'branch_code'>): string | null => {
+  if (DEMO_MENUS[branch.id]) return branch.id;
+  const matched = DEMO_BRANCHES.find((item) => item.branch_code === branch.branch_code);
+  return matched?.id ?? null;
+};
+
 // ============================================================
 // デモ用メニューカテゴリ
 // ============================================================
@@ -81,12 +88,12 @@ const now = new Date().toISOString();
 
 export const DEMO_MENUS: Record<string, Menu[]> = {
   'demo-1': [
-    { id: 'menu-1-1', branch_id: 'demo-1', menu_name: '焼きそば（並）', price: 400, menu_number: 1, sort_order: 1, category_id: 'cat-1-1', stock_management: true, stock_quantity: 80, is_active: true, is_show: true, created_at: now, updated_at: now },
-    { id: 'menu-1-2', branch_id: 'demo-1', menu_name: '焼きそば（大）', price: 600, menu_number: 2, sort_order: 2, category_id: 'cat-1-1', stock_management: true, stock_quantity: 50, is_active: true, is_show: true, created_at: now, updated_at: now },
-    { id: 'menu-1-3', branch_id: 'demo-1', menu_name: '目玉焼きトッピング', price: 100, menu_number: 3, sort_order: 3, category_id: 'cat-1-2', stock_management: true, stock_quantity: 40, is_active: true, is_show: true, created_at: now, updated_at: now },
-    { id: 'menu-1-4', branch_id: 'demo-1', menu_name: 'チーズトッピング', price: 100, menu_number: 4, sort_order: 4, category_id: 'cat-1-2', stock_management: false, stock_quantity: 0, is_active: true, is_show: true, created_at: now, updated_at: now },
-    { id: 'menu-1-5', branch_id: 'demo-1', menu_name: 'ラムネ', price: 200, menu_number: 5, sort_order: 5, category_id: 'cat-1-3', stock_management: true, stock_quantity: 60, is_active: true, is_show: true, created_at: now, updated_at: now },
-    { id: 'menu-1-6', branch_id: 'demo-1', menu_name: 'お茶', price: 150, menu_number: 6, sort_order: 6, category_id: 'cat-1-3', stock_management: true, stock_quantity: 40, is_active: true, is_show: true, created_at: now, updated_at: now },
+    { id: 'menu-1-1', branch_id: 'demo-1', menu_name: '焼きそば（並）', price: 400, menu_number: 101, sort_order: 1, category_id: 'cat-1-1', stock_management: true, stock_quantity: 80, is_active: true, is_show: true, created_at: now, updated_at: now },
+    { id: 'menu-1-2', branch_id: 'demo-1', menu_name: '焼きそば（大）', price: 600, menu_number: 102, sort_order: 2, category_id: 'cat-1-1', stock_management: true, stock_quantity: 50, is_active: true, is_show: true, created_at: now, updated_at: now },
+    { id: 'menu-1-3', branch_id: 'demo-1', menu_name: '目玉焼きトッピング', price: 100, menu_number: 103, sort_order: 3, category_id: 'cat-1-2', stock_management: true, stock_quantity: 40, is_active: true, is_show: true, created_at: now, updated_at: now },
+    { id: 'menu-1-4', branch_id: 'demo-1', menu_name: 'チーズトッピング', price: 100, menu_number: 104, sort_order: 4, category_id: 'cat-1-2', stock_management: false, stock_quantity: 0, is_active: true, is_show: true, created_at: now, updated_at: now },
+    { id: 'menu-1-5', branch_id: 'demo-1', menu_name: 'ラムネ', price: 200, menu_number: 201, sort_order: 5, category_id: 'cat-1-3', stock_management: true, stock_quantity: 60, is_active: true, is_show: true, created_at: now, updated_at: now },
+    { id: 'menu-1-6', branch_id: 'demo-1', menu_name: 'お茶', price: 150, menu_number: 202, sort_order: 6, category_id: 'cat-1-3', stock_management: true, stock_quantity: 40, is_active: true, is_show: true, created_at: now, updated_at: now },
   ],
   'demo-2': [
     { id: 'menu-2-1', branch_id: 'demo-2', menu_name: 'たこ焼き（8個）', price: 500, menu_number: 1, sort_order: 1, category_id: 'cat-2-1', stock_management: true, stock_quantity: 60, is_active: true, is_show: true, created_at: now, updated_at: now },
@@ -274,5 +281,32 @@ export const DEMO_BUDGET_EXPENSES: Record<string, BudgetExpense[]> = {
   'demo-4': [
     { id: 'demo-exp-4-1', branch_id: 'demo-4', date: yesterdayStr, category: 'material', amount: 5000, recorded_by: '高橋', payment_method: 'online', memo: '小麦粉・クリーム・フルーツ', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
     { id: 'demo-exp-4-2', branch_id: 'demo-4', date: yesterdayStr, category: 'equipment', amount: 2000, recorded_by: '高橋', payment_method: 'cash', memo: 'クレープ焼き器', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
+  ],
+};
+
+// ============================================================
+// デモ用 下準備材料データ
+// ============================================================
+export const DEMO_PREP_INGREDIENTS: Record<string, PrepIngredient[]> = {
+  'demo-1': [
+    { id: 'prep-1-1', branch_id: 'demo-1', ingredient_name: '中華麺', unit: '玉', current_stock: 48, note: '最低10玉は確保', created_at: now, updated_at: now },
+    { id: 'prep-1-2', branch_id: 'demo-1', ingredient_name: 'キャベツ', unit: '玉', current_stock: 6, note: '午後に追加搬入予定', created_at: now, updated_at: now },
+    { id: 'prep-1-3', branch_id: 'demo-1', ingredient_name: 'ソース', unit: '本', current_stock: 9, note: '残り少なくなったら本部へ連絡', created_at: now, updated_at: now },
+    { id: 'prep-1-4', branch_id: 'demo-1', ingredient_name: '豚肉', unit: 'kg', current_stock: 5, note: '冷蔵庫上段に保存', created_at: now, updated_at: now },
+  ],
+  'demo-2': [
+    { id: 'prep-2-1', branch_id: 'demo-2', ingredient_name: 'たこ焼き粉', unit: '袋', current_stock: 14, note: '開封済みを優先', created_at: now, updated_at: now },
+    { id: 'prep-2-2', branch_id: 'demo-2', ingredient_name: 'タコ', unit: 'kg', current_stock: 4, note: '残量が2kg以下なら補充', created_at: now, updated_at: now },
+    { id: 'prep-2-3', branch_id: 'demo-2', ingredient_name: 'マヨネーズ', unit: '本', current_stock: 8, note: '予備は倉庫に3本', created_at: now, updated_at: now },
+  ],
+  'demo-3': [
+    { id: 'prep-3-1', branch_id: 'demo-3', ingredient_name: '鶏もも肉', unit: 'kg', current_stock: 7, note: '串打ち済みは先に使用', created_at: now, updated_at: now },
+    { id: 'prep-3-2', branch_id: 'demo-3', ingredient_name: 'ねぎ', unit: '束', current_stock: 10, note: '', created_at: now, updated_at: now },
+    { id: 'prep-3-3', branch_id: 'demo-3', ingredient_name: '塩だれ', unit: '本', current_stock: 5, note: 'あと2本で発注', created_at: now, updated_at: now },
+  ],
+  'demo-4': [
+    { id: 'prep-4-1', branch_id: 'demo-4', ingredient_name: 'クレープ生地', unit: '枚', current_stock: 52, note: '常に20枚以上キープ', created_at: now, updated_at: now },
+    { id: 'prep-4-2', branch_id: 'demo-4', ingredient_name: '生クリーム', unit: '本', current_stock: 7, note: '冷蔵庫右側', created_at: now, updated_at: now },
+    { id: 'prep-4-3', branch_id: 'demo-4', ingredient_name: 'いちご', unit: 'パック', current_stock: 4, note: '傷みやすいので先出し', created_at: now, updated_at: now },
   ],
 };

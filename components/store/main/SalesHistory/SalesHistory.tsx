@@ -10,6 +10,8 @@ import { MenuSalesSummary } from './MenuSalesSummary';
 import { handleExportCSV } from './ExportCSV';
 import { CancelModal } from './CancelModal';
 import { TransactionCard } from './TransactionCard';
+import { useAuth } from '../../../../contexts/AuthContext';
+import { DEMO_TRANSACTIONS, resolveDemoBranchId } from '../../../../data/demoData';
 
 interface SalesHistoryProps {
   branch: Branch;
@@ -29,6 +31,11 @@ export const SalesHistory = ({
   branch, 
   onBack,
 }: SalesHistoryProps) => {
+  const { authState } = useAuth();
+  const isDemo = authState.status === 'demo';
+  const demoBranchId = resolveDemoBranchId(branch);
+  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+
   const [transactions, setTransactions] = useState<TransactionWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -46,6 +53,32 @@ export const SalesHistory = ({
 
   const fetchTransactions = useCallback(async () => {
     try {
+      if (isDemo && demoBranchId) {
+        const demoTrans: TransactionWithItems[] = (DEMO_TRANSACTIONS[demoBranchId] ?? []).map((t) => ({
+          id: t.id,
+          branch_id: branch.id,
+          transaction_code: t.transaction_code,
+          total_amount: t.total_amount,
+          payment_method: t.payment_method,
+          status: 'completed',
+          fulfillment_status: 'served',
+          served_at: t.created_at,
+          created_at: t.created_at,
+          cancelled_at: null,
+          items: t.items.map((item, index) => ({
+            id: `${t.id}-${index}`,
+            transaction_id: t.id,
+            ...item,
+          })),
+        }));
+        setTransactions(demoTrans.sort((a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        ));
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+
       // First get local pending transactions
       const pendingTrans = await getPendingTransactions();
       const localTrans: TransactionWithItems[] = pendingTrans
@@ -68,7 +101,7 @@ export const SalesHistory = ({
           })),
         }));
 
-      if (!isSupabaseConfigured()) {
+      if (!canSyncToSupabase) {
         // Add some demo data if no local transactions
         if (localTrans.length === 0) {
           const demoTrans: TransactionWithItems[] = [
@@ -193,7 +226,7 @@ export const SalesHistory = ({
       setLoading(false);
       setRefreshing(false);
     }
-  }, [branch.id, branch.branch_code]);
+  }, [branch.id, branch.branch_code, isDemo, demoBranchId, canSyncToSupabase]);
 
   useEffect(() => {
     fetchTransactions();
@@ -252,10 +285,12 @@ export const SalesHistory = ({
             }
             return menu;
           });
-          await saveMenus(updatedMenus);
+          if (!isDemo) {
+            await saveMenus(updatedMenus);
+          }
 
           // Update transaction status
-          if (isSupabaseConfigured()) {
+          if (canSyncToSupabase) {
             const { error } = await supabase
               .from('transactions')
               .update({ status: 'cancelled', cancelled_at: now })

@@ -5,6 +5,7 @@ import { Modal } from "components/common";
 import { getVisitorGroups, saveVisitorGroups, verifyAdminPassword } from "lib/storage";
 import { useVisitorCounter } from "hooks/useVisitorCounter";
 import type { Branch, VisitorCounterGroup, VisitorGroup } from "types/database";
+import { useAuth } from "contexts/AuthContext";
 import { ManualCounter } from "./ManualCounter";
 import { VisitorFooter } from "./VisitorScreen+Footer";
 import { VisitorHeader } from "./VisitorScreen+Header";
@@ -25,6 +26,19 @@ const createDefaultGroups = (): GroupOption[] => [
     id: "group1",
     name: "一般客",
     color: COLORS[0],
+  },
+];
+
+const createDemoDefaultGroups = (): GroupOption[] => [
+  {
+    id: "group1",
+    name: "大人",
+    color: COLORS[0],
+  },
+  {
+    id: "group2",
+    name: "こども",
+    color: COLORS[1],
   },
 ];
 
@@ -54,6 +68,9 @@ const normalizeGroups = (inputGroups: GroupOption[]): GroupOption[] => {
 };
 
 export const ManualCounterScreen = ({ branch, onBack }: Props) => {
+  const { authState } = useAuth();
+  const isDemo = authState.status === "demo";
+
   const {
     groupCounts,
     todayTotal,
@@ -65,7 +82,7 @@ export const ManualCounterScreen = ({ branch, onBack }: Props) => {
     pastDailyTrends,
     resetTodayCounts,
     resetAllCounts,
-  } = useVisitorCounter(branch.id);
+  } = useVisitorCounter(branch.id, { persist: !isDemo });
 
   const [groups, setGroups] = useState<GroupOption[]>(createDefaultGroups());
   const [loadedGroups, setLoadedGroups] = useState(false);
@@ -76,6 +93,14 @@ export const ManualCounterScreen = ({ branch, onBack }: Props) => {
 
   useEffect(() => {
     const loadGroups = async () => {
+      if (isDemo) {
+        const demoDefaults = createDemoDefaultGroups();
+        setGroups(demoDefaults);
+        await saveVisitorGroups(branch.id, demoDefaults);
+        setLoadedGroups(true);
+        return;
+      }
+
       const savedGroups = await getVisitorGroups(branch.id);
       if (savedGroups.length > 0) {
         const normalized = normalizeGroups(savedGroups);
@@ -89,7 +114,7 @@ export const ManualCounterScreen = ({ branch, onBack }: Props) => {
       setLoadedGroups(true);
     };
     loadGroups();
-  }, [branch.id]);
+  }, [branch.id, isDemo]);
 
   const persistGroups = useCallback(
     async (nextGroups: GroupOption[]) => {

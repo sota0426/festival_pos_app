@@ -10,6 +10,8 @@ import type { Branch, Menu, MenuCategory, CartItem, PendingTransaction, PaymentM
 import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
 import { useCustomerOrders } from '../../../hooks/useCustomerOrders';
 import type { CustomerOrderWithItems } from '../../../types/database';
+import { useAuth } from '../../../contexts/AuthContext';
+import { DEMO_MENU_CATEGORIES, DEMO_MENUS, DEMO_TRANSACTIONS, resolveDemoBranchId } from '../../../data/demoData';
 
 interface RegisterProps {
   branch: Branch;
@@ -24,6 +26,11 @@ export const Register = ({
   onNavigateToHistory,
   onNavigateToMenus
  }: RegisterProps) => {
+  const { authState } = useAuth();
+  const isDemo = authState.status === 'demo';
+  const demoBranchId = useMemo(() => resolveDemoBranchId(branch), [branch]);
+  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+
   const [menus, setMenus] = useState<Menu[]>([]);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -72,10 +79,23 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
   const fetchMenus = useCallback(async () => {
     try {
+      if (isDemo && demoBranchId) {
+        const seededMenus = (DEMO_MENUS[demoBranchId] ?? [])
+          .map((m) => ({ ...m, branch_id: branch.id }))
+          .filter((m) => m.is_active && m.is_show !== false);
+        const seededCategories = (DEMO_MENU_CATEGORIES[demoBranchId] ?? [])
+          .map((c) => ({ ...c, branch_id: branch.id }))
+          .sort((a, b) => a.sort_order - b.sort_order);
+        setMenus(sortMenus(seededMenus));
+        setCategories(seededCategories);
+        setLoading(false);
+        return;
+      }
+
       const localMenus = await getMenus();
       const localCategories = await getMenuCategories();
 
-      if (isSupabaseConfigured()) {
+      if (canSyncToSupabase) {
         try {
           const [
             { data: remoteMenus, error: menuError },
@@ -129,7 +149,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     } finally {
       setLoading(false);
     }
-  }, [branch.id, sortMenus]);
+  }, [branch.id, sortMenus, isDemo, demoBranchId, canSyncToSupabase]);
 
   const loadTodaySoldByMenu = useCallback(async () => {
     try {
@@ -141,6 +161,17 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
       // 初回ロード時に firstSaleTime を最古のトランザクション時刻から復元する
       let earliestSaleTime: Date | null = null;
+
+      if (isDemo && demoBranchId) {
+        const demoTx = DEMO_TRANSACTIONS[demoBranchId] ?? [];
+        demoTx.forEach((tx) => {
+          tx.items.forEach((item) => {
+            sold[item.menu_id] = (sold[item.menu_id] ?? 0) + item.quantity;
+          });
+          const txTime = new Date(tx.created_at);
+          if (!earliestSaleTime || txTime < earliestSaleTime) earliestSaleTime = txTime;
+        });
+      }
 
       const localPending = await getPendingTransactions();
       localPending
@@ -157,7 +188,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
           if (!earliestSaleTime || txTime < earliestSaleTime) earliestSaleTime = txTime;
         });
 
-      if (isSupabaseConfigured()) {
+      if (canSyncToSupabase) {
         const { data: txData, error: txError } = await supabase
           .from('transactions')
           .select('id, created_at')
@@ -194,7 +225,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       console.error('Failed to load today sold summary:', error);
       setTodaySoldByMenu({});
     }
-  }, [branch.id]);
+  }, [branch.id, isDemo, demoBranchId, canSyncToSupabase]);
 
   useEffect(() => {
     fetchMenus();
@@ -239,6 +270,15 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
   const totalAmount = cart.reduce((sum, item) => sum + item.subtotal, 0);
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+  const cartAccentPalette = [
+    { bg: '#F8FAFC', border: '#BFDBFE' },
+    { bg: '#F0FDF4', border: '#86EFAC' },
+    { bg: '#FFF7ED', border: '#FDBA74' },
+    { bg: '#FAF5FF', border: '#D8B4FE' },
+    { bg: '#F5F3FF', border: '#C4B5FD' },
+    { bg: '#ECFEFF', border: '#67E8F9' },
+  ] as const;
 
   const panResponder = PanResponder.create({
     onStartShouldSetPanResponder: () => true,
@@ -465,12 +505,14 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       });
 
       // Save to local storage first
-      await savePendingTransaction(transaction);
-      await saveMenus(updatedMenus);
+      if (!isDemo) {
+        await savePendingTransaction(transaction);
+        await saveMenus(updatedMenus);
+      }
       setMenus(updatedMenus);
 
       // Try to sync with Supabase
-      if (isSupabaseConfigured()) {
+      if (canSyncToSupabase) {
         try {
           const { error: transError } = await supabase.from('transactions').insert({
             id: transactionId,
@@ -704,7 +746,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
                   </View>
                 </View>
                 <Text
-                  className={`text-lg font-semibold text-center ${isDisabled ? 'text-gray-400' : 'text-gray-900'}`}
+                  className={`text-lg pt-2 font-semibold text-center ${isDisabled ? 'text-gray-400' : 'text-gray-900'}`}
                   numberOfLines={2}
                 >
                   {menu.menu_name}
@@ -899,14 +941,14 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
   const CartPanel = () => (
     <View className={`bg-white ${isMobile ? 'flex-1' : 'flex-1 border-l border-gray-200'}`}>
       <View className="p-3 border-b border-gray-200 flex-row items-center justify-between">
-        <View className='flex-row justify-center items-center gap-1'> 
+        <View className='flex-row justify-center items-center gap-1'>
           <Text className="text-lg font-bold text-gray-900">注文内容</Text>
           <TouchableOpacity
             onPress={() => setShowHint(prev => !prev)}
-            className="w-6 h-6 items-center justify-center rounded-full bg-yellow-200"
+            className="w-12 h-6 items-center justify-center rounded-full bg-yellow-200"
             activeOpacity={0.7}
           >
-            <Text className="text-xs text-yellow-600 font-bold">?</Text>
+            <Text className="text-xs text-yellow-600 font-bold">ヒント</Text>
           </TouchableOpacity>
         </View>
         <Modal
@@ -926,27 +968,32 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
         )}
       </View>
 
-      <ScrollView 
+      <ScrollView
         className="flex-1 p-3"
         contentContainerStyle={{ paddingBottom: 300 }}
       >
-        {cart.map((item) => (
+        {cart.map((item, index) => (
           <View
             key={item.menu_id}
-            className="py-3 border-b border-gray-100"
+            className="mb-2 rounded-xl border px-3 py-3"
+            style={{
+              backgroundColor: cartAccentPalette[index % cartAccentPalette.length].bg,
+              borderColor: cartAccentPalette[index % cartAccentPalette.length].border,
+              borderLeftWidth: 6,
+            }}
           >
             <View className="flex-row items-start">
               <View className="flex-1 min-w-0 pr-2">
                 <TouchableOpacity onLongPress={() => openDiscountModal(item.menu_id)} activeOpacity={0.8}>
                   <Text
-                    className={`text-gray-900 font-semibold leading-5 ${isMobile ? 'text-base' : 'text-lg'}`}
+                    className={`text-gray-900 font-semibold text-xl leading-5 ${isMobile ? 'text-base' : 'text-lg'}`}
                     numberOfLines={2}
                   >
                     {item.menu_name}
                   </Text>
                 </TouchableOpacity>
 
-                <Text className="text-gray-500 text-xs mt-1">
+                <Text className="text-gray-500 mt-1">
                   @{item.unit_price.toLocaleString()}円
                   {item.discount > 0 && (
                     <Text className="text-red-500"> -{item.discount.toLocaleString()}円</Text>
@@ -965,15 +1012,15 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
                   </Text>
                   <TouchableOpacity
                     onPress={() => updateCartItemQuantity(item.menu_id, 1)}
-                    className={`bg-gray-200 rounded items-center justify-center ${isMobile ? 'w-7 h-7' : 'w-8 h-8'}`}
+                    className={`bg-gray-200 rounded items-center justify-center w-8 h-8`}
                   >
-                    <Text className={`text-gray-600 font-bold ${isMobile ? 'text-sm' : 'text-base'}`}>+</Text>
+                    <Text className={`text-gray-600 font-bold text-base`}>+</Text>
                   </TouchableOpacity>
                 </View>
               </View>
 
               <View className="items-end justify-start pl-1">
-                <Text className={`font-semibold text-gray-900 ${isMobile ? 'text-sm' : 'text-base'}`}>
+                <Text className={`font-semibold text-gray-900 text-xl`}>
                   {item.subtotal.toLocaleString()}円
                 </Text>
                 <TouchableOpacity

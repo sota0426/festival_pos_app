@@ -202,6 +202,36 @@ export interface BudgetExpense {
   synced: boolean;
 }
 
+export interface BranchRecorder {
+  id: string;
+  branch_id: string;
+  recorder_name: string;
+  note: string;
+  group_id: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecorderAccessLog {
+  id: string;
+  branch_id: string;
+  recorder_id: string | null;
+  recorder_name: string;
+  device_id: string;
+  device_name: string;
+  accessed_at: string;
+  created_at: string;
+}
+
+export type RecorderRegistrationMode = 'open' | 'restricted';
+
+export interface BranchRecorderConfig {
+  branch_id: string;
+  registration_mode: RecorderRegistrationMode;
+  updated_at: string;
+}
+
 export interface BudgetSettings {
   branch_id: string;
   initial_budget: number;

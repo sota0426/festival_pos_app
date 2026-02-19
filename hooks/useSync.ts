@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { AppState, AppStateStatus, Platform } from 'react-native';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {
@@ -9,6 +9,7 @@ import {
   clearSyncedTransactions,
   saveLastSyncTime,
   getLastSyncTime,
+  clearAllPendingTransactions,
 } from '../lib/storage';
 import * as Crypto from 'expo-crypto';
 
@@ -27,6 +28,25 @@ const normalizeVisitorGroupType = (value?: string | null): string => {
   return 'group1';
 };
 
+const isUuid = (value: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+/** 同期ダイアログの表示種別 */
+export type SyncDialogType =
+  | 'confirm_sync'       // 「同期しますか？」
+  | 'sync_error_clear';  // 「エラー発生。ローカルデータを削除しますか？」
+
+export interface SyncDialogState {
+  visible: boolean;
+  type: SyncDialogType;
+  /** エラー時: 対象 branch_id (ローカル削除に使う) */
+  branchId?: string;
+  /** エラー詳細メッセージ */
+  errorMessage?: string;
+  /** 未同期件数 */
+  pendingCount?: number;
+}
+
 export const useSync = () => {
   const syncInProgress = useRef(false);
   const visitorSyncInProgress = useRef(false);
@@ -35,13 +55,27 @@ export const useSync = () => {
   const visitorSyncTimerRef = useRef<NodeJS.Timeout | null>(null);
   // 前回のオンライン状態を記録（復帰検知用）
   const wasOfflineRef = useRef(false);
+  // 起動時の確認ダイアログを一度だけ表示するフラグ
+  const startupConfirmShownRef = useRef(false);
 
-  const syncPendingTransactions = useCallback(async () => {
+  const [syncDialog, setSyncDialog] = useState<SyncDialogState>({
+    visible: false,
+    type: 'confirm_sync',
+  });
+
+  const closeSyncDialog = useCallback(() => {
+    setSyncDialog((prev) => ({ ...prev, visible: false }));
+  }, []);
+
+  const syncPendingTransactions = useCallback(async (): Promise<'ok' | 'error' | 'none'> => {
     if (!isSupabaseConfigured() || syncInProgress.current) {
-      return;
+      return 'none';
     }
 
     syncInProgress.current = true;
+    let hasError = false;
+    let errorBranchId: string | undefined;
+    let errorMessage: string | undefined;
 
     try {
       const pendingTransactions = await getPendingTransactions();
@@ -50,7 +84,7 @@ export const useSync = () => {
       if (unsynced.length === 0) {
         console.log('No pending transactions to sync');
         await saveLastSyncTime();
-        return;
+        return 'none';
       }
 
       console.log(`Syncing ${unsynced.length} pending transactions...`);
@@ -86,11 +120,18 @@ export const useSync = () => {
 
           if (transError) {
             console.error('Error syncing transaction:', transError);
+            hasError = true;
+            errorBranchId = transaction.branch_id;
+            // 23503 = foreign key violation (branch_id not in branches table)
+            if (transError.code === '23503') {
+              errorMessage = `branch_id が存在しません (${transaction.branch_id.slice(0, 8)}...)。\nDBリセット後にローカルの古いデータが残っている可能性があります。`;
+            } else {
+              errorMessage = transError.message;
+            }
             continue;
           }
 
           // Insert transaction items
-          // Verify which menu_ids exist in the DB to avoid foreign key violations
           const menuIds = transaction.items
             .map((item) => item.menu_id)
             .filter((id): id is string => !!id);
@@ -121,6 +162,9 @@ export const useSync = () => {
 
           if (itemsError) {
             console.error('Error syncing transaction items:', itemsError);
+            hasError = true;
+            errorBranchId = transaction.branch_id;
+            errorMessage = itemsError.message;
             continue;
           }
 
@@ -129,6 +173,7 @@ export const useSync = () => {
           console.log(`Transaction ${transaction.transaction_code} synced successfully`);
         } catch (err) {
           console.error('Error syncing individual transaction:', err);
+          hasError = true;
         }
       }
 
@@ -136,9 +181,22 @@ export const useSync = () => {
       await clearSyncedTransactions();
       await saveLastSyncTime();
 
+      if (hasError && errorBranchId) {
+        // エラーが発生した場合、エラーダイアログを表示
+        setSyncDialog({
+          visible: true,
+          type: 'sync_error_clear',
+          branchId: errorBranchId,
+          errorMessage: errorMessage ?? '同期中にエラーが発生しました',
+        });
+        return 'error';
+      }
+
       console.log('Sync completed');
+      return 'ok';
     } catch (error) {
       console.error('Sync error:', error);
+      return 'error';
     } finally {
       syncInProgress.current = false;
     }
@@ -187,6 +245,17 @@ export const useSync = () => {
         });
       });
 
+      // 非UUID branch_id の古いローカルデータは DB FK 制約で失敗するため同期対象から除外
+      const invalidRows = Array.from(grouped.values()).filter((row) => !isUuid(row.branch_id));
+      if (invalidRows.length > 0) {
+        const invalidIds = invalidRows.flatMap((row) => row.sourceIds);
+        await markVisitorCountsSynced(invalidIds);
+        invalidRows.forEach((row) => {
+          const key = `${row.branch_id}|${row.group_type}|${row.timestamp}`;
+          grouped.delete(key);
+        });
+      }
+
       const payload = Array.from(grouped.values()).map((row) => ({
         id: Crypto.randomUUID(),
         branch_id: row.branch_id,
@@ -195,19 +264,42 @@ export const useSync = () => {
         timestamp: row.timestamp,
       }));
 
+      if (payload.length === 0) {
+        return;
+      }
+
       const { error } = await supabase.from('visitor_counts').insert(payload);
       if (error) {
-        console.error('Error syncing visitor counts:', error);
+        // 開発画面の赤エラーを避ける: 同期失敗時はログのみ
+        console.warn('Skip syncing visitor counts:', error);
         return;
       }
 
       const syncedSourceIds = Array.from(grouped.values()).flatMap((row) => row.sourceIds);
       await markVisitorCountsSynced(syncedSourceIds);
     } catch (error) {
-      console.error('Visitor sync error:', error);
+      console.warn('Visitor sync skipped:', error);
     } finally {
       visitorSyncInProgress.current = false;
     }
+  }, []);
+
+  /**
+   * 未同期件数を確認し、1件以上あれば「同期しますか？」ダイアログを表示。
+   * ダイアログの確認後に呼ばれる onConfirm で実際に同期する。
+   */
+  const promptSyncIfNeeded = useCallback(async () => {
+    if (!isSupabaseConfigured()) return;
+
+    const pending = await getPendingTransactions();
+    const unsynced = pending.filter((t) => !t.synced);
+    if (unsynced.length === 0) return;
+
+    setSyncDialog({
+      visible: true,
+      type: 'confirm_sync',
+      pendingCount: unsynced.length,
+    });
   }, []);
 
   const checkAndSync = useCallback(async () => {
@@ -256,8 +348,11 @@ export const useSync = () => {
 
   // Set up periodic sync
   useEffect(() => {
-    // 初回: 未同期データがあれば即時同期、その後リトライタイマーをセット
-    void checkAndSync().then(() => scheduleRetryIfNeeded());
+    // 起動時: 未同期データがあれば「同期しますか？」を1回だけ表示
+    if (!startupConfirmShownRef.current) {
+      startupConfirmShownRef.current = true;
+      void promptSyncIfNeeded();
+    }
 
     // 定期同期（1時間ごと、フォールバック用）
     syncTimerRef.current = setInterval(() => {
@@ -275,20 +370,20 @@ export const useSync = () => {
       }, VISITOR_SYNC_INTERVAL);
     }, nextBoundaryDelay);
 
-    // アプリフォアグラウンド復帰時に同期
+    // アプリフォアグラウンド復帰時に同期確認
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
-        void checkAndSync().then(() => scheduleRetryIfNeeded());
+        void promptSyncIfNeeded();
         void syncPendingVisitorCounts();
       }
     };
     const subscription = AppState.addEventListener('change', handleAppStateChange);
 
-    // Web: オンライン復帰イベントで即座に同期
+    // Web: オンライン復帰イベントで確認ダイアログ
     const handleOnline = () => {
       if (wasOfflineRef.current) {
         wasOfflineRef.current = false;
-        void checkAndSync().then(() => scheduleRetryIfNeeded());
+        void promptSyncIfNeeded();
         void syncPendingVisitorCounts();
       }
     };
@@ -311,12 +406,32 @@ export const useSync = () => {
         window.removeEventListener('offline', handleOffline);
       }
     };
-  }, [checkAndSync, scheduleRetryIfNeeded, syncPendingVisitorCounts]);
+  }, [checkAndSync, scheduleRetryIfNeeded, syncPendingVisitorCounts, promptSyncIfNeeded]);
+
+  /** 「同期しますか？」→「はい」を押したとき */
+  const handleConfirmSync = useCallback(async () => {
+    closeSyncDialog();
+    await syncPendingTransactions();
+    await scheduleRetryIfNeeded();
+  }, [closeSyncDialog, syncPendingTransactions, scheduleRetryIfNeeded]);
+
+  /** 「ローカルデータを削除しますか？」→「はい」を押したとき */
+  const handleConfirmClearLocal = useCallback(async (branchId: string) => {
+    closeSyncDialog();
+    await clearAllPendingTransactions(branchId);
+    console.log('Local pending transactions cleared for branch:', branchId);
+  }, [closeSyncDialog]);
 
   return {
     syncNow: syncPendingTransactions,
     syncVisitorNow: syncPendingVisitorCounts,
     checkAndSync,
     scheduleRetryIfNeeded,
+    promptSyncIfNeeded,
+    // ダイアログ制御
+    syncDialog,
+    closeSyncDialog,
+    handleConfirmSync,
+    handleConfirmClearLocal,
   };
 };
