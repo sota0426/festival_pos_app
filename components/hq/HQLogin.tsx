@@ -51,7 +51,11 @@ export const HQLogin = ({ onLoginSuccess, onBackToHome }: HQLoginProps) => {
           </Text>
           <Text className="text-gray-500 text-center mb-6">
             管理者パスワードを入力してください
+            <Text className="text-center text-gray-400 text-xs mt-6">
+              <br />(デモ用パスワード: admin123)
+            </Text>     
           </Text>
+     
 
           <Input
             label="パスワード"
@@ -81,9 +85,6 @@ export const HQLogin = ({ onLoginSuccess, onBackToHome }: HQLoginProps) => {
           </View>
         </Card>
 
-        <Text className="text-center text-gray-400 text-xs mt-6">
-          デモ用パスワード: admin123
-        </Text>
       </View>
     </SafeAreaView>
   );

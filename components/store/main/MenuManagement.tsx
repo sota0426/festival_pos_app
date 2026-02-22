@@ -9,9 +9,7 @@ import {
   ActivityIndicator,
   ScrollView,
   TextInput,
-  PanResponder,
   Platform,
-  Animated,
   LayoutAnimation,
   UIManager,
 } from 'react-native';
@@ -130,13 +128,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const [importPreview, setImportPreview] = useState<MenuImportPreview | null>(null);
   const [importing, setImporting] = useState(false);
   const [showMenuActionsModal, setShowMenuActionsModal] = useState(false);
-  const [draggingMenuId, setDraggingMenuId] = useState<string | null>(null);
-  const [dragDirection, setDragDirection] = useState<'up' | 'down' | null>(null);
   const reorderInFlightRef = useRef(false);
-  const dragTranslateY = useRef(new Animated.Value(0)).current;
-  const dragLift = useRef(new Animated.Value(0)).current;
-  const dragCompensationYRef = useRef(0);
-  const cardHeightsRef = useRef<Record<string, number>>({});
 
   // Restriction & admin guard state
   const [restrictions, setRestrictions] = useState<RestrictionSettings | null>(null);
@@ -1339,217 +1331,75 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     const menuCode = menuCodeMap.get(item.id) ?? '000';
     const isTopInSection = indexInSection === 0;
     const isBottomInSection = indexInSection === sectionLength - 1;
-    const canDragReorder = sectionLength > 1;
-    const isDragging = draggingMenuId === item.id;
-    const isAnyDragging = draggingMenuId !== null;
-    let lastDirection: 'up' | 'down' | null = null;
-    const dragResponder = PanResponder.create({
-      onStartShouldSetPanResponder: () => canDragReorder,
-      onStartShouldSetPanResponderCapture: () => canDragReorder,
-      onPanResponderGrant: () => {
-        if (!canDragReorder) return;
-        setDraggingMenuId(item.id);
-        setDragDirection(null);
-        dragCompensationYRef.current = 0;
-        dragTranslateY.setValue(0);
-        Animated.spring(dragLift, {
-          toValue: 1,
-          speed: 25,
-          bounciness: 0,
-          useNativeDriver: true,
-        }).start();
-      },
-      onMoveShouldSetPanResponder: (_, gestureState) =>
-        Math.abs(gestureState.dy) > 2 || Math.abs(gestureState.dx) > 2,
-      onMoveShouldSetPanResponderCapture: (_, gestureState) =>
-        Math.abs(gestureState.dy) > 2 || Math.abs(gestureState.dx) > 2,
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderMove: (_, gestureState) => {
-        if (!canDragReorder) return;
-        const adjustedDy = gestureState.dy + dragCompensationYRef.current;
-        dragTranslateY.setValue(adjustedDy);
-        if (gestureState.dy < -20 && lastDirection !== 'up') {
-          lastDirection = 'up';
-          setDragDirection('up');
-          const step = (cardHeightsRef.current[item.id] ?? 120) + 12;
-          dragCompensationYRef.current += step;
-          dragTranslateY.setValue(gestureState.dy + dragCompensationYRef.current);
-          void moveMenuOrder(item, 'up');
-        } else if (gestureState.dy > 20 && lastDirection !== 'down') {
-          lastDirection = 'down';
-          setDragDirection('down');
-          const step = (cardHeightsRef.current[item.id] ?? 120) + 12;
-          dragCompensationYRef.current -= step;
-          dragTranslateY.setValue(gestureState.dy + dragCompensationYRef.current);
-          void moveMenuOrder(item, 'down');
-        } else if (Math.abs(gestureState.dy) < 10) {
-          lastDirection = null;
-          setDragDirection(null);
-        }
-      },
-      onPanResponderRelease: () => {
-        Animated.parallel([
-          Animated.spring(dragTranslateY, {
-            toValue: 0,
-            speed: 25,
-            bounciness: 0,
-            useNativeDriver: true,
-          }),
-          Animated.timing(dragLift, {
-            toValue: 0,
-            duration: 120,
-            useNativeDriver: true,
-          }),
-        ]).start(() => {
-          setDraggingMenuId(null);
-          setDragDirection(null);
-          dragCompensationYRef.current = 0;
-        });
-      },
-      onPanResponderTerminate: () => {
-        Animated.parallel([
-          Animated.spring(dragTranslateY, {
-            toValue: 0,
-            speed: 25,
-            bounciness: 0,
-            useNativeDriver: true,
-          }),
-          Animated.timing(dragLift, {
-            toValue: 0,
-            duration: 120,
-            useNativeDriver: true,
-          }),
-        ]).start(() => {
-          setDraggingMenuId(null);
-          setDragDirection(null);
-          dragCompensationYRef.current = 0;
-        });
-      },
-    });
-
-    const animatedCardStyle = isDragging
-      ? {
-          transform: [
-            {
-              translateY: Animated.add(
-                dragTranslateY,
-                dragLift.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, -8],
-                }),
-              ),
-            },
-            {
-              scale: dragLift.interpolate({
-                inputRange: [0, 1],
-                outputRange: [1, 1.02],
-              }),
-            },
-          ],
-          zIndex: 40,
-          elevation: 10,
-          shadowColor: '#111827',
-          shadowOpacity: 0.2,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 8 },
-        }
-      : undefined;
-
-    const restingWhileDragStyle =
-      isAnyDragging && !isDragging
-        ? {
-            transform: [{ scale: 0.992 }],
-            opacity: 0.92,
-          }
-        : undefined;
 
     return (
-      <Animated.View
-        onLayout={(e) => {
-          cardHeightsRef.current[item.id] = e.nativeEvent.layout.height;
-        }}
-        style={[restingWhileDragStyle, animatedCardStyle]}
-      >
+      <View>
         <Card
-          className={`mb-3 overflow-hidden border ${categoryVisual.cardBorderClass} ${!item.is_show ? 'opacity-50' : ''} ${isDragging ? 'border-blue-400' : ''}`}
+          className={`mb-2 overflow-hidden border ${categoryVisual.cardBorderClass} ${!item.is_show ? 'opacity-50' : ''}`}
         >
           {/* 上部: メニュー情報 */}
-          <View className={`px-4 pt-3 pb-2 ${categoryVisual.cardBgClass}`}>
+          <View className={`px-3 pt-2.5 pb-2 ${categoryVisual.cardBgClass}`}>
           {/* 1行目: コードバッジ + 非表示バッジ */}
-          <View className="flex-row items-center justify-between mb-1.5">
+          <View className="flex-row items-center justify-between mb-1">
             <View className="flex-row items-center gap-2">
-              <View className={`px-2.5 py-0.5 rounded-full ${categoryVisual.chipBgClass}`}>
+              <View className={`px-2 py-0.5 rounded-full ${categoryVisual.chipBgClass}`}>
                 <Text className={`text-xs font-bold ${categoryVisual.chipTextClass}`}>{menuCode}</Text>
               </View>
               {!item.is_show && (
                 <View className="bg-orange-100 px-2 py-0.5 rounded-full">
-                  <Text className="text-orange-600 text-xs font-bold">非表示</Text>
+                  <Text className="text-orange-600 text-[10px] font-bold">非表示</Text>
                 </View>
               )}
             </View>
             {/* 並び替えボタン（右上） */}
             <View className="flex-row items-center gap-1">
-              <View
-                {...(canDragReorder ? dragResponder.panHandlers : {})}
-                className={`w-9 h-9 items-center justify-center rounded-lg ${
-                  canDragReorder ? (isDragging ? 'bg-blue-50 border border-blue-300' : 'bg-white/70 border border-gray-200') : 'bg-gray-100 opacity-30'
-                }`}
-              >
-                <Text className={`font-bold text-base ${canDragReorder ? (isDragging ? 'text-blue-600' : 'text-gray-500') : 'text-gray-400'}`}>⋮⋮</Text>
-              </View>
               <TouchableOpacity
                 onPress={() => moveMenuOrder(item, 'up')}
                 disabled={isTopInSection}
                 activeOpacity={0.7}
-                className={`w-9 h-9 items-center justify-center rounded-lg ${
-                  isTopInSection ? 'bg-gray-100 opacity-30' : 'bg-white/70 border border-gray-200'
+                className={`w-8 h-8 items-center justify-center rounded-md ${
+                  isTopInSection ? 'bg-gray-100 opacity-30' : 'bg-white/80 border border-gray-200'
                 }`}
               >
-                <Text className="text-gray-600 font-bold">↑</Text>
+                <Text className="text-gray-600 font-bold text-xs">↑</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => moveMenuOrder(item, 'down')}
                 disabled={isBottomInSection}
                 activeOpacity={0.7}
-                className={`w-9 h-9 items-center justify-center rounded-lg ${
-                  isBottomInSection ? 'bg-gray-100 opacity-30' : 'bg-white/70 border border-gray-200'
+                className={`w-8 h-8 items-center justify-center rounded-md ${
+                  isBottomInSection ? 'bg-gray-100 opacity-30' : 'bg-white/80 border border-gray-200'
                 }`}
               >
-                <Text className="text-gray-600 font-bold">↓</Text>
+                <Text className="text-gray-600 font-bold text-xs">↓</Text>
               </TouchableOpacity>
             </View>
           </View>
 
           {/* 2行目: メニュー名 */}
-          <Text className="text-xl font-bold text-gray-900 mb-2" numberOfLines={1}>
+          <Text className="text-lg font-bold text-gray-900 mb-1.5" numberOfLines={1}>
             {item.menu_name}
           </Text>
 
-          {isDragging && dragDirection && (
-            <View
-              className={`h-1 rounded-full mb-2 ${dragDirection === 'up' ? 'bg-blue-500' : 'bg-emerald-500'}`}
-            />
-          )}
-
           {/* 3行目: 価格 + 在庫 */}
           <View className="flex-row items-center justify-between">
-            <Text className="text-blue-600 font-bold text-lg">
+            <Text className="text-blue-600 font-bold text-base">
               ¥{item.price.toLocaleString()}
             </Text>
             {item.stock_management ? (
               <View className="flex-row items-center gap-1.5">
-                <Text className="text-gray-500 text-sm">在庫</Text>
+                <Text className="text-gray-500 text-xs">在庫</Text>
                 <TouchableOpacity
                   onPress={() => handleStockChange(item, -1)}
                   activeOpacity={0.7}
-                  className="w-8 h-8 bg-white/80 border border-gray-200 rounded-l-lg items-center justify-center"
+                  className="w-7 h-7 bg-white/80 border border-gray-200 rounded-l-md items-center justify-center"
                 >
-                  <Text className="text-gray-700 font-bold text-base">−</Text>
+                  <Text className="text-gray-700 font-bold text-sm">−</Text>
                 </TouchableOpacity>
-                <View className={`w-10 h-8 items-center justify-center border-t border-b border-gray-200 bg-white/80 ${
+                <View className={`w-9 h-7 items-center justify-center border-t border-b border-gray-200 bg-white/80 ${
                   item.stock_quantity === 0 ? 'bg-red-50' : item.stock_quantity <= 5 ? 'bg-orange-50' : ''
                 }`}>
-                  <Text className={`font-bold text-sm ${
+                  <Text className={`font-bold text-xs ${
                     item.stock_quantity === 0 ? 'text-red-500' : item.stock_quantity <= 5 ? 'text-orange-500' : 'text-gray-900'
                   }`}>
                     {item.stock_quantity}
@@ -1558,14 +1408,14 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                 <TouchableOpacity
                   onPress={() => handleStockChange(item, 1)}
                   activeOpacity={0.7}
-                  className="w-8 h-8 bg-white/80 border border-gray-200 rounded-r-lg items-center justify-center"
+                  className="w-7 h-7 bg-white/80 border border-gray-200 rounded-r-md items-center justify-center"
                 >
-                  <Text className="text-gray-700 font-bold text-base">＋</Text>
+                  <Text className="text-gray-700 font-bold text-sm">＋</Text>
                 </TouchableOpacity>
               </View>
             ) : (
-              <View className="bg-green-100 px-2.5 py-1 rounded-full">
-                <Text className="text-green-700 text-xs font-medium">在庫無制限</Text>
+              <View className="bg-green-100 px-2 py-0.5 rounded-full">
+                <Text className="text-green-700 text-[10px] font-medium">在庫無制限</Text>
               </View>
             )}
           </View>
@@ -1576,29 +1426,29 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           <TouchableOpacity
             onPress={() => handleVisible(item)}
             activeOpacity={0.7}
-            className="flex-1 py-3 items-center justify-center border-r border-gray-100"
+            className="flex-1 py-1.5 items-center justify-center border-r border-gray-100"
           >
-            <Text className={`text-sm font-semibold ${item.is_show ? 'text-green-600' : 'text-orange-500'}`}>
+            <Text className={`text-xs font-semibold ${item.is_show ? 'text-green-600' : 'text-orange-500'}`}>
               {item.is_show ? '表示中' : '非表示中'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => withMenuRestrictionCheck('menu_edit', () => openEditModal(item))}
             activeOpacity={0.7}
-            className="flex-1 py-3 items-center justify-center border-r border-gray-100"
+            className="flex-1 py-1.5 items-center justify-center border-r border-gray-100"
           >
-            <Text className="text-blue-600 text-sm font-semibold">編集</Text>
+            <Text className="text-blue-600 text-xs font-semibold">編集</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => withMenuRestrictionCheck('menu_delete', () => handleDeleteMenu(item))}
+            onPress={() => handleDeleteMenu(item)}
             activeOpacity={0.7}
-            className="flex-1 py-3 items-center justify-center"
+            className="flex-1 py-1.5 items-center justify-center"
           >
-            <Text className="text-red-500 text-sm font-semibold">削除</Text>
+            <Text className="text-red-500 text-xs font-semibold">削除</Text>
           </TouchableOpacity>
         </View>
         </Card>
-      </Animated.View>
+      </View>
     );
   };
 
@@ -2280,11 +2130,9 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           <TouchableOpacity
             onPress={() => {
               setShowMenuActionsModal(false);
-              withMenuRestrictionCheck('menu_delete', () => {
-                setAdminPasswordInput('');
-                setDeleteAllError('');
-                setShowDeleteAllModal(true);
-              });
+              setAdminPasswordInput('');
+              setDeleteAllError('');
+              setShowDeleteAllModal(true);
             }}
             className="flex-row items-center gap-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3"
             activeOpacity={0.7}

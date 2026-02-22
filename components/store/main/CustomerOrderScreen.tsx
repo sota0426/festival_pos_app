@@ -59,6 +59,17 @@ export interface CustomerOrderScreenProps {
    * キオスクモード時のみ使用。
    */
   onExitKiosk: () => Promise<void>;
+  /**
+   * 端末設定画面（キオスク開始前）でのみ表示する戻るコールバック。
+   * キオスク開始後はこの導線を表示しない。
+   */
+  onBackBeforeKiosk?: () => void;
+  /**
+   * デモ中のみ表示する「ログイン画面に戻る」コールバック。
+   */
+  onReturnToLoggedInFromDemo?: () => void;
+  /** デモ表示時は注文をDBへ保存しない */
+  isDemoMode?: boolean;
 }
 
 // ------------------------------------------------------------------
@@ -125,6 +136,9 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
   deviceName,
   isKioskMode,
   onExitKiosk,
+  onBackBeforeKiosk,
+  onReturnToLoggedInFromDemo,
+  isDemoMode = false,
 }) => {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
@@ -386,23 +400,6 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
       const orderNumber = generateOrderNumber(branch.branch_code);
       const now = new Date().toISOString();
 
-      // 1. 注文ヘッダー INSERT
-      const { error: orderError } = await supabase.from('customer_orders').insert({
-        id: orderId,
-        branch_id: branch.id,
-        session_id: sessionId.current,
-        identifier_type: identifierType,
-        table_identifier: tableIdentifier,
-        display_label: displayLabel,
-        status: 'pending',
-        order_number: orderNumber,
-        note: '',
-        created_at: now,
-        updated_at: now,
-      });
-      if (orderError) throw orderError;
-
-      // 2. 注文明細 INSERT
       const itemsToInsert = cart.map((item) => ({
         id:
           Platform.OS === 'web'
@@ -416,10 +413,29 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
         subtotal: item.unit_price * item.quantity,
       }));
 
-      const { error: itemsError } = await supabase
-        .from('customer_order_items')
-        .insert(itemsToInsert);
-      if (itemsError) throw itemsError;
+      if (!isDemoMode) {
+        // 1. 注文ヘッダー INSERT
+        const { error: orderError } = await supabase.from('customer_orders').insert({
+          id: orderId,
+          branch_id: branch.id,
+          session_id: sessionId.current,
+          identifier_type: identifierType,
+          table_identifier: tableIdentifier,
+          display_label: displayLabel,
+          status: 'pending',
+          order_number: orderNumber,
+          note: '',
+          created_at: now,
+          updated_at: now,
+        });
+        if (orderError) throw orderError;
+
+        // 2. 注文明細 INSERT
+        const { error: itemsError } = await supabase
+          .from('customer_order_items')
+          .insert(itemsToInsert);
+        if (itemsError) throw itemsError;
+      }
 
       // 3. 送信完了 → 確認画面へ
       const orderForDisplay: CustomerOrder = {
@@ -450,7 +466,7 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
     } finally {
       setSubmitting(false);
     }
-  }, [cart, submitting, branch, identifierType, tableIdentifier, displayLabel]);
+  }, [cart, submitting, branch, identifierType, tableIdentifier, displayLabel, isDemoMode]);
 
   // ------------------------------------------------------------------
   // タブレットモード: 端末名入力画面
@@ -482,6 +498,7 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
                   enabled: true,
                   branchCode,
                   deviceName: name,
+                  demoMode: !!onReturnToLoggedInFromDemo,
                 });
               }
               setDeviceNameConfirmed(true);
@@ -492,6 +509,17 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
           >
             <Text className="text-white font-bold text-base">確定してキオスクモードを開始</Text>
           </TouchableOpacity>
+          {onBackBeforeKiosk ? (
+            <View className="mt-3 gap-2">
+              <TouchableOpacity
+                onPress={onBackBeforeKiosk}
+                className="bg-gray-100 rounded-xl py-3 items-center"
+                activeOpacity={0.8}
+              >
+                <Text className="text-gray-700 font-semibold text-sm">戻る</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
           <Text className="text-gray-400 text-xs text-center mt-3">
             確定後は管理者PINを入力するまでこの画面から出られません
           </Text>
@@ -545,9 +573,11 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
           <Text className="text-xl font-bold text-gray-900 text-center mb-1">
             ご注文ありがとうございます
           </Text>
+
           <Text className="text-gray-500 text-sm text-center mb-6">
             スタッフが確認次第、対応いたします。
           </Text>
+
 
           {/* 識別情報 */}
           <View className="bg-gray-50 rounded-xl p-4 mb-4">
@@ -587,8 +617,18 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
             className="mt-6 bg-blue-600 rounded-xl py-3.5 items-center"
             activeOpacity={0.8}
           >
-            <Text className="text-white font-bold text-base">もう一度注文する</Text>
+            <Text className="text-white font-bold text-base">店員が来るまでお待ちください。</Text>
           </TouchableOpacity>
+
+          {isKioskMode && onReturnToLoggedInFromDemo ? (
+            <TouchableOpacity
+              onPress={onReturnToLoggedInFromDemo}
+              className="mt-3 border border-blue-200 bg-blue-50 rounded-xl py-3 items-center"
+              activeOpacity={0.8}
+            >
+              <Text className="text-blue-700 font-semibold text-sm">ログイン画面に戻る</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </SafeAreaView>
     );
@@ -837,6 +877,17 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
               </Text>
             </TouchableOpacity>
           )}
+
+          {/* デモ中キオスク: PIN不要で管理画面へ戻る導線 */}
+          {isKioskMode && onReturnToLoggedInFromDemo ? (
+            <TouchableOpacity
+              onPress={onReturnToLoggedInFromDemo}
+              className="px-3 py-2 rounded-full bg-blue-50 border border-blue-200"
+              activeOpacity={0.8}
+            >
+              <Text className="text-blue-700 font-semibold text-xs">ログイン画面に戻る</Text>
+            </TouchableOpacity>
+          ) : null}
 
           {/* キオスクモード: 管理者用ロックボタン (目立たないが操作可能) */}
           {isKioskMode && (

@@ -21,6 +21,7 @@ import {
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useSubscription } from '../../../contexts/SubscriptionContext';
 import {
   DEMO_BUDGET_EXPENSES,
   DEMO_BUDGET_SETTINGS,
@@ -87,9 +88,11 @@ const BREAKEVEN_HINTS: Record<string, string> = {
 // ------- component -------
 export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManagerProps) => {
   const { authState } = useAuth();
+  const { isFreePlan } = useSubscription();
   const isDemo = authState.status === 'demo';
+  const isFreeAuthenticatedPlan = authState.status === 'authenticated' && isFreePlan;
   const demoBranchId = resolveDemoBranchId(branch);
-  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+  const canSyncToSupabase = isSupabaseConfigured() && !isDemo && !isFreeAuthenticatedPlan;
 
   const [activeTab, setActiveTab] = useState<BudgetTab>('dashboard');
   const [loading, setLoading] = useState(true);
@@ -145,6 +148,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
   const [breakevenHintKey, setBreakevenHintKey] = useState('product_name');
 
   // Collapsible sections for breakeven tab
+  const [showBreakevenGuide, setShowBreakevenGuide] = useState(false);
   const [showAnalysis, setShowAnalysis] = useState(true);
   const [showSimulation, setShowSimulation] = useState(false);
 
@@ -379,6 +383,36 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
     if (mode !== 'breakeven') return;
 
     const loadBreakevenDraft = async () => {
+      if (isDemo) {
+        const demoProductName = 'クレープ';
+        const demoSellingPrice = 500;
+        const demoVariableCost = 220;
+        const demoFixedCost = 18000;
+        const demoSimQty = 80;
+        const demoBeQty = Math.ceil(demoFixedCost / (demoSellingPrice - demoVariableCost));
+        const demoSales = demoSimQty * demoSellingPrice;
+        const demoCost = demoFixedCost + demoSimQty * demoVariableCost;
+        const demoProfit = demoSales - demoCost;
+        const demoMargin = demoSales > 0 ? (demoProfit / demoSales) * 100 : 0;
+
+        setBreakevenProductName(demoProductName);
+        setBreakevenSellingPrice(String(demoSellingPrice));
+        setBreakevenVariableCost(String(demoVariableCost));
+        setBreakevenFixedCost(String(demoFixedCost));
+        setSimQuantity(String(demoSimQty));
+        setShowAnalysis(true);
+        setShowSimulation(true);
+        setBreakevenResult({ quantity: demoBeQty, sales: demoBeQty * demoSellingPrice });
+        setSimResult({
+          sales: demoSales,
+          cost: demoCost,
+          profit: demoProfit,
+          margin: demoMargin,
+        });
+        breakevenDraftLoadedRef.current = true;
+        return;
+      }
+
       const draft = await getBreakevenDraft(branch.id);
       if (draft) {
         setBreakevenProductName(draft.product_name ?? '');
@@ -392,7 +426,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       breakevenDraftLoadedRef.current = true;
     };
     loadBreakevenDraft();
-  }, [branch.id, mode]);
+  }, [branch.id, isDemo, mode]);
 
   useEffect(() => {
     if (mode !== 'breakeven') return;
@@ -1004,6 +1038,40 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
         </Modal>
 
         <ScrollView className="flex-1 p-4" showsVerticalScrollIndicator={false}>
+          <Card className="mb-4 bg-blue-50 border border-blue-200">
+            <TouchableOpacity
+              onPress={() => setShowBreakevenGuide(!showBreakevenGuide)}
+              className="flex-row items-center justify-between"
+            >
+              <Text className="text-blue-900 text-base font-bold">この画面でできること・使うメリット</Text>
+              <View className="bg-white rounded-full px-3 py-1 border border-blue-200">
+                <Text className="text-blue-700 text-xs font-bold">
+                  {showBreakevenGuide ? '▲ 閉じる' : '▼ 説明を見る'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {showBreakevenGuide && (
+              <View className="mt-3 gap-2">
+                <Text className="text-blue-800 text-sm font-semibold">
+                  この画面では、何個売れば赤字にならないか（損益分岐点）を計算できます。
+                </Text>
+                <Text className="text-blue-700 text-sm leading-5">
+                  販売価格・1個あたりの変動費・固定費を入力すると、必要販売数と必要売上をすぐ確認できます。
+                </Text>
+                <Text className="text-blue-700 text-sm leading-5">
+                  さらに、予想販売数を入れて利益シミュレーションを行うことで、価格調整や仕入れ量の判断に使えます。
+                </Text>
+                <View className="bg-white/70 rounded-lg p-3 border border-blue-100 mt-1">
+                  <Text className="text-blue-800 text-xs font-semibold mb-1">使うと便利な場面（例）</Text>
+                  <Text className="text-blue-700 text-xs">・価格を上げるか迷っているとき</Text>
+                  <Text className="text-blue-700 text-xs">・材料費が上がって利益が出るか確認したいとき</Text>
+                  <Text className="text-blue-700 text-xs">・目標販売数を現実的に決めたいとき</Text>
+                </View>
+              </View>
+            )}
+          </Card>
+
           <Card className="mb-4">
             <Text className="text-gray-900 text-lg font-bold mb-3">基本データ入力</Text>
             <View className="gap-3">

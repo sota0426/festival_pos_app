@@ -12,6 +12,7 @@ import {
   clearAllPendingTransactions,
 } from '../lib/storage';
 import * as Crypto from 'expo-crypto';
+import { useAuth } from '../contexts/AuthContext';
 
 const SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
 const VISITOR_SYNC_INTERVAL = 15 * 60 * 1000; // 15 minutes
@@ -48,6 +49,7 @@ export interface SyncDialogState {
 }
 
 export const useSync = () => {
+  const { authState } = useAuth();
   const syncInProgress = useRef(false);
   const visitorSyncInProgress = useRef(false);
   const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -57,6 +59,8 @@ export const useSync = () => {
   const wasOfflineRef = useRef(false);
   // 起動時の確認ダイアログを一度だけ表示するフラグ
   const startupConfirmShownRef = useRef(false);
+  const isFreeAuthenticatedPlan =
+    authState.status === 'authenticated' && authState.subscription.plan_type === 'free';
 
   const [syncDialog, setSyncDialog] = useState<SyncDialogState>({
     visible: false,
@@ -68,7 +72,7 @@ export const useSync = () => {
   }, []);
 
   const syncPendingTransactions = useCallback(async (): Promise<'ok' | 'error' | 'none'> => {
-    if (!isSupabaseConfigured() || syncInProgress.current) {
+    if (!isSupabaseConfigured() || isFreeAuthenticatedPlan || syncInProgress.current) {
       return 'none';
     }
 
@@ -200,10 +204,10 @@ export const useSync = () => {
     } finally {
       syncInProgress.current = false;
     }
-  }, []);
+  }, [isFreeAuthenticatedPlan]);
 
   const syncPendingVisitorCounts = useCallback(async () => {
-    if (!isSupabaseConfigured() || visitorSyncInProgress.current) {
+    if (!isSupabaseConfigured() || isFreeAuthenticatedPlan || visitorSyncInProgress.current) {
       return;
     }
 
@@ -282,14 +286,14 @@ export const useSync = () => {
     } finally {
       visitorSyncInProgress.current = false;
     }
-  }, []);
+  }, [isFreeAuthenticatedPlan]);
 
   /**
    * 未同期件数を確認し、1件以上あれば「同期しますか？」ダイアログを表示。
    * ダイアログの確認後に呼ばれる onConfirm で実際に同期する。
    */
   const promptSyncIfNeeded = useCallback(async () => {
-    if (!isSupabaseConfigured()) return;
+    if (!isSupabaseConfigured() || isFreeAuthenticatedPlan) return;
 
     const pending = await getPendingTransactions();
     const unsynced = pending.filter((t) => !t.synced);
@@ -300,10 +304,10 @@ export const useSync = () => {
       type: 'confirm_sync',
       pendingCount: unsynced.length,
     });
-  }, []);
+  }, [isFreeAuthenticatedPlan]);
 
   const checkAndSync = useCallback(async () => {
-    if (!isSupabaseConfigured()) return;
+    if (!isSupabaseConfigured() || isFreeAuthenticatedPlan) return;
 
     // 未同期データがあれば間隔に関わらず即時同期
     const pending = await getPendingTransactions();
@@ -323,10 +327,11 @@ export const useSync = () => {
     if (Date.now() - lastSyncTime >= SYNC_INTERVAL) {
       await syncPendingTransactions();
     }
-  }, [syncPendingTransactions]);
+  }, [isFreeAuthenticatedPlan, syncPendingTransactions]);
 
   // 未同期データが残っている間、短い間隔でリトライタイマーを張る
   const scheduleRetryIfNeeded = useCallback(async () => {
+    if (isFreeAuthenticatedPlan) return;
     if (retryTimerRef.current) return; // すでにスケジュール済み
     const pending = await getPendingTransactions();
     const hasUnsynced = pending.some((t) => !t.synced);
@@ -344,10 +349,14 @@ export const useSync = () => {
       }
       await syncPendingTransactions();
     }, RETRY_INTERVAL);
-  }, [syncPendingTransactions]);
+  }, [isFreeAuthenticatedPlan, syncPendingTransactions]);
 
   // Set up periodic sync
   useEffect(() => {
+    if (isFreeAuthenticatedPlan) {
+      setSyncDialog((prev) => ({ ...prev, visible: false }));
+      return;
+    }
     // 起動時: 未同期データがあれば「同期しますか？」を1回だけ表示
     if (!startupConfirmShownRef.current) {
       startupConfirmShownRef.current = true;
@@ -406,7 +415,7 @@ export const useSync = () => {
         window.removeEventListener('offline', handleOffline);
       }
     };
-  }, [checkAndSync, scheduleRetryIfNeeded, syncPendingVisitorCounts, promptSyncIfNeeded]);
+  }, [checkAndSync, scheduleRetryIfNeeded, syncPendingVisitorCounts, promptSyncIfNeeded, isFreeAuthenticatedPlan]);
 
   /** 「同期しますか？」→「はい」を押したとき */
   const handleConfirmSync = useCallback(async () => {

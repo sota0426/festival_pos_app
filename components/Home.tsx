@@ -5,12 +5,23 @@ import { Card } from './common';
 interface HomeProps {
   onNavigateToHQ: () => void;
   onNavigateToStore: () => void;
+  onReturnToLoggedIn?: () => void;
 }
 
-export const Home = ({ onNavigateToHQ, onNavigateToStore }: HomeProps) => {
+export const Home = ({ onNavigateToHQ, onNavigateToStore, onReturnToLoggedIn }: HomeProps) => {
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
       <View className="flex-1 justify-center p-6">
+        {onReturnToLoggedIn && (
+          <TouchableOpacity
+            onPress={onReturnToLoggedIn}
+            className="absolute top-4 right-4 z-10 px-3 py-2 rounded-lg bg-white border border-blue-200"
+            activeOpacity={0.8}
+          >
+            <Text className="text-blue-700 text-sm font-semibold">ログイン画面に戻る</Text>
+          </TouchableOpacity>
+        )}
+
         <Text className="text-3xl font-bold text-center text-gray-900 mb-2">
           文化祭レジアプリ
         </Text>

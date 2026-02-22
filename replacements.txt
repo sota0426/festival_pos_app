@@ -1,4 +1,0 @@
-literal:`sk_test_`==>`STRIPE_TEST_KEY_PREFIX`
-literal:`sk_live_`==>`STRIPE_LIVE_KEY_PREFIX`
-regex:sk_test_[0-9a-zA-Z]+==>REMOVED_STRIPE_TEST_KEY
-regex:sk_live_[0-9a-zA-Z]+==>REMOVED_STRIPE_LIVE_KEY

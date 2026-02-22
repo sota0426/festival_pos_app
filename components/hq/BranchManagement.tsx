@@ -118,20 +118,11 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
           id: '1',
           branch_code: 'S001',
           branch_name: '焼きそば屋',
-          password: '1234',
+          password: '0000',
           sales_target: 50000,
           status: 'active',
           created_at: new Date().toISOString(),
-        },
-        {
-          id: '2',
-          branch_code: 'S002',
-          branch_name: 'たこ焼き屋',
-          password: '1234',
-          sales_target: 40000,
-          status: 'active',
-          created_at: new Date().toISOString(),
-        },
+        }
       ]);
       setLoading(false);
       return;

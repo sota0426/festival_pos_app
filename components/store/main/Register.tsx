@@ -43,6 +43,7 @@ export const Register = ({
     cashless: true,
     voucher: true,
   });
+  const [cashlessLabel, setCashlessLabel] = useState('PayPay');
   const [showCashModal, setShowCashModal] = useState(false);
   const [receivedAmount, setReceivedAmount] = useState('');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -235,6 +236,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       if (settings.payment_methods) {
         setPaymentMethods(settings.payment_methods);
       }
+      setCashlessLabel(settings.cashless_label || 'PayPay');
     };
     loadSettings();
   }, [fetchMenus, loadTodaySoldByMenu]);
@@ -580,7 +582,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       const orderNum = transactionCode.split('-').pop();
 
       const methodLabel =
-        paymentMethod === 'paypay' ? 'PayPay' : paymentMethod === 'voucher' ? '金券' : '現金';
+        paymentMethod === 'paypay' ? (cashlessLabel || 'PayPay') : paymentMethod === 'voucher' ? '金券' : '現金';
       const cashInfo =
         paymentMethod === 'cash' && cashReceived != null
           ? `\nお預かり: ${cashReceived.toLocaleString()}円\nお釣り: ${changeAmount!.toLocaleString()}円`
@@ -738,7 +740,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
               activeOpacity={0.7}
             >
               <Card
-                className={`items-center py-4 border ${categoryVisual.cardBgClass} ${categoryVisual.cardBorderClass} ${isDisabled ? 'opacity-50 bg-gray-200' : ''} ${cartItem ? 'border-2 border-blue-800' : ''}`}
+                className={`items-center py-4 border border-stone-300 ${categoryVisual.cardBgClass} ${categoryVisual.cardBorderClass} ${isDisabled ? 'opacity-50 bg-gray-200' : ''} ${cartItem ? 'border-2 border-blue-800' : ''}`}
               >
                 <View className="absolute top-1 left-1 flex-row gap-1">
                   <View className={`px-1.5 py-0.5 rounded ${categoryVisual.chipBgClass}`}>
@@ -1078,7 +1080,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
                         cart.length === 0 || processing ? 'bg-gray-300' : 'bg-blue-500'
                       }`}
                     >
-                      <Text className="text-white text-lg font-bold">PayPay</Text>
+                      <Text className="text-white text-lg font-bold">{cashlessLabel || 'PayPay'}</Text>
                     </TouchableOpacity>
                   )}
                   {paymentMethods.voucher && (

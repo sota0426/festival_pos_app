@@ -16,6 +16,7 @@ import { fetchBranchRecorders } from "lib/recorderRegistry";
 import { isSupabaseConfigured, supabase } from "lib/supabase";
 import type { Branch, BranchRecorder, BudgetExpense, ExpenseCategory, ExpensePaymentMethod } from "types/database";
 import { useAuth } from "contexts/AuthContext";
+import { useSubscription } from "contexts/SubscriptionContext";
 import { DEMO_BUDGET_EXPENSES, resolveDemoBranchId } from "data/demoData";
 
 interface Props {
@@ -73,9 +74,11 @@ const EXPENSE_SORT_OPTIONS: { key: ExpenseSortKey; label: string }[] = [
 
 export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
   const { authState } = useAuth();
+  const { isFreePlan } = useSubscription();
   const isDemo = authState.status === "demo";
+  const isFreeAuthenticatedPlan = authState.status === "authenticated" && isFreePlan;
   const demoBranchId = resolveDemoBranchId(branch);
-  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+  const canSyncToSupabase = isSupabaseConfigured() && !isDemo && !isFreeAuthenticatedPlan;
 
   const [expenses, setExpenses] = useState<BudgetExpense[]>([]);
   const [expCategory, setExpCategory] = useState<ExpenseCategory>("material");

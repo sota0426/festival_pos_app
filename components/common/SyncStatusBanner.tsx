@@ -5,6 +5,7 @@ import { getPendingTransactions, getPendingVisitorCounts } from '../../lib/stora
 import { getSyncEnabled } from '../../lib/syncMode';
 import { hasSupabaseEnvConfigured } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSubscription } from '../../contexts/SubscriptionContext';
 
 interface SyncStatusBannerProps {
   branchId: string | null;
@@ -12,6 +13,7 @@ interface SyncStatusBannerProps {
 
 export const SyncStatusBanner = ({ branchId }: SyncStatusBannerProps) => {
   const { authState } = useAuth();
+  const { isFreePlan } = useSubscription();
   const insets = useSafeAreaInsets();
   const [pendingTx, setPendingTx] = useState(0);
   const [pendingVisitors, setPendingVisitors] = useState(0);
@@ -106,6 +108,8 @@ export const SyncStatusBanner = ({ branchId }: SyncStatusBannerProps) => {
 
   // デモ時は未同期表示を出さない
   if (authState.status === 'demo') return null;
+  // 無料プランは同期対象外のため、未同期表示を出さない
+  if (authState.status === 'authenticated' && isFreePlan) return null;
 
   // 表示する必要がない状態（オンライン正常）は何も描画しない
   if (!branchId || style === null) return null;

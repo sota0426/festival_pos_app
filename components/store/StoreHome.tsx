@@ -14,6 +14,9 @@ import {
   getMenus, getMenuCategories, getPendingTransactions, savePendingTransaction,
   getPendingVisitorCounts, savePendingVisitorCount, getVisitorGroups, saveVisitorGroups, getOrCreateDeviceId,
   getBudgetSettings, getBudgetExpenses, getPrepIngredients, saveDefaultExpenseRecorder,
+  getDefaultExpenseRecorder,
+  getBranchRecorders, getRecorderAccessLogs, getBranchRecorderConfig,
+  saveBranchRecorders, saveRecorderAccessLogs, saveBranchRecorderConfig,
 } from '../../lib/storage';
 import {
   createBranchRecorder,
@@ -40,6 +43,7 @@ import type {
   PrepIngredient,
   RestrictionSettings,
   RecorderAccessLog,
+  BranchRecorderConfig,
   Transaction,
   TransactionItem,
   VisitorCounterGroup,
@@ -50,7 +54,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useSubscription } from '../../contexts/SubscriptionContext';
 
 /** 削除カテゴリのキー */
-type DeleteCategory = 'sales' | 'menu' | 'visitor' | 'budget' | 'prep';
+type DeleteCategory = 'sales' | 'menu' | 'visitor' | 'budget' | 'prep' | 'recorder';
 
 type ExportableCategory = DeleteCategory;
 
@@ -61,7 +65,7 @@ type StoreBackupPayload = {
   data: Partial<Record<ExportableCategory, unknown>>;
 };
 
-type TabKey = 'main' | 'sub' | 'budget' | 'settings';
+type TabKey = 'main' | 'sub' | 'share' | 'budget' | 'settings';
 type SettingsView = 'top' | 'payment' | 'admin' | 'recorder';
 
 interface StoreHomeProps {
@@ -72,19 +76,24 @@ interface StoreHomeProps {
   onNavigateToCounter: () => void;
   onNavigateToOrderBoard: () => void;
   onNavigateToPrep: () => void;
+  onNavigateToChecklist: () => void;
+  onNavigateToShiftHandover: () => void;
   onNavigateToBudget: () => void;
   onNavigateToBudgetExpense: () => void;
   onNavigateToBudgetBreakeven: () => void;
   /** タブレットモードで客向けオーダー画面を開く */
   onNavigateToCustomerOrder: () => void;
+  onNavigateToPricing?: () => void;
+  onNavigateToDemoHome?: () => void;
   onBranchUpdated?: (branch: Branch) => void;
   onLogout: () => void;
 }
 
 const TABS: { key: TabKey; label: string }[] = [
-  { key: 'main', label: 'メイン画面' },
-  { key: 'sub', label: 'サブ画面' },
-  { key: 'budget', label: '会計管理' },
+  { key: 'main', label: 'メイン' },
+  { key: 'sub', label: 'サブ' },
+  { key: 'share', label: '共有' },
+  { key: 'budget', label: '会計' },
   { key: 'settings', label: '設定' },
 ];
 
@@ -94,18 +103,22 @@ const DATA_CATEGORY_DEFS: { key: ExportableCategory; label: string; desc: string
   { key: 'visitor', label: '来客データ', desc: '来客カウンター記録' },
   { key: 'budget', label: '会計データ', desc: '予算設定・支出記録' },
   { key: 'prep', label: '下準備データ', desc: '材料・在庫管理記録' },
+  { key: 'recorder', label: '登録者データ', desc: '登録者一覧・端末アクセス履歴・登録設定' },
 ];
+const DELETE_DATA_CATEGORY_DEFS: { key: DeleteCategory; label: string; desc: string }[] = DATA_CATEGORY_DEFS;
 
-const DATA_CATEGORY_LABELS: Record<ExportableCategory, string> = {
+const DATA_CATEGORY_LABELS: Record<DeleteCategory, string> = {
   sales: '売上データ',
   menu: 'メニューデータ',
   visitor: '来客データ',
   budget: '会計データ',
   prep: '下準備データ',
+  recorder: '登録者データ',
 };
 
 const MANAGER_RECORDER_PREFIX = '管理者';
 const isManagerRecorderName = (name: string): boolean => name.trim().startsWith(MANAGER_RECORDER_PREFIX);
+const CASHLESS_LABEL_TEMPLATES = ['PayPay', 'QR決済', 'キャッシュレス'] as const;
 
 const toCsvCell = (value: unknown): string => {
   const normalized =
@@ -205,15 +218,19 @@ export const StoreHome = ({
   onNavigateToCounter,
   onNavigateToOrderBoard,
   onNavigateToPrep,
+  onNavigateToChecklist,
+  onNavigateToShiftHandover,
   onNavigateToBudget,
   onNavigateToBudgetExpense,
   onNavigateToBudgetBreakeven,
   onNavigateToCustomerOrder,
+  onNavigateToPricing,
+  onNavigateToDemoHome,
   onBranchUpdated,
   onLogout,
 }: StoreHomeProps) => {
-  const { authState, exitLoginCode } = useAuth();
-  const { isOrgPlan } = useSubscription();
+  const { authState, exitLoginCode, hasDemoReturnTarget } = useAuth();
+  const { isOrgPlan, isFreePlan } = useSubscription();
   const [activeTab, setActiveTab] = useState<TabKey>('main');
   const [settingsView, setSettingsView] = useState<SettingsView>('top');
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodSettings>({
@@ -221,7 +238,13 @@ export const StoreHome = ({
     cashless: true,
     voucher: true,
   });
+  const [cashlessLabel, setCashlessLabel] = useState('PayPay');
+  const [showCashlessLabelEditor, setShowCashlessLabelEditor] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [showBranchNameModal, setShowBranchNameModal] = useState(false);
+  const [branchNameInput, setBranchNameInput] = useState(branch.branch_name);
+  const [branchNameError, setBranchNameError] = useState('');
+  const [savingBranchName, setSavingBranchName] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
@@ -245,12 +268,13 @@ export const StoreHome = ({
   const [importingData, setImportingData] = useState(false);
   const [importSourceName, setImportSourceName] = useState('');
   const [importError, setImportError] = useState('');
+  const isFreeAuthenticatedPlan = authState.status === 'authenticated' && isFreePlan;
 
   // Restriction management state
   const [restrictions, setRestrictions] = useState<RestrictionSettings>({
-    menu_add: false, menu_edit: false, menu_delete: true,
+    menu_add: false, menu_edit: false, menu_delete: false,
     sales_cancel: false, sales_history: false, sales_reset: true,
-    payment_change: false, settings_access: false,
+    payment_change: false, recorder_manage: false, data_manage: false, settings_access: false,
   });
   const [showRestrictionsModal, setShowRestrictionsModal] = useState(false);
 
@@ -276,6 +300,16 @@ export const StoreHome = ({
   const [selectedRecorderEditName, setSelectedRecorderEditName] = useState('');
   const [selectedRecorderEditNote, setSelectedRecorderEditNote] = useState('');
   const [selectedRecorderEditGroupId, setSelectedRecorderEditGroupId] = useState<number>(1);
+  const handleSubFeatureNavigation = (navigate: () => void) => {
+    if (isFreeAuthenticatedPlan) {
+      alertNotify(
+        '無料プランではサブ画面は利用できません',
+        '注文受付・来客カウンター・モバイルオーダーは有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
+      );
+      return;
+    }
+    navigate();
+  };
   const [savingRecorderEdit, setSavingRecorderEdit] = useState(false);
   const [deletingRecorder, setDeletingRecorder] = useState(false);
   const [allRecorderLogs, setAllRecorderLogs] = useState<RecorderAccessLog[]>([]);
@@ -287,7 +321,7 @@ export const StoreHome = ({
   const [recorderSessionChecked, setRecorderSessionChecked] = useState(false);
   const [currentDeviceId, setCurrentDeviceId] = useState('');
   const [recorderLogsLoaded, setRecorderLogsLoaded] = useState(false);
-  const canSyncToSupabase = isSupabaseConfigured() && authState.status !== 'demo';
+  const canSyncToSupabase = isSupabaseConfigured() && authState.status !== 'demo' && !isFreeAuthenticatedPlan;
   const managerRecorderDefaultName = useMemo(() => {
     if (authState.status !== 'authenticated') return null;
     const raw =
@@ -305,10 +339,16 @@ export const StoreHome = ({
       if (authState.status === 'login_code') {
         setActiveTab('main');
       } else if (settings.sub_screen_mode) {
-        setActiveTab('sub');
+        setActiveTab('share');
       }
-      if (settings.payment_methods) {
-        setPaymentMethods(settings.payment_methods);
+      if (authState.status === 'demo') {
+        setPaymentMethods({ cash: true, cashless: true, voucher: true });
+        setCashlessLabel('PayPay');
+      } else {
+        if (settings.payment_methods) {
+          setPaymentMethods(settings.payment_methods);
+        }
+        setCashlessLabel(settings.cashless_label || 'PayPay');
       }
       const r = await getRestrictions();
       setRestrictions(r);
@@ -324,8 +364,14 @@ export const StoreHome = ({
   }, [authState.status]);
 
   useEffect(() => {
+    if (isFreeAuthenticatedPlan && settingsView === 'recorder') {
+      setSettingsView('top');
+    }
+  }, [isFreeAuthenticatedPlan, settingsView]);
+
+  useEffect(() => {
     const refreshBranchName = async () => {
-      if (!isSupabaseConfigured()) return;
+      if (!canSyncToSupabase) return;
       const { data, error } = await supabase
         .from('branches')
         .select('*')
@@ -342,11 +388,15 @@ export const StoreHome = ({
       }
     };
     refreshBranchName();
-  }, [branch.id, branch.branch_name, branch.password, branch.status, onBranchUpdated]);
+  }, [branch.id, branch.branch_name, branch.password, branch.status, canSyncToSupabase, onBranchUpdated]);
+
+  useEffect(() => {
+    setBranchNameInput(branch.branch_name);
+  }, [branch.branch_name]);
 
   useEffect(() => {
     const loadSwitchableBranches = async () => {
-      if (!isSupabaseConfigured() || !isOrgPlan || authState.status !== 'authenticated') {
+      if (!canSyncToSupabase || !isOrgPlan || authState.status !== 'authenticated') {
         setSwitchableBranches([]);
         return;
       }
@@ -367,7 +417,7 @@ export const StoreHome = ({
     };
 
     loadSwitchableBranches();
-  }, [authState, isOrgPlan]);
+  }, [authState, isOrgPlan, canSyncToSupabase]);
 
   useEffect(() => {
     const loadBranchLoginCode = async () => {
@@ -375,7 +425,7 @@ export const StoreHome = ({
         setBranchLoginCode(null);
         return;
       }
-      if (!isSupabaseConfigured()) {
+      if (!canSyncToSupabase) {
         setBranchLoginCode(null);
         return;
       }
@@ -399,7 +449,7 @@ export const StoreHome = ({
       }
     };
     loadBranchLoginCode();
-  }, [authState, branch.id]);
+  }, [authState, branch.id, canSyncToSupabase]);
 
   useEffect(() => {
     const loadRecorders = async () => {
@@ -823,7 +873,7 @@ export const StoreHome = ({
     setActiveTab(tab);
     if (tab === 'settings') setSettingsView('top');
     const currentSettings = await getStoreSettings();
-    await saveStoreSettings({ ...currentSettings, sub_screen_mode: tab === 'sub' });
+    await saveStoreSettings({ ...currentSettings, sub_screen_mode: tab === 'share' });
   };
 
   const togglePaymentMethod = async (key: keyof PaymentMethodSettings) => {
@@ -842,10 +892,71 @@ export const StoreHome = ({
     }
   };
 
+  const saveCashlessLabel = async (nextLabel: string) => {
+    const normalized = nextLabel.trim() || 'PayPay';
+    const doSave = async () => {
+      setCashlessLabel(normalized);
+      const currentSettings = await getStoreSettings();
+      await saveStoreSettings({ ...currentSettings, cashless_label: normalized });
+    };
+    if (restrictions.payment_change) {
+      openAdminGuard(doSave);
+    } else {
+      await doSave();
+    }
+  };
+
   const resetPasswordForm = () => {
     setNewPassword('');
     setConfirmPassword('');
     setPasswordError('');
+  };
+
+  const resetBranchNameForm = () => {
+    setBranchNameInput(branch.branch_name);
+    setBranchNameError('');
+  };
+
+  const handleChangeBranchName = async () => {
+    const nextName = branchNameInput.trim();
+    if (!nextName) {
+      setBranchNameError('店舗名を入力してください');
+      return;
+    }
+    if (nextName === branch.branch_name) {
+      setShowBranchNameModal(false);
+      setBranchNameError('');
+      return;
+    }
+
+    setSavingBranchName(true);
+    setBranchNameError('');
+    try {
+      if (canSyncToSupabase) {
+        const { data, error } = await supabase
+          .from('branches')
+          .update({ branch_name: nextName })
+          .eq('id', branch.id)
+          .select('*')
+          .single();
+        if (error) throw error;
+        if (!data) throw new Error('店舗データの更新に失敗しました');
+        await saveBranch(data);
+        onBranchUpdated?.(data);
+      } else {
+        const updatedBranch: Branch = { ...branch, branch_name: nextName };
+        await saveBranch(updatedBranch);
+        onBranchUpdated?.(updatedBranch);
+      }
+
+      setShowBranchNameModal(false);
+      alertNotify('完了', '店舗名を変更しました');
+    } catch (error) {
+      console.error('Error changing branch name:', error);
+      setBranchNameError('店舗名の変更に失敗しました');
+    } finally {
+      setSavingBranchName(false);
+    }
   };
 
   const handleChangePassword = async () => {
@@ -866,7 +977,7 @@ export const StoreHome = ({
     try {
       const nextPassword = newPassword.trim();
 
-      if (isSupabaseConfigured()) {
+      if (canSyncToSupabase) {
         const { data, error } = await supabase
           .from('branches')
           .update({ password: nextPassword })
@@ -903,7 +1014,7 @@ export const StoreHome = ({
       // ── 売上データ ──────────────────────────────────────────────
       if (categories.has('sales')) {
         try {
-          if (isSupabaseConfigured()) {
+          if (canSyncToSupabase) {
             const { data: txIds } = await supabase
               .from('transactions')
               .select('id')
@@ -931,7 +1042,7 @@ export const StoreHome = ({
       // ── メニューデータ ────────────────────────────────────────────
       if (categories.has('menu')) {
         try {
-          if (isSupabaseConfigured()) {
+          if (canSyncToSupabase) {
             const { error: menusErr } = await supabase
               .from('menus')
               .delete()
@@ -955,7 +1066,7 @@ export const StoreHome = ({
       // ── 来客データ ────────────────────────────────────────────────
       if (categories.has('visitor')) {
         try {
-          if (isSupabaseConfigured()) {
+          if (canSyncToSupabase) {
             const { error: visitorErr } = await supabase
               .from('visitor_counts')
               .delete()
@@ -972,7 +1083,7 @@ export const StoreHome = ({
       // ── 会計データ ────────────────────────────────────────────────
       if (categories.has('budget')) {
         try {
-          if (isSupabaseConfigured()) {
+          if (canSyncToSupabase) {
             const { error: expErr } = await supabase
               .from('budget_expenses')
               .delete()
@@ -996,7 +1107,7 @@ export const StoreHome = ({
       // ── 下準備データ ──────────────────────────────────────────────
       if (categories.has('prep')) {
         try {
-          if (isSupabaseConfigured()) {
+          if (canSyncToSupabase) {
             const { error: prepErr } = await supabase
               .from('prep_ingredients')
               .delete()
@@ -1007,6 +1118,43 @@ export const StoreHome = ({
         } catch (e) {
           console.error('prep delete error:', e);
           errors.push('下準備データ');
+        }
+      }
+
+      // ── 登録者データ ──────────────────────────────────────────────
+      if (categories.has('recorder')) {
+        try {
+          if (canSyncToSupabase) {
+            const { error: logsErr } = await supabase
+              .from('branch_recorder_access_logs')
+              .delete()
+              .eq('branch_id', branch.id);
+            if (logsErr) console.error('Error deleting branch_recorder_access_logs:', logsErr);
+
+            const { error: recordersErr } = await supabase
+              .from('branch_recorders')
+              .delete()
+              .eq('branch_id', branch.id);
+            if (recordersErr) console.error('Error deleting branch_recorders:', recordersErr);
+
+            const { error: configErr } = await supabase
+              .from('branch_recorder_configs')
+              .delete()
+              .eq('branch_id', branch.id);
+            if (configErr) console.error('Error deleting branch_recorder_configs:', configErr);
+          }
+
+          await saveDefaultExpenseRecorder(branch.id, '');
+          await saveBranchRecorders(branch.id, []);
+          await saveRecorderAccessLogs(branch.id, []);
+          await saveBranchRecorderConfig(branch.id, {
+            branch_id: branch.id,
+            registration_mode: 'restricted',
+            updated_at: new Date().toISOString(),
+          });
+        } catch (e) {
+          console.error('recorder delete error:', e);
+          errors.push('登録者データ');
         }
       }
 
@@ -1087,7 +1235,7 @@ export const StoreHome = ({
       const pendingTransactions = (await getPendingTransactions()).filter((tx) => tx.branch_id === branch.id);
       let transactions: Transaction[] = [];
       let transactionItems: TransactionItem[] = [];
-      if (isSupabaseConfigured()) {
+      if (canSyncToSupabase) {
         try {
           const { data: txData } = await supabase
             .from('transactions')
@@ -1118,7 +1266,7 @@ export const StoreHome = ({
       const localCategories = (await getMenuCategories()).filter((category) => category.branch_id === branch.id);
       let menus = localMenus;
       let menuCategories = localCategories;
-      if (isSupabaseConfigured()) {
+      if (canSyncToSupabase) {
         try {
           const [{ data: menuData }, { data: categoryData }] = await Promise.all([
             supabase.from('menus').select('*').eq('branch_id', branch.id),
@@ -1140,7 +1288,7 @@ export const StoreHome = ({
       const pendingVisitorCounts = (await getPendingVisitorCounts()).filter((row) => row.branch_id === branch.id);
       const visitorGroups = await getVisitorGroups(branch.id);
       let visitorCounts: PendingVisitorCount[] = [];
-      if (isSupabaseConfigured()) {
+      if (canSyncToSupabase) {
         try {
           const { data: remoteVisitor } = await supabase
             .from('visitor_counts')
@@ -1163,7 +1311,7 @@ export const StoreHome = ({
       const budgetExpenses = (await getBudgetExpenses()).filter((expense) => expense.branch_id === branch.id);
       let remoteSettings: BudgetSettings | null = null;
       let remoteExpenses: BudgetExpense[] = [];
-      if (isSupabaseConfigured()) {
+      if (canSyncToSupabase) {
         try {
           const [{ data: settingsData }, { data: expenseData }] = await Promise.all([
             supabase.from('budget_settings').select('*').eq('branch_id', branch.id).maybeSingle(),
@@ -1184,7 +1332,7 @@ export const StoreHome = ({
     if (categories.has('prep')) {
       const localPrepIngredients = await getPrepIngredients(branch.id);
       let prepIngredients = localPrepIngredients;
-      if (isSupabaseConfigured()) {
+      if (canSyncToSupabase) {
         try {
           const { data: prepData } = await supabase
             .from('prep_ingredients')
@@ -1197,6 +1345,48 @@ export const StoreHome = ({
       }
       data.prep = {
         prep_ingredients: prepIngredients,
+      };
+    }
+
+    if (categories.has('recorder')) {
+      const localRecorders = await getBranchRecorders(branch.id);
+      const localAccessLogs = await getRecorderAccessLogs(branch.id);
+      const localConfig = await getBranchRecorderConfig(branch.id);
+      const defaultExpenseRecorder = await getDefaultExpenseRecorder(branch.id);
+      let branchRecorders = localRecorders;
+      let recorderAccessLogs = localAccessLogs;
+      let recorderConfig = localConfig;
+
+      if (canSyncToSupabase) {
+        try {
+          const [{ data: recordersData }, { data: logsData }, { data: configData }] = await Promise.all([
+            supabase
+              .from('branch_recorders')
+              .select('*')
+              .eq('branch_id', branch.id),
+            supabase
+              .from('branch_recorder_access_logs')
+              .select('*')
+              .eq('branch_id', branch.id),
+            supabase
+              .from('branch_recorder_configs')
+              .select('*')
+              .eq('branch_id', branch.id)
+              .maybeSingle(),
+          ]);
+          branchRecorders = (recordersData ?? []) as BranchRecorder[];
+          recorderAccessLogs = (logsData ?? []) as RecorderAccessLog[];
+          recorderConfig = (configData ?? localConfig) as BranchRecorderConfig;
+        } catch (error) {
+          console.error('recorder export fetch error:', error);
+        }
+      }
+
+      data.recorder = {
+        branch_recorders: branchRecorders,
+        branch_recorder_access_logs: recorderAccessLogs,
+        branch_recorder_configs: recorderConfig,
+        default_expense_recorder: defaultExpenseRecorder,
       };
     }
 
@@ -1323,6 +1513,20 @@ export const StoreHome = ({
         if (key === 'prep') {
           const prep = (data.prep_ingredients as Record<string, unknown>[] | undefined) ?? [];
           csvFiles.push({ name: 'prep_ingredients.csv', content: csvFromObjects(prep) });
+        }
+
+        if (key === 'recorder') {
+          const recorders = (data.branch_recorders as Record<string, unknown>[] | undefined) ?? [];
+          const logs = (data.branch_recorder_access_logs as Record<string, unknown>[] | undefined) ?? [];
+          const config = (data.branch_recorder_configs as Record<string, unknown> | undefined) ?? {};
+          const defaultRecorder = (data.default_expense_recorder as string | null | undefined) ?? '';
+          csvFiles.push({ name: 'recorder_branch_recorders.csv', content: csvFromObjects(recorders) });
+          csvFiles.push({ name: 'recorder_access_logs.csv', content: csvFromObjects(logs) });
+          csvFiles.push({ name: 'recorder_config.csv', content: csvFromObjects([config]) });
+          csvFiles.push({
+            name: 'recorder_default_expense_recorder.csv',
+            content: csvFromObjects([{ branch_id: branch.id, recorder_name: defaultRecorder }]),
+          });
         }
       });
 
@@ -1483,6 +1687,62 @@ export const StoreHome = ({
         }));
         data.prep = prep;
       }
+
+      if (name.endsWith('recorder_branch_recorders.csv')) {
+        const recorder = (data.recorder as {
+          branch_recorders?: BranchRecorder[];
+          branch_recorder_access_logs?: RecorderAccessLog[];
+          branch_recorder_configs?: BranchRecorderConfig;
+          default_expense_recorder?: string | null;
+        } | undefined) ?? {};
+        recorder.branch_recorders = rows.map((row) => ({
+          ...(row as unknown as BranchRecorder),
+          group_id: toNumberOr(row.group_id || '1'),
+          is_active: row.is_active === '' ? true : toBoolean(row.is_active),
+        }));
+        data.recorder = recorder;
+      }
+
+      if (name.endsWith('recorder_access_logs.csv')) {
+        const recorder = (data.recorder as {
+          branch_recorders?: BranchRecorder[];
+          branch_recorder_access_logs?: RecorderAccessLog[];
+          branch_recorder_configs?: BranchRecorderConfig;
+          default_expense_recorder?: string | null;
+        } | undefined) ?? {};
+        recorder.branch_recorder_access_logs = rows.map((row) => ({
+          ...(row as unknown as RecorderAccessLog),
+        }));
+        data.recorder = recorder;
+      }
+
+      if (name.endsWith('recorder_config.csv')) {
+        const recorder = (data.recorder as {
+          branch_recorders?: BranchRecorder[];
+          branch_recorder_access_logs?: RecorderAccessLog[];
+          branch_recorder_configs?: BranchRecorderConfig;
+          default_expense_recorder?: string | null;
+        } | undefined) ?? {};
+        const row = rows[0] ?? {};
+        recorder.branch_recorder_configs = {
+          branch_id: row.branch_id ?? branch.id,
+          registration_mode: row.registration_mode === 'open' ? 'open' : 'restricted',
+          updated_at: row.updated_at ?? new Date().toISOString(),
+        };
+        data.recorder = recorder;
+      }
+
+      if (name.endsWith('recorder_default_expense_recorder.csv')) {
+        const recorder = (data.recorder as {
+          branch_recorders?: BranchRecorder[];
+          branch_recorder_access_logs?: RecorderAccessLog[];
+          branch_recorder_configs?: BranchRecorderConfig;
+          default_expense_recorder?: string | null;
+        } | undefined) ?? {};
+        const row = rows[0] ?? {};
+        recorder.default_expense_recorder = row.recorder_name ?? '';
+        data.recorder = recorder;
+      }
     });
 
     if (Object.keys(data).length === 0) return null;
@@ -1594,7 +1854,7 @@ export const StoreHome = ({
         const incomingMenus = (menuData.menus ?? []).map((menu) => ({ ...menu, branch_id: branch.id }));
         const incomingCategories = (menuData.menu_categories ?? []).map((category) => ({ ...category, branch_id: branch.id }));
 
-        if (isSupabaseConfigured()) {
+        if (canSyncToSupabase) {
           await supabase.from('menus').delete().eq('branch_id', branch.id);
           await supabase.from('menu_categories').delete().eq('branch_id', branch.id);
           if (incomingCategories.length > 0) await supabase.from('menu_categories').insert(incomingCategories);
@@ -1620,7 +1880,7 @@ export const StoreHome = ({
         const incomingItems = salesData.transaction_items ?? [];
         const incomingPending = (salesData.pending_transactions ?? []).map((tx) => ({ ...tx, branch_id: branch.id }));
 
-        if (isSupabaseConfigured()) {
+        if (canSyncToSupabase) {
           const { data: currentTx } = await supabase.from('transactions').select('id').eq('branch_id', branch.id);
           const currentIds = (currentTx ?? []).map((row) => row.id);
           if (currentIds.length > 0) {
@@ -1647,7 +1907,7 @@ export const StoreHome = ({
         const incomingPending = (visitorData.pending_visitor_counts ?? []).map((v) => ({ ...v, branch_id: branch.id }));
         const incomingGroups = visitorData.visitor_groups ?? [];
 
-        if (isSupabaseConfigured()) {
+        if (canSyncToSupabase) {
           await supabase.from('visitor_counts').delete().eq('branch_id', branch.id);
           if (incomingVisitorCounts.length > 0) {
             await supabase.from('visitor_counts').insert(incomingVisitorCounts);
@@ -1676,7 +1936,7 @@ export const StoreHome = ({
           branch_id: branch.id,
         }));
 
-        if (isSupabaseConfigured()) {
+        if (canSyncToSupabase) {
           await supabase.from('budget_expenses').delete().eq('branch_id', branch.id);
           await supabase.from('budget_settings').delete().eq('branch_id', branch.id);
           await supabase.from('budget_settings').insert(incomingSettings);
@@ -1695,11 +1955,52 @@ export const StoreHome = ({
           branch_id: branch.id,
         }));
 
-        if (isSupabaseConfigured()) {
+        if (canSyncToSupabase) {
           await supabase.from('prep_ingredients').delete().eq('branch_id', branch.id);
           if (incomingPrep.length > 0) await supabase.from('prep_ingredients').insert(incomingPrep);
         }
         await savePrepIngredients(branch.id, incomingPrep);
+      }
+
+      if (selectedImportCategories.has('recorder')) {
+        const recorderData = (importPayload.data.recorder ?? {}) as {
+          branch_recorders?: BranchRecorder[];
+          branch_recorder_access_logs?: RecorderAccessLog[];
+          branch_recorder_configs?: BranchRecorderConfig;
+          default_expense_recorder?: string | null;
+        };
+        const incomingRecorders = (recorderData.branch_recorders ?? []).map((r) => ({
+          ...r,
+          branch_id: branch.id,
+        }));
+        const incomingAccessLogs = (recorderData.branch_recorder_access_logs ?? []).map((log) => ({
+          ...log,
+          branch_id: branch.id,
+        }));
+        const incomingConfig: BranchRecorderConfig = {
+          branch_id: branch.id,
+          registration_mode: recorderData.branch_recorder_configs?.registration_mode === 'open' ? 'open' : 'restricted',
+          updated_at: recorderData.branch_recorder_configs?.updated_at ?? new Date().toISOString(),
+        };
+        const incomingDefaultRecorder = (recorderData.default_expense_recorder ?? '').trim();
+
+        if (canSyncToSupabase) {
+          await supabase.from('branch_recorder_access_logs').delete().eq('branch_id', branch.id);
+          await supabase.from('branch_recorders').delete().eq('branch_id', branch.id);
+          await supabase.from('branch_recorder_configs').delete().eq('branch_id', branch.id);
+          if (incomingRecorders.length > 0) {
+            await supabase.from('branch_recorders').insert(incomingRecorders);
+          }
+          if (incomingAccessLogs.length > 0) {
+            await supabase.from('branch_recorder_access_logs').insert(incomingAccessLogs);
+          }
+          await supabase.from('branch_recorder_configs').insert(incomingConfig);
+        }
+
+        await saveBranchRecorders(branch.id, incomingRecorders);
+        await saveRecorderAccessLogs(branch.id, incomingAccessLogs);
+        await saveBranchRecorderConfig(branch.id, incomingConfig);
+        await saveDefaultExpenseRecorder(branch.id, incomingDefaultRecorder);
       }
 
       alertNotify('完了', 'データのインポートが完了しました');
@@ -1740,6 +2041,8 @@ export const StoreHome = ({
     ? `${branchLoginCode.slice(0, 1)}${'＊'.repeat(Math.max(0, branchLoginCode.length - 1))}`
     : null;
   const canShowLoginCodeInHeader = authState.status === 'authenticated';
+  const topButtonTitle =
+    authState.status === 'demo' && hasDemoReturnTarget ? 'ログイン画面に戻る' : 'トップ画面';
 
   const handleCopyLoginCode = async () => {
     if (!branchLoginCode) return;
@@ -1788,29 +2091,29 @@ export const StoreHome = ({
         title={branch.branch_name}
         titleLeftElement={branchSwitcher}
         subtitleElement={
-          <View className="flex-row items-center gap-2 mt-0.5">
+          <View className="mt-1 gap-1">
             <Text className="text-sm text-gray-500">支店番号: {branch.branch_code}</Text>
-
-            
+            <View className="flex-row flex-wrap items-start gap-1.5">
               <View className="px-2 py-0.5 rounded-full border border-emerald-200 bg-emerald-50">
                 <Text className="text-xs font-medium text-emerald-700">
                   使用者: {currentRecorderName ?? '未設定'}
                 </Text>
-               </View>
-
-            {canShowLoginCodeInHeader && maskedLoginCode ? (
-              <TouchableOpacity
-                onPress={() => setShowLoginCodeModal(true)}
-                activeOpacity={0.8}
-                className="px-2 py-0.5 rounded-full border border-blue-200 bg-blue-50"
-              >
-                <Text className="text-xs font-medium text-blue-700">ログインコード: {maskedLoginCode}</Text>
-              </TouchableOpacity>
-            ) : null}               
               </View>
+
+              {canShowLoginCodeInHeader && maskedLoginCode ? (
+                <TouchableOpacity
+                  onPress={() => setShowLoginCodeModal(true)}
+                  activeOpacity={0.8}
+                  className="px-2 py-0.5 rounded-full border border-blue-200 bg-blue-50"
+                >
+                  <Text className="text-xs font-medium text-blue-700">ログインコード: {maskedLoginCode}</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
         }
         rightElement={
-          <Button title="トップ画面" onPress={handleBackToTop} variant="secondary" size="sm" />
+          <Button title={topButtonTitle} onPress={handleBackToTop} variant="secondary" size="sm" />
         }
       />
 
@@ -1862,37 +2165,158 @@ export const StoreHome = ({
                 </Card>
               </TouchableOpacity>
 
+
           </View>
         )}
 
         {activeTab === 'sub' && (
           <View className="flex-1 gap-4">
+            {isFreeAuthenticatedPlan && (
+              <Card className="bg-amber-50 border border-amber-200 p-4">
+                <Text className="text-amber-900 font-bold text-base text-center">無料プランではサブ画面は利用できません</Text>
+                <Text className="text-amber-700 text-center mt-1 text-xs">
+                  注文受付・来客カウンター・モバイルオーダーは有料プランでご利用いただけます。
+                </Text>
+                {(onNavigateToPricing || onNavigateToDemoHome) && (
+                  <View className="flex-row justify-center gap-2 mt-3">
+                    {onNavigateToPricing && (
+                      <TouchableOpacity
+                        onPress={onNavigateToPricing}
+                        activeOpacity={0.8}
+                        className="px-3 py-2 rounded-lg bg-white border border-amber-300"
+                      >
+                        <Text className="text-amber-800 text-xs font-semibold">有料プランを見る</Text>
+                      </TouchableOpacity>
+                    )}
+                    {onNavigateToDemoHome && (
+                      <TouchableOpacity
+                        onPress={onNavigateToDemoHome}
+                        activeOpacity={0.8}
+                        className="px-3 py-2 rounded-lg bg-white border border-amber-300"
+                      >
+                        <Text className="text-amber-800 text-xs font-semibold">デモ画面を見る</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+              </Card>
+            )}
 
-            <TouchableOpacity onPress={onNavigateToCustomerOrder} activeOpacity={0.8}>
-              <Card className="bg-teal-500 p-6">
+            {/* 注文受付 */}
+            <TouchableOpacity onPress={() => handleSubFeatureNavigation(onNavigateToOrderBoard)} activeOpacity={0.8}>
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-orange-300 opacity-70' : 'bg-orange-400'} p-4`}>
+                <Text className="text-white text-2xl font-bold text-center">注文受付</Text>
+                <Text className="text-amber-100 text-center mt-2">別端末で注文を表示・管理</Text>
+              </Card>
+            </TouchableOpacity>
+
+            {/* 来客カウンター */}
+            <TouchableOpacity onPress={() => handleSubFeatureNavigation(onNavigateToCounter)} activeOpacity={0.8}>
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-purple-400 opacity-70' : 'bg-purple-500'} p-4`}>
+                <Text className="text-white text-2xl font-bold text-center">来客カウンター</Text>
+                <Text className="text-purple-100 text-center mt-2">ボタンをタップして来場者数を記録</Text>
+              </Card>
+            </TouchableOpacity>
+
+            {/* モバイルオーダー */}
+            <TouchableOpacity onPress={() => handleSubFeatureNavigation(onNavigateToCustomerOrder)} activeOpacity={0.8}>
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-teal-400 opacity-70' : 'bg-teal-500'} p-4`}>
                 <Text className="text-white text-2xl font-bold text-center">モバイルオーダー</Text>
                 <Text className="text-teal-100 text-center mt-2">この端末を客用注文画面として使用</Text>
               </Card>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={onNavigateToOrderBoard} activeOpacity={0.8}>
-              <Card className="bg-orange-400 p-6">
-                <Text className="text-white text-2xl  font-bold text-center">注文受付</Text>
-                <Text className="text-amber-100 text-center mt-2">別端末で注文を表示・管理</Text>
+          </View>
+        )}
+
+        {activeTab === 'share' && (
+          <View className="flex-1 gap-4">
+            {isFreeAuthenticatedPlan && (
+              <Card className="bg-amber-50 border border-amber-200 p-4">
+                <Text className="text-amber-900 font-bold text-base text-center">無料プランでは共有機能は利用できません</Text>
+                <Text className="text-amber-700 text-center mt-1 text-xs">
+                  在庫共有・チェックリスト・引き継ぎ共有は有料プランでご利用いただけます。
+                </Text>
+                {(onNavigateToPricing || onNavigateToDemoHome) && (
+                  <View className="flex-row justify-center gap-2 mt-3">
+                    {onNavigateToPricing && (
+                      <TouchableOpacity
+                        onPress={onNavigateToPricing}
+                        activeOpacity={0.8}
+                        className="px-3 py-2 rounded-lg bg-white border border-amber-300"
+                      >
+                        <Text className="text-amber-800 text-xs font-semibold">有料プランを見る</Text>
+                      </TouchableOpacity>
+                    )}
+                    {onNavigateToDemoHome && (
+                      <TouchableOpacity
+                        onPress={onNavigateToDemoHome}
+                        activeOpacity={0.8}
+                        className="px-3 py-2 rounded-lg bg-white border border-amber-300"
+                      >
+                        <Text className="text-amber-800 text-xs font-semibold">デモ画面を見る</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+              </Card>
+            )}
+
+            {/* 在庫確認（旧: 調理の下準備） */}
+            <TouchableOpacity
+              onPress={() => {
+                if (isFreeAuthenticatedPlan) {
+                  alertNotify(
+                    '無料プランでは在庫確認は利用できません',
+                    '材料登録・在庫共有は有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
+                  );
+                  return;
+                }
+                onNavigateToPrep();
+              }}
+              activeOpacity={0.8}
+            >
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-rose-400 opacity-70' : 'bg-rose-500'} p-4`}>
+                <Text className="text-white text-2xl font-bold text-center">在庫確認</Text>
+                <Text className="text-rose-100 text-center mt-2">材料・在庫をみんなで共有</Text>
               </Card>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={onNavigateToCounter} activeOpacity={0.8}>
-              <Card className="bg-purple-500 px-12 py-6">
-                <Text className="text-white text-2xl  font-bold text-center">来客カウンター</Text>
-                <Text className="text-purple-100 text-center mt-2">ボタンをタップして来場者数を記録</Text>
+            <TouchableOpacity
+              onPress={() => {
+                if (isFreeAuthenticatedPlan) {
+                  alertNotify(
+                    '無料プランでは共有機能は利用できません',
+                    '仕事チェックリストは有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
+                  );
+                  return;
+                }
+                onNavigateToChecklist();
+              }}
+              activeOpacity={0.8}
+            >
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-blue-400 opacity-70' : 'bg-blue-500'} p-4`}>
+                <Text className="text-white text-2xl font-bold text-center">仕事チェックリスト</Text>
+                <Text className="text-blue-100 text-center mt-2">やることをみんなで確認・管理</Text>
               </Card>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={onNavigateToPrep} activeOpacity={0.8}>
-              <Card className="bg-rose-500 px-12 py-6">
-                <Text className="text-white text-2xl font-bold text-center">調理の下準備</Text>
-                <Text className="text-rose-100 text-center mt-2">材料登録・在庫共有を行う</Text>
+            <TouchableOpacity
+              onPress={() => {
+                if (isFreeAuthenticatedPlan) {
+                  alertNotify(
+                    '無料プランでは共有機能は利用できません',
+                    'シフト・引き継ぎは有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
+                  );
+                  return;
+                }
+                onNavigateToShiftHandover();
+              }}
+              activeOpacity={0.8}
+            >
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-indigo-400 opacity-70' : 'bg-indigo-500'} p-4`}>
+                <Text className="text-white text-2xl font-bold text-center">シフト・引き継ぎ</Text>
+                <Text className="text-indigo-100 text-center mt-2">担当・引き継ぎ事項を共有</Text>
               </Card>
             </TouchableOpacity>
           </View>
@@ -1902,21 +2326,21 @@ export const StoreHome = ({
           <View className="flex-1 gap-4">
 
             <TouchableOpacity onPress={onNavigateToBudgetExpense} activeOpacity={0.8}>
-              <Card className="bg-emerald-500 p-6">
+              <Card className="bg-emerald-500 p-4">
                 <Text className="text-white text-2xl  font-bold text-center">支出管理</Text>
                 <Text className="text-emerald-100 text-center mt-2">支出の記録・確認</Text>
               </Card>
             </TouchableOpacity>
 
             <TouchableOpacity onPress={onNavigateToBudgetBreakeven} activeOpacity={0.8}>
-              <Card className="bg-violet-500 p-6">
+              <Card className="bg-violet-500 p-4">
                 <Text className="text-white text-2xl  font-bold text-center">損益分岐点の計算</Text>
                 <Text className="text-violet-100 text-center mt-2">価格・原価から必要販売数を試算</Text>
               </Card>
             </TouchableOpacity>
 
             <TouchableOpacity onPress={onNavigateToBudget} activeOpacity={0.8}>
-              <Card className="bg-indigo-500 p-6">
+              <Card className="bg-indigo-500 p-4">
                 <Text className="text-white text-2xl  font-bold text-center">会計処理</Text>
                 <Text className="text-indigo-100 text-center mt-2">予算設定・収支確認・報告書の作成</Text>
               </Card>
@@ -1933,25 +2357,44 @@ export const StoreHome = ({
             {settingsView === 'top' && (
               <>
                 <TouchableOpacity onPress={() => setSettingsView('payment')} activeOpacity={0.8}>
-                  <Card className="bg-blue-500 p-6">
+                  <Card className="bg-blue-500 p-4">
                     <Text className="text-white text-2xl font-bold text-center">支払い設定</Text>
                     <Text className="text-blue-100 text-center mt-2">レジで使用する支払い方法を選択</Text>
                   </Card>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={() => setSettingsView('recorder')} activeOpacity={0.8}>
-                  <Card className="bg-emerald-500 p-6">
-                    <Text className="text-white text-2xl font-bold text-center">登録者設定</Text>
-                    <Text className="text-emerald-100 text-center mt-2">登録者の追加とアクセス端末の確認</Text>
-                  </Card>
-                </TouchableOpacity>
+                {!isFreeAuthenticatedPlan ? (
+                  <TouchableOpacity onPress={() => setSettingsView('recorder')} activeOpacity={0.8}>
+                    <Card className="bg-emerald-500 p-4">
+                      <Text className="text-white text-2xl font-bold text-center">登録者設定</Text>
+                      <Text className="text-emerald-100 text-center mt-2">登録者の追加とアクセス端末の確認</Text>
+                    </Card>
+                  </TouchableOpacity>
+                ) : null}
 
                 <TouchableOpacity onPress={() => setSettingsView('admin')} activeOpacity={0.8}>
-                  <Card className="bg-gray-600 p-6">
+                  <Card className="bg-gray-600 p-4">
                     <Text className="text-white text-2xl font-bold text-center">管理者設定</Text>
                     <Text className="text-gray-300 text-center mt-2">パスワード・制限・データ管理</Text>
                   </Card>
                 </TouchableOpacity>
+
+                {authState.status === 'login_code' ? (
+                  <TouchableOpacity
+                    onPress={async () => {
+                      await exitLoginCode();
+                      onLogout();
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Card className="bg-white border border-red-200 p-4">
+                      <Text className="text-red-700 text-xl font-bold text-center">ログアウト</Text>
+                      <Text className="text-red-500 text-center mt-1 text-xs">
+                        ログインコード利用を終了してトップへ戻る
+                      </Text>
+                    </Card>
+                  </TouchableOpacity>
+                ) : null}
               </>
             )}
 
@@ -1986,23 +2429,81 @@ export const StoreHome = ({
                 </TouchableOpacity>
 
                 {/* Cashless */}
-                <TouchableOpacity
-                  onPress={() => togglePaymentMethod('cashless')}
-                  activeOpacity={0.7}
-                  className={`flex-row items-center p-4 rounded-xl border-2 bg-white ${
+                <View
+                  className={`p-4 rounded-xl border-2 bg-white ${
                     paymentMethods.cashless ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
                   }`}
                 >
-                  <View className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
-                    paymentMethods.cashless ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
-                  }`}>
-                    {paymentMethods.cashless && <Text className="text-white text-xs font-bold">✓</Text>}
+                  <View className="flex-row items-start">
+                    <TouchableOpacity
+                      onPress={() => togglePaymentMethod('cashless')}
+                      activeOpacity={0.7}
+                      className="flex-1 flex-row items-center pr-2"
+                    >
+                      <View className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+                        paymentMethods.cashless ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
+                      }`}>
+                        {paymentMethods.cashless && <Text className="text-white text-xs font-bold">✓</Text>}
+                      </View>
+                      <View className="flex-1">
+                        <Text className="text-gray-900 font-semibold">{cashlessLabel || 'PayPay'}</Text>
+                        <Text className="text-gray-500 text-xs mt-0.5">キャッシュレス決済ボタン</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setShowCashlessLabelEditor((prev) => !prev)}
+                      activeOpacity={0.8}
+                      className="px-2.5 py-1 rounded-full border border-gray-300 bg-white"
+                    >
+                      <Text className="text-[11px] text-gray-700 font-semibold">表示名変更</Text>
+                    </TouchableOpacity>
                   </View>
-                  <View className="flex-1">
-                    <Text className="text-gray-900 font-semibold">キャッシュレス</Text>
-                    <Text className="text-gray-500 text-xs mt-0.5">PayPay等の電子決済</Text>
-                  </View>
-                </TouchableOpacity>
+                </View>
+
+                <View >
+                  {showCashlessLabelEditor ? (
+                    <Card>
+                      <Text className="text-gray-700 font-semibold mb-2">キャッシュレス表示名</Text>
+                      <Text className="text-gray-500 text-xs mb-2">テンプレートを選ぶか、自由入力できます</Text>
+                      <View className="flex-row flex-wrap gap-2 mb-2">
+                        {CASHLESS_LABEL_TEMPLATES.map((label) => (
+                          <TouchableOpacity
+                            key={`cashless-template-${label}`}
+                            onPress={() => saveCashlessLabel(label)}
+                            activeOpacity={0.8}
+                            className={`px-3 py-1.5 rounded-full border ${
+                              (cashlessLabel || 'PayPay') === label
+                                ? 'bg-blue-500 border-blue-500'
+                                : 'bg-white border-gray-300'
+                            }`}
+                          >
+                            <Text
+                              className={`text-xs font-semibold ${
+                                (cashlessLabel || 'PayPay') === label ? 'text-white' : 'text-gray-700'
+                              }`}
+                            >
+                              {label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                      <Input
+                        label="カスタム表示名"
+                        value={cashlessLabel}
+                        onChangeText={setCashlessLabel}
+                        placeholder="例: au PAY / d払い / QR決済"
+                      />
+                      <Button
+                        title="表示名を保存"
+                        onPress={() => {
+                          saveCashlessLabel(cashlessLabel)
+                          setShowCashlessLabelEditor((prev) => !prev)
+                        }}
+                        size="sm"
+                      />
+                    </Card>
+                  ) : null}
+                </View>
 
                 {/* Voucher */}
                 <TouchableOpacity
@@ -2035,7 +2536,7 @@ export const StoreHome = ({
                   <Text className="text-gray-900 text-lg font-bold mb-2">登録方式</Text>
                   <View className="flex-row gap-2 mb-2">
                     <TouchableOpacity
-                      onPress={() => handleChangeRecorderRegistrationMode('open')}
+                      onPress={() => withRestrictionCheck('recorder_manage', () => { void handleChangeRecorderRegistrationMode('open'); })}
                       className={`flex-1 rounded-xl border px-3 py-3 ${
                         recorderRegistrationMode === 'open'
                           ? 'bg-emerald-500 border-emerald-500'
@@ -2052,7 +2553,7 @@ export const StoreHome = ({
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => handleChangeRecorderRegistrationMode('restricted')}
+                      onPress={() => withRestrictionCheck('recorder_manage', () => { void handleChangeRecorderRegistrationMode('restricted'); })}
                       className={`flex-1 rounded-xl border px-3 py-3 ${
                         recorderRegistrationMode === 'restricted'
                           ? 'bg-indigo-500 border-indigo-500'
@@ -2146,7 +2647,11 @@ export const StoreHome = ({
                       <Text className="text-gray-500 text-xs">通常は「標準（G1）」のままで問題ありません。</Text>
                     </View>
                   ) : null}
-                  <Button title="登録者を追加" onPress={handleAddRecorder} disabled={!newRecorderName.trim()} />
+                  <Button
+                    title="登録者を追加"
+                    onPress={() => withRestrictionCheck('recorder_manage', () => { void handleAddRecorder(); })}
+                    disabled={!newRecorderName.trim()}
+                  />
                 </Card>
 
                 <Card>
@@ -2191,7 +2696,7 @@ export const StoreHome = ({
                                     return (
                                       <TouchableOpacity
                                         key={recorder.id}
-                                        onPress={() => openRecorderLogs(recorder)}
+                                        onPress={() => withRestrictionCheck('recorder_manage', () => { void openRecorderLogs(recorder); })}
                                         activeOpacity={0.8}
                                         className="rounded-xl border border-gray-200 bg-white px-3 py-3"
                                       >
@@ -2221,7 +2726,7 @@ export const StoreHome = ({
                             return (
                               <TouchableOpacity
                                 key={recorder.id}
-                                onPress={() => openRecorderLogs(recorder)}
+                                onPress={() => withRestrictionCheck('recorder_manage', () => { void openRecorderLogs(recorder); })}
                                 activeOpacity={0.8}
                                 className="rounded-xl border border-gray-200 bg-white px-3 py-3"
                               >
@@ -2274,7 +2779,21 @@ export const StoreHome = ({
                   <Text className="text-gray-900 font-bold mb-2">セキュリティ</Text>
 
                   <TouchableOpacity
-                    onPress={() => { resetPasswordForm(); setShowPasswordModal(true); }}
+                    onPress={() => withRestrictionCheck('settings_access', () => { resetBranchNameForm(); setShowBranchNameModal(true); })}
+                    activeOpacity={0.8}
+                    className="flex-row items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 mb-2"
+                  >
+                    <View className="w-9 h-9 rounded-full bg-blue-200 items-center justify-center">
+                      <Text className="text-blue-700 font-bold">店名</Text>
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-blue-900 font-semibold">店舗名変更</Text>
+                      <Text className="text-blue-700 text-xs">ヘッダーに表示される店舗名を変更</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => withRestrictionCheck('settings_access', () => { resetPasswordForm(); setShowPasswordModal(true); })}
                     activeOpacity={0.8}
                     className="flex-row items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 mb-2"
                   >
@@ -2288,7 +2807,7 @@ export const StoreHome = ({
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => setShowRestrictionsModal(true)}
+                    onPress={() => withRestrictionCheck('settings_access', () => setShowRestrictionsModal(true))}
                     activeOpacity={0.8}
                     className="flex-row items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3"
                   >
@@ -2308,12 +2827,12 @@ export const StoreHome = ({
                   </View>
 
                   <TouchableOpacity
-                    onPress={() => {
+                    onPress={() => withRestrictionCheck('data_manage', () => {
                       setAdminPasswordInput('');
                       setResetError('');
                       setSelectedDeleteCategories(new Set());
                       setShowDataDeleteModal(true);
-                    }}
+                    })}
                     activeOpacity={0.8}
                     className="flex-row items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-3 py-3 mb-2"
                   >
@@ -2327,10 +2846,10 @@ export const StoreHome = ({
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => {
+                    onPress={() => withRestrictionCheck('data_manage', () => {
                       setSelectedExportCategories(new Set());
                       setShowDataExportModal(true);
-                    }}
+                    })}
                     activeOpacity={0.8}
                     className="flex-row items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 mb-2"
                   >
@@ -2344,13 +2863,13 @@ export const StoreHome = ({
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => {
+                    onPress={() => withRestrictionCheck('data_manage', () => {
                       setImportPayload(null);
                       setSelectedImportCategories(new Set());
                       setImportSourceName('');
                       setImportError('');
                       setShowDataImportModal(true);
-                    }}
+                    })}
                     activeOpacity={0.8}
                     className="flex-row items-center gap-3 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-3"
                   >
@@ -2363,24 +2882,6 @@ export const StoreHome = ({
                     </View>
                   </TouchableOpacity>
 
-                  {authState.status === 'login_code' && (
-                    <TouchableOpacity
-                      onPress={async () => {
-                        await exitLoginCode();
-                        onLogout();
-                      }}
-                      activeOpacity={0.8}
-                      className="flex-row items-center gap-3 rounded-xl border border-red-300 bg-white px-3 py-3 mt-2"
-                    >
-                      <View className="w-9 h-9 rounded-full bg-red-100 items-center justify-center">
-                        <Text className="text-red-700 font-bold">退</Text>
-                      </View>
-                      <View className="flex-1">
-                        <Text className="text-red-700 font-semibold">ログアウト</Text>
-                        <Text className="text-red-500 text-xs">ログインコード利用を終了してトップへ戻る</Text>
-                      </View>
-                    </TouchableOpacity>
-                  )}
                 </View>
               </>
             )}
@@ -2388,6 +2889,47 @@ export const StoreHome = ({
           </View>
         )}
       </ScrollView>
+
+      {/* Password Change Modal */}
+      <Modal
+        visible={showBranchNameModal}
+        onClose={() => {
+          setShowBranchNameModal(false);
+          resetBranchNameForm();
+        }}
+        title="店舗名変更"
+      >
+        <Input
+          label="店舗名"
+          value={branchNameInput}
+          onChangeText={(text) => {
+            setBranchNameInput(text);
+            setBranchNameError('');
+          }}
+          placeholder="例：クレープ"
+          error={branchNameError}
+        />
+        <View className="flex-row gap-3 mt-2">
+          <View className="flex-1">
+            <Button
+              title="キャンセル"
+              onPress={() => {
+                setShowBranchNameModal(false);
+                resetBranchNameForm();
+              }}
+              variant="secondary"
+            />
+          </View>
+          <View className="flex-1">
+            <Button
+              title="変更"
+              onPress={handleChangeBranchName}
+              loading={savingBranchName}
+              disabled={!branchNameInput.trim()}
+            />
+          </View>
+        </View>
+      </Modal>
 
       {/* Password Change Modal */}
       <Modal
@@ -2586,7 +3128,7 @@ export const StoreHome = ({
                   <View className="flex-1">
                     <Button
                       title="変更を保存"
-                      onPress={handleUpdateRecorder}
+                      onPress={() => withRestrictionCheck('recorder_manage', () => { void handleUpdateRecorder(); })}
                       loading={savingRecorderEdit}
                       disabled={!selectedRecorderEditName.trim()}
                     />
@@ -2594,7 +3136,7 @@ export const StoreHome = ({
                   <View className="flex-1">
                     <Button
                       title="登録者を削除"
-                      onPress={handleDeleteRecorder}
+                      onPress={() => withRestrictionCheck('recorder_manage', () => { void handleDeleteRecorder(); })}
                       loading={deletingRecorder}
                       variant="secondary"
                       disabled={!!selectedRecorderForLogs && isManagerRecorderName(selectedRecorderForLogs.recorder_name)}
@@ -2640,80 +3182,81 @@ export const StoreHome = ({
         }}
         title="データ削除"
       >
-        <View className="bg-red-50 p-3 rounded-lg mb-4">
-          <Text className="text-red-700 text-sm font-medium text-center">
-            この操作は取り消せません
-          </Text>
-          <Text className="text-red-600 text-xs text-center mt-1">
-            選択したデータが完全に削除されます
-          </Text>
-        </View>
+        <ScrollView style={{ maxHeight: 520 }} showsVerticalScrollIndicator={false}>
+          <View className="bg-red-50 p-3 rounded-lg mb-4">
+            <Text className="text-red-700 text-sm font-medium text-center">
+              この操作は取り消せません
+            </Text>
+            <Text className="text-red-600 text-xs text-center mt-1">
+              選択したデータが完全に削除されます
+            </Text>
+          </View>
 
-        {/* カテゴリ チェックリスト */}
-        <Text className="text-gray-700 text-sm font-semibold mb-2">削除するデータを選択</Text>
-        {DATA_CATEGORY_DEFS.map((item) => (
-          <TouchableOpacity
-            key={item.key}
-            onPress={() => toggleDeleteCategory(item.key)}
-            activeOpacity={0.7}
-            className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
-              selectedDeleteCategories.has(item.key)
-                ? 'border-red-400 bg-red-50'
-                : 'border-gray-200 bg-white'
-            }`}
-          >
-            <View
-              className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+          <Text className="text-gray-700 text-sm font-semibold mb-2">削除するデータを選択</Text>
+          {DELETE_DATA_CATEGORY_DEFS.map((item) => (
+            <TouchableOpacity
+              key={item.key}
+              onPress={() => toggleDeleteCategory(item.key)}
+              activeOpacity={0.7}
+              className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
                 selectedDeleteCategories.has(item.key)
-                  ? 'border-red-500 bg-red-500'
-                  : 'border-gray-300'
+                  ? 'border-red-400 bg-red-50'
+                  : 'border-gray-200 bg-white'
               }`}
             >
-              {selectedDeleteCategories.has(item.key) && (
-                <Text className="text-white text-xs font-bold">✓</Text>
-              )}
+              <View
+                className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+                  selectedDeleteCategories.has(item.key)
+                    ? 'border-red-500 bg-red-500'
+                    : 'border-gray-300'
+                }`}
+              >
+                {selectedDeleteCategories.has(item.key) && (
+                  <Text className="text-white text-xs font-bold">✓</Text>
+                )}
+              </View>
+              <View className="flex-1">
+                <Text className="text-gray-900 font-semibold">{item.label}</Text>
+                <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+
+          <Input
+            label="管理者パスワード"
+            value={adminPasswordInput}
+            onChangeText={(text) => {
+              setAdminPasswordInput(text);
+              setResetError('');
+            }}
+            placeholder="パスワードを入力（デフォルト: 0000）"
+            secureTextEntry
+            error={resetError}
+          />
+          <View className="flex-row gap-3 mt-2 pb-1">
+            <View className="flex-1">
+              <Button
+                title="キャンセル"
+                onPress={() => {
+                  setShowDataDeleteModal(false);
+                  setAdminPasswordInput('');
+                  setResetError('');
+                  setSelectedDeleteCategories(new Set());
+                }}
+                variant="secondary"
+              />
             </View>
             <View className="flex-1">
-              <Text className="text-gray-900 font-semibold">{item.label}</Text>
-              <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
+              <Button
+                title="削除する"
+                onPress={handleDataDelete}
+                variant="danger"
+                loading={resetting}
+                disabled={selectedDeleteCategories.size === 0 || !adminPasswordInput.trim()}
+              />
             </View>
-          </TouchableOpacity>
-        ))}
-
-        <Input
-          label="管理者パスワード"
-          value={adminPasswordInput}
-          onChangeText={(text) => {
-            setAdminPasswordInput(text);
-            setResetError('');
-          }}
-          placeholder="パスワードを入力（デフォルト: 0000）"
-          secureTextEntry
-          error={resetError}
-        />
-        <View className="flex-row gap-3 mt-2">
-          <View className="flex-1">
-            <Button
-              title="キャンセル"
-              onPress={() => {
-                setShowDataDeleteModal(false);
-                setAdminPasswordInput('');
-                setResetError('');
-                setSelectedDeleteCategories(new Set());
-              }}
-              variant="secondary"
-            />
           </View>
-          <View className="flex-1">
-            <Button
-              title="削除する"
-              onPress={handleDataDelete}
-              variant="danger"
-              loading={resetting}
-              disabled={selectedDeleteCategories.size === 0 || !adminPasswordInput.trim()}
-            />
-          </View>
-        </View>
+        </ScrollView>
       </Modal>
 
       {/* Pre Delete Export Confirm Modal */}
@@ -2774,66 +3317,68 @@ export const StoreHome = ({
         }}
         title="データエクスポート"
       >
-        <Text className="text-gray-700 text-sm font-semibold mb-2">出力するデータを選択</Text>
-        {DATA_CATEGORY_DEFS.map((item) => (
-          <TouchableOpacity
-            key={item.key}
-            onPress={() => toggleExportCategory(item.key)}
-            activeOpacity={0.7}
-            className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
-              selectedExportCategories.has(item.key)
-                ? 'border-emerald-400 bg-emerald-50'
-                : 'border-gray-200 bg-white'
-            }`}
-          >
-            <View
-              className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+        <ScrollView style={{ maxHeight: 520 }} showsVerticalScrollIndicator={false}>
+          <Text className="text-gray-700 text-sm font-semibold mb-2">出力するデータを選択</Text>
+          {DATA_CATEGORY_DEFS.map((item) => (
+            <TouchableOpacity
+              key={item.key}
+              onPress={() => toggleExportCategory(item.key)}
+              activeOpacity={0.7}
+              className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
                 selectedExportCategories.has(item.key)
-                  ? 'border-emerald-500 bg-emerald-500'
-                  : 'border-gray-300'
+                  ? 'border-emerald-400 bg-emerald-50'
+                  : 'border-gray-200 bg-white'
               }`}
             >
-              {selectedExportCategories.has(item.key) && (
-                <Text className="text-white text-xs font-bold">✓</Text>
-              )}
-            </View>
-            <View className="flex-1">
-              <Text className="text-gray-900 font-semibold">{item.label}</Text>
-              <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
-            </View>
-          </TouchableOpacity>
-        ))}
-        <View className="bg-blue-50 rounded-lg p-3 mb-2">
-          <Text className="text-blue-700 text-xs">
-            1ファイルの場合はCSVで出力、複数ファイルになる場合はCSVをZIPで出力します
-          </Text>
-        </View>
-        <View className="flex-row gap-3 mt-2">
-          <View className="flex-1">
-            <Button
-              title="キャンセル"
-              onPress={() => {
-                setShowDataExportModal(false);
-                setSelectedExportCategories(new Set());
-              }}
-              variant="secondary"
-            />
+              <View
+                className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+                  selectedExportCategories.has(item.key)
+                    ? 'border-emerald-500 bg-emerald-500'
+                    : 'border-gray-300'
+                }`}
+              >
+                {selectedExportCategories.has(item.key) && (
+                  <Text className="text-white text-xs font-bold">✓</Text>
+                )}
+              </View>
+              <View className="flex-1">
+                <Text className="text-gray-900 font-semibold">{item.label}</Text>
+                <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+          <View className="bg-blue-50 rounded-lg p-3 mb-2">
+            <Text className="text-blue-700 text-xs">
+              1ファイルの場合はCSVで出力、複数ファイルになる場合はCSVをZIPで出力します
+            </Text>
           </View>
-          <View className="flex-1">
-            <Button
-              title="エクスポート"
-              onPress={async () => {
-                const ok = await exportData(selectedExportCategories);
-                if (ok) {
+          <View className="flex-row gap-3 mt-2 pb-1">
+            <View className="flex-1">
+              <Button
+                title="キャンセル"
+                onPress={() => {
                   setShowDataExportModal(false);
                   setSelectedExportCategories(new Set());
-                }
-              }}
-              loading={exportingData}
-              disabled={selectedExportCategories.size === 0}
-            />
+                }}
+                variant="secondary"
+              />
+            </View>
+            <View className="flex-1">
+              <Button
+                title="エクスポート"
+                onPress={async () => {
+                  const ok = await exportData(selectedExportCategories);
+                  if (ok) {
+                    setShowDataExportModal(false);
+                    setSelectedExportCategories(new Set());
+                  }
+                }}
+                loading={exportingData}
+                disabled={selectedExportCategories.size === 0}
+              />
+            </View>
           </View>
-        </View>
+        </ScrollView>
       </Modal>
 
       {/* Data Import Modal */}
@@ -2848,76 +3393,78 @@ export const StoreHome = ({
         }}
         title="データインポート"
       >
-        <Button title="バックアップファイルを選択" onPress={pickImportFile} variant="secondary" />
-        {importSourceName ? (
-          <Text className="text-gray-600 text-xs mt-2">選択ファイル: {importSourceName}</Text>
-        ) : (
-          <Text className="text-gray-400 text-xs mt-2">CSV または CSV入りZIP を選択してください</Text>
-        )}
+        <ScrollView style={{ maxHeight: 520 }} showsVerticalScrollIndicator={false}>
+          <Button title="バックアップファイルを選択" onPress={pickImportFile} variant="secondary" />
+          {importSourceName ? (
+            <Text className="text-gray-600 text-xs mt-2">選択ファイル: {importSourceName}</Text>
+          ) : (
+            <Text className="text-gray-400 text-xs mt-2">CSV または CSV入りZIP を選択してください</Text>
+          )}
 
-        {importPayload && (
-          <>
-            <Text className="text-gray-700 text-sm font-semibold mt-4 mb-2">取り込むデータを選択</Text>
-            {DATA_CATEGORY_DEFS.filter((item) => importPayload.data[item.key] != null).map((item) => (
-              <TouchableOpacity
-                key={item.key}
-                onPress={() => toggleImportCategory(item.key)}
-                activeOpacity={0.7}
-                className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
-                  selectedImportCategories.has(item.key)
-                    ? 'border-cyan-400 bg-cyan-50'
-                    : 'border-gray-200 bg-white'
-                }`}
-              >
-                <View
-                  className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+          {importPayload && (
+            <>
+              <Text className="text-gray-700 text-sm font-semibold mt-4 mb-2">取り込むデータを選択</Text>
+              {DATA_CATEGORY_DEFS.filter((item) => importPayload.data[item.key] != null).map((item) => (
+                <TouchableOpacity
+                  key={item.key}
+                  onPress={() => toggleImportCategory(item.key)}
+                  activeOpacity={0.7}
+                  className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
                     selectedImportCategories.has(item.key)
-                      ? 'border-cyan-500 bg-cyan-500'
-                      : 'border-gray-300'
+                      ? 'border-cyan-400 bg-cyan-50'
+                      : 'border-gray-200 bg-white'
                   }`}
                 >
-                  {selectedImportCategories.has(item.key) && (
-                    <Text className="text-white text-xs font-bold">✓</Text>
-                  )}
-                </View>
-                <View className="flex-1">
-                  <Text className="text-gray-900 font-semibold">{item.label}</Text>
-                  <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </>
-        )}
+                  <View
+                    className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+                      selectedImportCategories.has(item.key)
+                        ? 'border-cyan-500 bg-cyan-500'
+                        : 'border-gray-300'
+                    }`}
+                  >
+                    {selectedImportCategories.has(item.key) && (
+                      <Text className="text-white text-xs font-bold">✓</Text>
+                    )}
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-gray-900 font-semibold">{item.label}</Text>
+                    <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </>
+          )}
 
-        {importError ? (
-          <View className="bg-amber-50 p-3 rounded-lg mt-2">
-            <Text className="text-amber-800 text-xs">{importError}</Text>
-          </View>
-        ) : null}
+          {importError ? (
+            <View className="bg-amber-50 p-3 rounded-lg mt-2">
+              <Text className="text-amber-800 text-xs">{importError}</Text>
+            </View>
+          ) : null}
 
-        <View className="flex-row gap-3 mt-4">
-          <View className="flex-1">
-            <Button
-              title="キャンセル"
-              onPress={() => {
-                setShowDataImportModal(false);
-                setImportPayload(null);
-                setSelectedImportCategories(new Set());
-                setImportSourceName('');
-                setImportError('');
-              }}
-              variant="secondary"
-            />
+          <View className="flex-row gap-3 mt-4 pb-1">
+            <View className="flex-1">
+              <Button
+                title="キャンセル"
+                onPress={() => {
+                  setShowDataImportModal(false);
+                  setImportPayload(null);
+                  setSelectedImportCategories(new Set());
+                  setImportSourceName('');
+                  setImportError('');
+                }}
+                variant="secondary"
+              />
+            </View>
+            <View className="flex-1">
+              <Button
+                title="インポート"
+                onPress={importData}
+                loading={importingData}
+                disabled={!importPayload || selectedImportCategories.size === 0}
+              />
+            </View>
           </View>
-          <View className="flex-1">
-            <Button
-              title="インポート"
-              onPress={importData}
-              loading={importingData}
-              disabled={!importPayload || selectedImportCategories.size === 0}
-            />
-          </View>
-        </View>
+        </ScrollView>
       </Modal>
 
       {/* Restrictions Management Modal */}
@@ -2936,7 +3483,6 @@ export const StoreHome = ({
           {([
             { key: 'menu_add' as const, label: 'メニューの追加', desc: '新しいメニュー項目の登録' },
             { key: 'menu_edit' as const, label: 'メニューの編集', desc: '既存メニューの価格・名前変更' },
-            { key: 'menu_delete' as const, label: 'メニューの削除', desc: 'メニュー項目の削除' },
           ]).map((item) => (
             <TouchableOpacity
               key={item.key}
@@ -2966,6 +3512,60 @@ export const StoreHome = ({
             { key: 'sales_cancel' as const, label: '売上の取消（レジ返品）', desc: '販売済み注文のキャンセル' },
             { key: 'sales_history' as const, label: '売上履歴の閲覧', desc: '販売履歴画面へのアクセス' },
             { key: 'sales_reset' as const, label: '売上データの全削除', desc: '全売上データの削除' },
+          ]).map((item) => (
+            <TouchableOpacity
+              key={item.key}
+              onPress={() => toggleRestriction(item.key)}
+              activeOpacity={0.7}
+              className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
+                restrictions[item.key] ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-white'
+              }`}
+            >
+              <View
+                className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+                  restrictions[item.key] ? 'border-red-500 bg-red-500' : 'border-gray-300'
+                }`}
+              >
+                {restrictions[item.key] && <Text className="text-white text-xs font-bold">✓</Text>}
+              </View>
+              <View className="flex-1">
+                <Text className="text-gray-900 font-semibold">{item.label}</Text>
+                <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+
+          {/* Recorder Section */}
+          <Text className="font-bold text-gray-700 mb-2 mt-3">登録者・端末</Text>
+          {([
+            { key: 'recorder_manage' as const, label: '登録者設定の変更', desc: '登録方式・登録者追加/編集/削除・履歴確認' },
+          ]).map((item) => (
+            <TouchableOpacity
+              key={item.key}
+              onPress={() => toggleRestriction(item.key)}
+              activeOpacity={0.7}
+              className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
+                restrictions[item.key] ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-white'
+              }`}
+            >
+              <View
+                className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+                  restrictions[item.key] ? 'border-red-500 bg-red-500' : 'border-gray-300'
+                }`}
+              >
+                {restrictions[item.key] && <Text className="text-white text-xs font-bold">✓</Text>}
+              </View>
+              <View className="flex-1">
+                <Text className="text-gray-900 font-semibold">{item.label}</Text>
+                <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+
+          {/* Data Section */}
+          <Text className="font-bold text-gray-700 mb-2 mt-3">データ管理</Text>
+          {([
+            { key: 'data_manage' as const, label: 'データ管理操作', desc: 'データ削除・エクスポート・インポート' },
           ]).map((item) => (
             <TouchableOpacity
               key={item.key}

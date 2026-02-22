@@ -266,6 +266,7 @@ export const getStoreSettings = async (): Promise<StoreSettings> => {
     return {
       payment_mode: parsed.payment_mode ?? 'cashless',
       payment_methods: { ...DEFAULT_PAYMENT_METHODS, ...parsed.payment_methods },
+      cashless_label: String(parsed.cashless_label ?? 'PayPay').trim() || 'PayPay',
       order_board_enabled: parsed.order_board_enabled ?? false,
       sub_screen_mode: parsed.sub_screen_mode ?? false,
       sync_enabled: syncEnabled,
@@ -275,6 +276,7 @@ export const getStoreSettings = async (): Promise<StoreSettings> => {
   return {
     payment_mode: 'cashless',
     payment_methods: DEFAULT_PAYMENT_METHODS,
+    cashless_label: 'PayPay',
     order_board_enabled: false,
     sub_screen_mode: false,
     sync_enabled: true,
@@ -474,11 +476,13 @@ export const clearAllPendingTransactions = async (branchId: string): Promise<voi
 const DEFAULT_RESTRICTIONS: RestrictionSettings = {
   menu_add: false,
   menu_edit: false,
-  menu_delete: true,
+  menu_delete: false,
   sales_cancel: false,
   sales_history: false,
   sales_reset: true,
   payment_change: false,
+  recorder_manage: false,
+  data_manage: false,
   settings_access: false,
 };
 
@@ -508,6 +512,8 @@ export interface KioskModeData {
   branchCode: string;
   /** 端末名 (タブレットモード時のみ) */
   deviceName: string;
+  /** デモ導線から開始したキオスクかどうか（リロード後の戻る導線復元用） */
+  demoMode?: boolean;
 }
 
 /** キオスクモードを有効にして保存する */

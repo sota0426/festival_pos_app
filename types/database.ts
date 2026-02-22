@@ -154,6 +154,7 @@ export interface PaymentMethodSettings {
 export interface StoreSettings {
   payment_mode: PaymentMode;
   payment_methods: PaymentMethodSettings;
+  cashless_label: string;
   order_board_enabled: boolean;
   sub_screen_mode: boolean;
   sync_enabled: boolean;
@@ -168,6 +169,8 @@ export interface RestrictionSettings {
   sales_history: boolean;    // 売上履歴閲覧
   sales_reset: boolean;      // 売上全削除
   payment_change: boolean;   // 支払い方法変更
+  recorder_manage: boolean;  // 登録者設定の変更
+  data_manage: boolean;      // データ削除・入出力
   settings_access: boolean;  // 設定タブアクセス
 }
 

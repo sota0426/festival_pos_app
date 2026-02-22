@@ -1,9 +1,17 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as WebBrowser from 'expo-web-browser';
+import { makeRedirectUri } from 'expo-auth-session';
+import * as Linking from 'expo-linking';
+import Constants from 'expo-constants';
 import { supabase, hasSupabaseEnvConfigured } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
 import type { Profile, Subscription, Branch } from '../types/database';
+
+if (Platform.OS !== 'web' && typeof WebBrowser.maybeCompleteAuthSession === 'function') {
+  WebBrowser.maybeCompleteAuthSession();
+}
 
 export type AuthState =
   | { status: 'loading' }
@@ -19,8 +27,15 @@ export type AuthState =
 
 interface AuthContextValue {
   authState: AuthState;
+  hasDemoReturnTarget: boolean;
   signInWithGoogle: () => Promise<void>;
   signInWithApple: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (
+    email: string,
+    password: string,
+    displayName: string
+  ) => Promise<{ needsEmailConfirmation: boolean; alreadyRegistered: boolean }>;
   signOut: () => Promise<void>;
   enterDemo: () => void;
   exitDemo: () => void;
@@ -46,6 +61,35 @@ export const useAuth = (): AuthContextValue => {
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [authState, setAuthState] = useState<AuthState>({ status: 'loading' });
+  const [preDemoAuthState, setPreDemoAuthState] = useState<AuthState | null>(null);
+
+  const getOAuthRedirectUri = useCallback((): string => {
+    if (Platform.OS === 'web') {
+      return typeof window !== 'undefined' ? window.location.origin : '';
+    }
+    // Expo Go ではカスタムschemeより、現在のhostを使ったexp:// URLの方が復帰が安定する
+    if (Constants.appOwnership === 'expo') {
+      return Linking.createURL('auth/callback');
+    }
+    return makeRedirectUri({
+      scheme: 'festival-pos',
+      path: 'auth/callback',
+    });
+  }, []);
+
+  const extractQueryParam = useCallback((url: string, key: string): string | null => {
+    const pattern = new RegExp(`[?&]${key}=([^&#]*)`);
+    const matched = pattern.exec(url);
+    return matched ? decodeURIComponent(matched[1]) : null;
+  }, []);
+
+  const extractHashParam = useCallback((hash: string, key: string): string | null => {
+    const normalized = hash.startsWith('#') ? hash.slice(1) : hash;
+    if (!normalized) return null;
+    const params = new URLSearchParams(normalized);
+    const value = params.get(key);
+    return value ? decodeURIComponent(value) : null;
+  }, []);
 
   const saveLoginCodeSession = useCallback(async (branch: Branch, loginCode: string) => {
     const payload: LoginCodeSession = { branch, loginCode };
@@ -86,7 +130,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const profileFallback: Profile = {
       id: user.id,
       email: user.email ?? '',
-      display_name: user.user_metadata?.full_name ?? user.email ?? '',
+      display_name:
+        user.user_metadata?.display_name ??
+        user.user_metadata?.full_name ??
+        user.email ??
+        '',
       avatar_url: user.user_metadata?.avatar_url ?? null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -251,6 +299,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthState({ status: 'unauthenticated' });
     };
 
+    const tryRestoreSessionFromWebUrl = async (): Promise<User | null> => {
+      if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+      const href = window.location.href;
+      const code = extractQueryParam(href, 'code');
+      const errorCode = extractQueryParam(href, 'error_code') ?? extractHashParam(window.location.hash, 'error_code');
+      const errorDescription =
+        extractQueryParam(href, 'error_description') ?? extractHashParam(window.location.hash, 'error_description');
+
+      if (errorCode) {
+        console.error('[Auth] auth callback error:', { errorCode, errorDescription });
+      }
+
+      if (code) {
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          console.error('[Auth] exchangeCodeForSession failed:', error);
+          return null;
+        }
+        if (window.location.search.includes('code=')) {
+          window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}`);
+        }
+        return data.session?.user ?? null;
+      }
+
+      const accessToken = extractHashParam(window.location.hash, 'access_token');
+      const refreshToken = extractHashParam(window.location.hash, 'refresh_token');
+      if (!accessToken || !refreshToken) return null;
+
+      const { data, error } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (error) {
+        console.error('[Auth] setSession from URL hash failed:', error);
+        return null;
+      }
+      if (window.location.hash.includes('access_token=')) {
+        window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}`);
+      }
+      return data.user ?? data.session?.user ?? null;
+    };
+
     if (!hasSupabaseEnvConfigured()) {
       void fallbackToLoginCodeOrUnauthenticated();
       return;
@@ -259,9 +349,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user) {
         await fetchProfileAndSubscription(session.user);
-      } else {
-        await fallbackToLoginCodeOrUnauthenticated();
+        return;
       }
+      const exchangedUser = await tryRestoreSessionFromWebUrl();
+      if (exchangedUser) {
+        await fetchProfileAndSubscription(exchangedUser);
+        return;
+      }
+      await fallbackToLoginCodeOrUnauthenticated();
     });
 
     const {
@@ -277,30 +372,83 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       authListener.unsubscribe();
     };
-  }, [fetchProfileAndSubscription, restoreLoginCodeSession]);
+  }, [extractHashParam, extractQueryParam, fetchProfileAndSubscription, restoreLoginCodeSession]);
+
+  const signInWithProvider = useCallback(async (provider: 'google' | 'apple') => {
+    const redirectTo = getOAuthRedirectUri();
+    console.log('[Auth] OAuth redirectTo:', redirectTo);
+
+    if (Platform.OS === 'web') {
+      await supabase.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo },
+      });
+      return;
+    }
+
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo, skipBrowserRedirect: true },
+    });
+    if (error) throw error;
+    if (!data?.url) throw new Error('OAuth URLの取得に失敗しました');
+
+    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+    if (result.type !== 'success' || !result.url) {
+      throw new Error('OAuth認証が完了しませんでした');
+    }
+
+    const code = extractQueryParam(result.url, 'code');
+    if (!code) {
+      throw new Error('認証コードを取得できませんでした');
+    }
+
+    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+    if (exchangeError) throw exchangeError;
+  }, [extractQueryParam, getOAuthRedirectUri]);
 
   const signInWithGoogle = useCallback(async () => {
-    const redirectTo =
-      Platform.OS === 'web'
-        ? window.location.origin
-        : 'festival-pos://auth/callback';
-
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo },
-    });
-  }, []);
+    await signInWithProvider('google');
+  }, [signInWithProvider]);
 
   const signInWithApple = useCallback(async () => {
-    const redirectTo =
-      Platform.OS === 'web'
-        ? window.location.origin
-        : 'festival-pos://auth/callback';
+    await signInWithProvider('apple');
+  }, [signInWithProvider]);
 
-    await supabase.auth.signInWithOAuth({
-      provider: 'apple',
-      options: { redirectTo },
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    const { error } = await supabase.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
     });
+    if (error) throw error;
+  }, []);
+
+  const signUpWithEmail = useCallback(async (email: string, password: string, displayName: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedDisplayName = displayName.trim();
+    const emailRedirectTo =
+      Platform.OS === 'web' && typeof window !== 'undefined'
+        ? window.location.origin
+        : undefined;
+    const { data, error } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password,
+      options: {
+        ...(emailRedirectTo ? { emailRedirectTo } : {}),
+        data: {
+          display_name: normalizedDisplayName,
+          full_name: normalizedDisplayName,
+        },
+      },
+    });
+    if (error) throw error;
+    const identities = (data.user as any)?.identities;
+    const alreadyRegistered = Array.isArray(identities) && identities.length === 0;
+    return {
+      needsEmailConfirmation: !data.session,
+      alreadyRegistered,
+    };
   }, []);
 
   const signOut = useCallback(async () => {
@@ -310,12 +458,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [clearLoginCodeSession]);
 
   const enterDemo = useCallback(() => {
+    setPreDemoAuthState((prev) => {
+      if (prev) return prev;
+      if (authState.status !== 'demo' && authState.status !== 'loading') {
+        return authState;
+      }
+      return prev;
+    });
     setAuthState({ status: 'demo' });
-  }, []);
+  }, [authState]);
 
   const exitDemo = useCallback(() => {
-    setAuthState({ status: 'unauthenticated' });
-  }, []);
+    setAuthState(preDemoAuthState ?? { status: 'unauthenticated' });
+    setPreDemoAuthState(null);
+  }, [preDemoAuthState]);
 
   const enterWithLoginCode = useCallback((branch: Branch, code: string) => {
     const normalized = code.toUpperCase().trim();
@@ -368,8 +524,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         authState,
+        hasDemoReturnTarget: preDemoAuthState !== null,
         signInWithGoogle,
         signInWithApple,
+        signInWithEmail,
+        signUpWithEmail,
         signOut,
         enterDemo,
         exitDemo,

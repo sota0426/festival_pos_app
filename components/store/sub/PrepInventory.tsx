@@ -9,6 +9,7 @@ import { getPrepIngredients, savePrepIngredients } from '../../../lib/storage';
 import { getSyncEnabled } from '../../../lib/syncMode';
 import type { Branch, PrepIngredient } from '../../../types/database';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useSubscription } from '../../../contexts/SubscriptionContext';
 import { DEMO_PREP_INGREDIENTS, resolveDemoBranchId } from '../../../data/demoData';
 
 interface PrepInventoryProps {
@@ -18,7 +19,9 @@ interface PrepInventoryProps {
 
 export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
   const { authState } = useAuth();
+  const { isFreePlan } = useSubscription();
   const isDemo = authState.status === 'demo';
+  const isFreeAuthenticatedPlan = authState.status === 'authenticated' && isFreePlan;
   const demoBranchId = resolveDemoBranchId(branch);
   const canSyncToSupabase = isSupabaseConfigured() && getSyncEnabled() && !isDemo;
 
@@ -292,7 +295,7 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
   return (
     <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
       <Header
-        title="調理の下準備"
+        title="在庫確認"
         subtitle={`${branch.branch_code} - ${branch.branch_name}`}
         showBack
         onBack={onBack}
@@ -307,10 +310,21 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
       ) : (
         <ScrollView className="flex-1 p-4">
           <Card className="mb-3 bg-blue-50 border border-blue-200 p-3">
-            <Text className="text-blue-800 font-semibold text-sm">材料在庫は店舗スタッフ間で共有されます</Text>
-            <Text className="text-blue-600 text-xs mt-1">
-              材料を登録して在庫を更新すると、同じ店舗の別端末でも同じ在庫を確認できます。
-            </Text>
+            {isFreeAuthenticatedPlan ? (
+              <>
+                <Text className="text-blue-800 font-semibold text-sm">有料プランで端末間共有が使えます</Text>
+                <Text className="text-blue-600 text-xs mt-1">
+                  有料プランにすると、材料を登録・更新した在庫を同じ店舗の別端末でも確認できます。
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text className="text-blue-800 font-semibold text-sm">材料在庫は店舗スタッフ間で共有されます</Text>
+                <Text className="text-blue-600 text-xs mt-1">
+                  材料を登録して在庫を更新すると、同じ店舗の別端末でも同じ在庫を確認できます。
+                </Text>
+              </>
+            )}
           </Card>
 
           {sortedIngredients.map((item) => (

@@ -18,6 +18,8 @@ import { getKioskModeSync, saveKioskMode, clearKioskMode } from './lib/storage';
 import { HQHome } from 'components/hq/HQHome';
 
 import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
+import { TaskChecklist } from 'components/store/sub/TaskChecklist';
+import { ShiftHandover } from 'components/store/sub/ShiftHandover';
 import { Home } from 'components/Home';
 import { BudgetExpenseRecorder } from 'components/store/budget/BudgetExpenseRecorder';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
@@ -57,6 +59,8 @@ type Screen =
   | 'store_counter'
   | 'store_order_board'
   | 'store_prep'
+  | 'store_checklist'
+  | 'store_shift_handover'
   | 'store_budget'
   | 'store_budget_expense'
   | 'store_budget_breakeven';
@@ -66,10 +70,11 @@ interface CustomerOrderParams {
   branchCode: string;
   tableNumber: string | null;
   deviceName: string | null;
+  fromDemoKiosk?: boolean;
 }
 
 function AppContent() {
-  const { authState, enterDemo, refreshSubscription } = useAuth();
+  const { authState, enterDemo, exitDemo, hasDemoReturnTarget, refreshSubscription } = useAuth();
 
   // 客向けオーダーURL (?branch=S001&table=3) またはキオスクモード復元を
   // 初期レンダリング前に検出する。useState のイニシャライザで行うことで画面フラッシュを防ぐ。
@@ -83,6 +88,7 @@ function AppContent() {
           branchCode: kiosk.branchCode,
           tableNumber: null,
           deviceName: kiosk.deviceName,
+          fromDemoKiosk: !!kiosk.demoMode,
         };
       }
       // 優先2: QRコードURLパラメータ
@@ -93,6 +99,7 @@ function AppContent() {
         branchCode,
         tableNumber: params.get('table'),
         deviceName: null,
+        fromDemoKiosk: false,
       };
     } catch {
       return null;
@@ -116,7 +123,17 @@ function AppContent() {
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [hqBranchInfoReturnScreen, setHqBranchInfoReturnScreen] = useState<'hq_home' | 'hq_dashboard'>('hq_home');
   const [hqBranchInfoFocusBranchId, setHqBranchInfoFocusBranchId] = useState<string | null>(null);
+  const [myStoresReturnScreen, setMyStoresReturnScreen] = useState<'account_dashboard' | 'hq_home'>('account_dashboard');
   const [checkoutProcessing, setCheckoutProcessing] = useState(false);
+  const [demoReturnScreen, setDemoReturnScreen] = useState<Screen | null>(null);
+
+  const handleNavigateToAuthEntry = useCallback(() => {
+    if (authState.status === 'authenticated') {
+      setCurrentScreen('account_dashboard');
+      return;
+    }
+    setCurrentScreen('auth_signin');
+  }, [authState.status]);
 
   // Initialize sync
   const {
@@ -173,17 +190,27 @@ function AppContent() {
   }, [resolveBranchForStore]);
 
   const handleBranchLogout = useCallback(() => {
-    setCurrentBranch(null);
     if (authState.status === 'authenticated') {
+      setCurrentBranch(null);
       setCurrentScreen('account_dashboard');
     } else if (authState.status === 'demo') {
-      setCurrentScreen('landing');
+      if (hasDemoReturnTarget && demoReturnScreen) {
+        exitDemo();
+        setCurrentBranch(null);
+        // デモ中の「ログイン画面に戻る」は、安全に復帰できる管理者トップへ戻す
+        setCurrentScreen('account_dashboard');
+      } else {
+        setCurrentBranch(null);
+        setCurrentScreen('landing');
+      }
     } else if (authState.status === 'login_code') {
+      setCurrentBranch(null);
       setCurrentScreen('login_code_loading');
     } else {
+      setCurrentBranch(null);
       setCurrentScreen('landing');
     }
-  }, [authState.status]);
+  }, [authState.status, demoReturnScreen, exitDemo, hasDemoReturnTarget]);
 
   // render中のsetStateを避け、遷移はeffectで行う
   useEffect(() => {
@@ -238,6 +265,7 @@ function AppContent() {
           await new Promise(r => setTimeout(r, baseDelay * Math.pow(2, attempt)));
         }
       }
+      setMyStoresReturnScreen('account_dashboard');
       setCurrentScreen('my_stores');
     } finally {
       setCheckoutProcessing(false);
@@ -286,7 +314,7 @@ function AppContent() {
           return (
             <Landing
               onNavigateToDemo={() => { enterDemo(); setCurrentScreen('home'); }}
-              onNavigateToAuth={() => setCurrentScreen('auth_signin')}
+              onNavigateToAuth={handleNavigateToAuthEntry}
               onNavigateToLoginCode={() => setCurrentScreen('login_code_entry')}
             />
           );
@@ -297,17 +325,63 @@ function AppContent() {
           //   - tableNumber がある → QRモード → onBack を渡さない (そもそも戻り先がない)
           //   - 両方 null → 念のため onBack なし
           const isKioskMode = !!customerOrderParams.deviceName || !customerOrderParams.tableNumber;
+          const handleExitKioskToAdmin = async () => {
+            await clearKioskMode();
+            setCustomerOrderParams(null);
+
+            if (currentBranch) {
+              setCurrentScreen('store_home');
+              return;
+            }
+
+            if (authState.status === 'authenticated') {
+              setCurrentScreen('account_dashboard');
+              return;
+            }
+
+            if (authState.status === 'login_code') {
+              setCurrentScreen('login_code_loading');
+              return;
+            }
+
+            if (authState.status === 'demo') {
+              setCurrentScreen('home');
+              return;
+            }
+
+            setCurrentScreen('landing');
+          };
           return (
             <CustomerOrderScreen
               branchCode={customerOrderParams.branchCode}
               tableNumber={customerOrderParams.tableNumber}
               deviceName={customerOrderParams.deviceName}
               isKioskMode={isKioskMode}
-              onExitKiosk={async () => {
-                // キオスクモード解除: localStorage をクリアして管理画面へ
-                await clearKioskMode();
+              onBackBeforeKiosk={() => {
+                void clearKioskMode();
                 setCustomerOrderParams(null);
                 setCurrentScreen('store_home');
+              }}
+              onReturnToLoggedInFromDemo={
+                (authState.status === 'demo' && hasDemoReturnTarget) ||
+                (!!customerOrderParams?.fromDemoKiosk && authState.status === 'authenticated')
+                  ? () => {
+                      void clearKioskMode();
+                      setCustomerOrderParams(null);
+                      if (authState.status === 'demo') {
+                        exitDemo();
+                      }
+                      setCurrentScreen('account_dashboard');
+                    }
+                  : undefined
+              }
+              isDemoMode={
+                authState.status === 'demo' ||
+                !!customerOrderParams?.fromDemoKiosk
+              }
+              onExitKiosk={async () => {
+                // キオスクモード解除後、状態に応じて安全な画面へ戻す
+                await handleExitKioskToAdmin();
               }}
             />
           );
@@ -318,10 +392,11 @@ function AppContent() {
         return (
           <Landing
             onNavigateToDemo={() => {
+              setDemoReturnScreen(null);
               enterDemo();
               setCurrentScreen('home');
             }}
-            onNavigateToAuth={() => setCurrentScreen('auth_signin')}
+            onNavigateToAuth={handleNavigateToAuthEntry}
             onNavigateToLoginCode={() => setCurrentScreen('login_code_entry')}
           />
         );
@@ -368,7 +443,7 @@ function AppContent() {
       case 'my_stores':
         return (
           <MyStores
-            onBack={() => setCurrentScreen('account_dashboard')}
+            onBack={() => setCurrentScreen(myStoresReturnScreen)}
             onEnterStore={handleBranchLogin}
           />
         );
@@ -381,6 +456,14 @@ function AppContent() {
             <Home
               onNavigateToStore={() => setCurrentScreen('store_login')}
               onNavigateToHQ={() => setCurrentScreen('hq_login')}
+              onReturnToLoggedIn={
+                authState.status === 'demo' && hasDemoReturnTarget && demoReturnScreen
+                  ? () => {
+                      exitDemo();
+                      setCurrentScreen(demoReturnScreen);
+                    }
+                  : undefined
+              }
             />
           </>
         );
@@ -416,7 +499,10 @@ function AppContent() {
                 setHqBranchInfoFocusBranchId(null);
                 setCurrentScreen('hq_branch_info');
               }}
-              onNavigateMyStores={() => setCurrentScreen('my_stores')}
+              onNavigateMyStores={() => {
+                setMyStoresReturnScreen('hq_home');
+                setCurrentScreen('my_stores');
+              }}
               onNavigatePresentation={() => setCurrentScreen('hq_presentation')}
               onLogout={() => {
                 if (authState.status === 'authenticated') {
@@ -501,6 +587,8 @@ function AppContent() {
               onNavigateToCounter={() => setCurrentScreen('store_counter')}
               onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
               onNavigateToPrep={() => setCurrentScreen('store_prep')}
+              onNavigateToChecklist={() => setCurrentScreen('store_checklist')}
+              onNavigateToShiftHandover={() => setCurrentScreen('store_shift_handover')}
               onNavigateToBudget={() => setCurrentScreen('store_budget')}
               onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
               onNavigateToBudgetBreakeven={() => setCurrentScreen('store_budget_breakeven')}
@@ -511,11 +599,18 @@ function AppContent() {
                   branchCode: currentBranch.branch_code,
                   tableNumber: null,
                   deviceName: null, // CustomerOrderScreen 内で端末名入力後に確定
+                  fromDemoKiosk: authState.status === 'demo',
                 };
                 setCustomerOrderParams(params);
                 setCurrentScreen('customer_order');
                 // ※ キオスクモードの localStorage 保存は CustomerOrderScreen 側で
                 //   端末名確定後に行う (deviceName が確定してから保存したいため)
+              }}
+              onNavigateToPricing={() => setCurrentScreen('pricing')}
+              onNavigateToDemoHome={() => {
+                setDemoReturnScreen('store_home');
+                enterDemo();
+                setCurrentScreen('home');
               }}
               onBranchUpdated={(updatedBranch) => setCurrentBranch(updatedBranch)}
               onLogout={handleBranchLogout}
@@ -615,6 +710,38 @@ function AppContent() {
             <DemoBanner />
             <SyncStatusBanner branchId={currentBranch.id} />
             <PrepInventory
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+            />
+          </>
+        );
+
+      case 'store_checklist':
+        if (!currentBranch) {
+          setCurrentScreen('store_login');
+          return null;
+        }
+        return (
+          <>
+            <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
+            <TaskChecklist
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+            />
+          </>
+        );
+
+      case 'store_shift_handover':
+        if (!currentBranch) {
+          setCurrentScreen('store_login');
+          return null;
+        }
+        return (
+          <>
+            <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} />
+            <ShiftHandover
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
             />

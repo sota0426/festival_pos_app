@@ -9,6 +9,44 @@ import type {
   PrepIngredient,
 } from '../types/database';
 
+export interface DemoTaskChecklistItem {
+  id: string;
+  branch_id: string;
+  title: string;
+  is_done: boolean;
+  done_by: string | null;
+  note: string;
+  category: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DemoShiftEntry {
+  id: string;
+  branch_id: string;
+  shift_name: string;
+  start_time: string;
+  end_time: string;
+  members: string;
+  note: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DemoHandoverNote {
+  id: string;
+  branch_id: string;
+  from_shift: string;
+  to_shift: string;
+  content: string;
+  created_by: string;
+  is_resolved: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 // ============================================================
 // デモ用店舗
 // ============================================================
@@ -308,5 +346,70 @@ export const DEMO_PREP_INGREDIENTS: Record<string, PrepIngredient[]> = {
     { id: 'prep-4-1', branch_id: 'demo-4', ingredient_name: 'クレープ生地', unit: '枚', current_stock: 52, note: '常に20枚以上キープ', created_at: now, updated_at: now },
     { id: 'prep-4-2', branch_id: 'demo-4', ingredient_name: '生クリーム', unit: '本', current_stock: 7, note: '冷蔵庫右側', created_at: now, updated_at: now },
     { id: 'prep-4-3', branch_id: 'demo-4', ingredient_name: 'いちご', unit: 'パック', current_stock: 4, note: '傷みやすいので先出し', created_at: now, updated_at: now },
+  ],
+};
+
+// ============================================================
+// デモ用 仕事チェックリスト
+// ============================================================
+export const DEMO_TASK_CHECKLISTS: Record<string, DemoTaskChecklistItem[]> = {
+  'demo-1': [
+    { id: 'demo-task-1-1', branch_id: 'demo-1', title: '開店前に鉄板の温度確認', is_done: true, done_by: '加藤', note: '中火で安定', category: '準備', sort_order: 1, created_at: now, updated_at: now },
+    { id: 'demo-task-1-2', branch_id: 'demo-1', title: 'ソース・青のり補充', is_done: false, done_by: null, note: '12:30までに', category: '調理', sort_order: 2, created_at: now, updated_at: now },
+    { id: 'demo-task-1-3', branch_id: 'demo-1', title: '券売列の整列案内', is_done: false, done_by: null, note: '混雑時のみ', category: '接客', sort_order: 3, created_at: now, updated_at: now },
+    { id: 'demo-task-1-4', branch_id: 'demo-1', title: '閉店後の売上回収確認', is_done: false, done_by: null, note: '本部提出前にダブルチェック', category: '片付け', sort_order: 4, created_at: now, updated_at: now },
+  ],
+  'demo-2': [
+    { id: 'demo-task-2-1', branch_id: 'demo-2', title: 'たこ焼き器の通電確認', is_done: true, done_by: '田中', note: '', category: '準備', sort_order: 1, created_at: now, updated_at: now },
+    { id: 'demo-task-2-2', branch_id: 'demo-2', title: 'ねぎマヨ容器の補充', is_done: false, done_by: null, note: '残り2本で追加', category: '調理', sort_order: 2, created_at: now, updated_at: now },
+    { id: 'demo-task-2-3', branch_id: 'demo-2', title: '声かけ当番の交代', is_done: false, done_by: null, note: '30分ごと', category: '接客', sort_order: 3, created_at: now, updated_at: now },
+  ],
+  'demo-3': [
+    { id: 'demo-task-3-1', branch_id: 'demo-3', title: '串の本数チェック', is_done: true, done_by: '山田', note: 'もも串残り70本', category: '準備', sort_order: 1, created_at: now, updated_at: now },
+    { id: 'demo-task-3-2', branch_id: 'demo-3', title: '焼き台まわりの清掃', is_done: false, done_by: null, note: '油はね注意', category: '片付け', sort_order: 2, created_at: now, updated_at: now },
+  ],
+  'demo-4': [
+    { id: 'demo-task-4-1', branch_id: 'demo-4', title: '生クリーム残量確認', is_done: true, done_by: '飯森', note: 'あと7本', category: '準備', sort_order: 1, created_at: now, updated_at: now },
+    { id: 'demo-task-4-2', branch_id: 'demo-4', title: 'いちごの先出し', is_done: false, done_by: null, note: '傷みやすいものから', category: '調理', sort_order: 2, created_at: now, updated_at: now },
+    { id: 'demo-task-4-3', branch_id: 'demo-4', title: '呼び出し番号案内の声量確認', is_done: false, done_by: null, note: '', category: '接客', sort_order: 3, created_at: now, updated_at: now },
+  ],
+};
+
+// ============================================================
+// デモ用 シフト・引き継ぎ
+// ============================================================
+export const DEMO_SHIFT_ENTRIES: Record<string, DemoShiftEntry[]> = {
+  'demo-1': [
+    { id: 'demo-shift-1-1', branch_id: 'demo-1', shift_name: '午前前半', start_time: '09:00', end_time: '11:00', members: '加藤、飯森', note: '仕込み中心', is_active: true, created_at: now, updated_at: now },
+    { id: 'demo-shift-1-2', branch_id: 'demo-1', shift_name: '昼ピーク', start_time: '11:00', end_time: '13:30', members: '加藤、田中、鈴木', note: '呼び込み1名固定', is_active: true, created_at: now, updated_at: now },
+    { id: 'demo-shift-1-3', branch_id: 'demo-1', shift_name: '午後後半', start_time: '13:30', end_time: '16:00', members: '飯森、鈴木', note: '片付け準備開始', is_active: true, created_at: now, updated_at: now },
+  ],
+  'demo-2': [
+    { id: 'demo-shift-2-1', branch_id: 'demo-2', shift_name: '午前', start_time: '09:30', end_time: '12:00', members: '佐藤、中村', note: '', is_active: true, created_at: now, updated_at: now },
+    { id: 'demo-shift-2-2', branch_id: 'demo-2', shift_name: '午後', start_time: '12:00', end_time: '15:30', members: '佐藤、高橋', note: '洗い物当番交代あり', is_active: true, created_at: now, updated_at: now },
+  ],
+  'demo-3': [
+    { id: 'demo-shift-3-1', branch_id: 'demo-3', shift_name: '焼き場', start_time: '10:00', end_time: '13:00', members: '山田、木村', note: '焼き台2名', is_active: true, created_at: now, updated_at: now },
+  ],
+  'demo-4': [
+    { id: 'demo-shift-4-1', branch_id: 'demo-4', shift_name: '前半', start_time: '10:00', end_time: '12:30', members: '飯森、加藤', note: '生地担当/会計担当を固定', is_active: true, created_at: now, updated_at: now },
+    { id: 'demo-shift-4-2', branch_id: 'demo-4', shift_name: '後半', start_time: '12:30', end_time: '15:30', members: '飯森、田中', note: '', is_active: true, created_at: now, updated_at: now },
+  ],
+};
+
+export const DEMO_HANDOVER_NOTES: Record<string, DemoHandoverNote[]> = {
+  'demo-1': [
+    { id: 'demo-handover-1-1', branch_id: 'demo-1', from_shift: '午前前半', to_shift: '昼ピーク', content: 'キャベツ残り6玉。追加分は本部倉庫前に到着予定。', created_by: '加藤', is_resolved: false, created_at: now, updated_at: now },
+    { id: 'demo-handover-1-2', branch_id: 'demo-1', from_shift: '昼ピーク', to_shift: '午後後半', content: '鉄板右側が温度低め。火力を少し上げると安定。', created_by: '田中', is_resolved: true, created_at: now, updated_at: now },
+  ],
+  'demo-2': [
+    { id: 'demo-handover-2-1', branch_id: 'demo-2', from_shift: '午前', to_shift: '午後', content: 'ねぎマヨのボトルが1本空。予備は段ボール右側。', created_by: '佐藤', is_resolved: false, created_at: now, updated_at: now },
+  ],
+  'demo-3': [
+    { id: 'demo-handover-3-1', branch_id: 'demo-3', from_shift: '焼き場', to_shift: '', content: '塩だれ残り少なめ。次の便で補充予定。', created_by: '山田', is_resolved: false, created_at: now, updated_at: now },
+  ],
+  'demo-4': [
+    { id: 'demo-handover-4-1', branch_id: 'demo-4', from_shift: '前半', to_shift: '後半', content: 'いちごの状態が良いので先にいちご系をおすすめすると回転が良い。', created_by: '飯森', is_resolved: false, created_at: now, updated_at: now },
+    { id: 'demo-handover-4-2', branch_id: 'demo-4', from_shift: '', to_shift: '', content: 'タピオカ用ストローが少なくなったら本部に連絡。', created_by: '加藤', is_resolved: true, created_at: now, updated_at: now },
   ],
 };
