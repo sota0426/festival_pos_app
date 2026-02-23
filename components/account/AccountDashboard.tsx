@@ -1,4 +1,4 @@
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSubscription } from '../../contexts/SubscriptionContext';
@@ -13,8 +13,11 @@ interface AccountDashboardProps {
 
 const planLabels: Record<string, { label: string; color: string; bg: string }> = {
   free: { label: '無料プラン', color: 'text-green-700', bg: 'bg-green-100' },
-  store: { label: '店舗プラン', color: 'text-blue-700', bg: 'bg-blue-100' },
-  organization: { label: '団体プラン', color: 'text-purple-700', bg: 'bg-purple-100' },
+  store: { label: '店舗3か月パス（1店舗）', color: 'text-blue-700', bg: 'bg-blue-100' },
+  org_light: { label: '団体ライト3か月パス（3店舗）', color: 'text-violet-700', bg: 'bg-violet-100' },
+  org_standard: { label: '団体スタンダード3か月パス（10店舗）', color: 'text-purple-700', bg: 'bg-purple-100' },
+  org_premium: { label: '団体プレミアム3か月パス（30店舗）', color: 'text-fuchsia-700', bg: 'bg-fuchsia-100' },
+  organization: { label: '団体スタンダード3か月パス（10店舗）', color: 'text-purple-700', bg: 'bg-purple-100' }, // legacy
 };
 
 export const AccountDashboard = ({
@@ -30,6 +33,8 @@ export const AccountDashboard = ({
 
   const { profile } = authState;
   const planInfo = planLabels[plan] ?? planLabels.free;
+  const allowFreeWebInDev = __DEV__;
+  const isWebFreePlanRestricted = Platform.OS === 'web' && isFreePlan && !allowFreeWebInDev;
 
   const handleLogout = async () => {
     await signOut();
@@ -59,13 +64,20 @@ export const AccountDashboard = ({
 
         {/* クイックアクション */}
         <View className="gap-3 mb-6">
-          <TouchableOpacity onPress={onNavigateToStore} activeOpacity={0.8}>
-            <Card className="bg-green-500 p-5">
+          <TouchableOpacity
+            onPress={isWebFreePlanRestricted ? onNavigateToPricing : onNavigateToStore}
+            activeOpacity={0.8}
+          >
+            <Card className={`${isWebFreePlanRestricted ? 'bg-green-300' : 'bg-green-500'} p-5`}>
               <Text className="text-white text-lg font-bold text-center">
-                店舗に入る
+                店舗管理
               </Text>
               <Text className="text-green-100 text-center text-sm mt-1">
-                レジ操作・メニュー管理
+                {isWebFreePlanRestricted
+                  ? '無料プランのWeb操作は不可（店舗3か月パス以上で利用可）'
+                  : allowFreeWebInDev && Platform.OS === 'web' && isFreePlan
+                    ? '開発モード中のため無料プランでもWeb操作を許可中'
+                  : '店舗一覧・店舗設定・店舗画面へ移動'}
               </Text>
             </Card>
           </TouchableOpacity>
@@ -111,21 +123,6 @@ export const AccountDashboard = ({
             </Card>
           </TouchableOpacity>
 
-          {!isFreePlan && (
-            <TouchableOpacity onPress={openPortal} activeOpacity={0.8}>
-              <Card className="bg-white p-4">
-                <View className="flex-row justify-between items-center">
-                  <Text className="font-semibold text-gray-800">
-                    お支払い管理
-                  </Text>
-                  <Text className="text-gray-400">&gt;</Text>
-                </View>
-                <Text className="text-gray-500 text-xs mt-1">
-                  Stripeで支払い方法・請求書を管理
-                </Text>
-              </Card>
-            </TouchableOpacity>
-          )}
         </View>
 
         {/* アップグレード誘導（無料プランの場合） */}
@@ -139,7 +136,7 @@ export const AccountDashboard = ({
                 DB連携・他端末アクセス・本部機能
               </Text>
               <Text className="text-white text-center text-xs mt-2">
-                月額300円から
+                3か月パス 300円から
               </Text>
             </Card>
           </TouchableOpacity>

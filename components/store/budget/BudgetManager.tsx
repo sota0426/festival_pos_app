@@ -81,7 +81,8 @@ const PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
 const BREAKEVEN_HINTS: Record<string, string> = {
   product_name: '代表的な商品名の単価を入力してください（例：コーヒー、焼きそば）',
   selling_price: 'お客様に販売する1個あたりの価格です',
-  variable_cost: '1個作るのにかかる材料費等の原価です',
+  variable_cost:
+    `1個作るのにかかる材料費等の原価です。\n\n例: クレープ1個の場合：変動費 約150円\n（生地40円 + クリーム35円 + 果物60円 + 包装15円）`,
   fixed_cost: '売上に関係なくかかる費用の合計です（装飾費、機材レンタル料等）',
 };
 
@@ -136,7 +137,10 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
     sales: number;
   } | null>(null);
   const [simQuantity, setSimQuantity] = useState('');
+  const [simMode, setSimMode] = useState<'quantity' | 'profit'>('quantity');
+  const [simTargetProfit, setSimTargetProfit] = useState('');
   const [simResult, setSimResult] = useState<{
+    quantity: number;
     sales: number;
     cost: number;
     profit: number;
@@ -404,6 +408,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
         setShowSimulation(true);
         setBreakevenResult({ quantity: demoBeQty, sales: demoBeQty * demoSellingPrice });
         setSimResult({
+          quantity: demoSimQty,
           sales: demoSales,
           cost: demoCost,
           profit: demoProfit,
@@ -420,6 +425,8 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
         setBreakevenVariableCost(draft.variable_cost ?? '');
         setBreakevenFixedCost(draft.fixed_cost ?? '');
         setSimQuantity(draft.sim_quantity ?? '');
+        setSimMode(draft.sim_mode === 'profit' ? 'profit' : 'quantity');
+        setSimTargetProfit(draft.sim_profit_target ?? '');
         setShowAnalysis(draft.show_analysis ?? true);
         setShowSimulation(draft.show_simulation ?? false);
       }
@@ -438,6 +445,8 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       variable_cost: breakevenVariableCost,
       fixed_cost: breakevenFixedCost,
       sim_quantity: simQuantity,
+      sim_mode: simMode,
+      sim_profit_target: simTargetProfit,
       show_analysis: showAnalysis,
       show_simulation: showSimulation,
     });
@@ -449,6 +458,8 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
     breakevenVariableCost,
     breakevenFixedCost,
     simQuantity,
+    simMode,
+    simTargetProfit,
     showAnalysis,
     showSimulation,
   ]);
@@ -591,11 +602,10 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
   };
 
   const handleSimulation = () => {
-    const qty = parseInt(simQuantity, 10);
     const selling_price = parseInt(breakevenSellingPrice, 10) || 0;
     const variable_cost = parseInt(breakevenVariableCost, 10) || 0;
     const fixed_cost = parseInt(breakevenFixedCost, 10) || 0;
-    if (!qty || qty <= 0 || !selling_price || !variable_cost || fixed_cost < 0) {
+    if (!selling_price || !variable_cost || fixed_cost < 0) {
       alertNotify('エラー', '正しい数値を入力してください');
       setSimResult(null);
       return;
@@ -605,11 +615,29 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       setSimResult(null);
       return;
     }
+    const unitProfit = selling_price - variable_cost;
+    let qty = 0;
+    if (simMode === 'quantity') {
+      qty = parseInt(simQuantity, 10);
+      if (!qty || qty <= 0) {
+        alertNotify('エラー', '予想販売数を正しく入力してください');
+        setSimResult(null);
+        return;
+      }
+    } else {
+      const targetProfit = parseInt(simTargetProfit, 10);
+      if (Number.isNaN(targetProfit)) {
+        alertNotify('エラー', '目標利益を正しく入力してください');
+        setSimResult(null);
+        return;
+      }
+      qty = Math.max(0, Math.ceil((fixed_cost + targetProfit) / unitProfit));
+    }
     const sales = qty * selling_price;
     const cost = fixed_cost + qty * variable_cost;
     const profitSim = sales - cost;
     const margin = sales > 0 ? (profitSim / sales) * 100 : 0;
-    setSimResult({ sales, cost, profit: profitSim, margin });
+    setSimResult({ quantity: qty, sales, cost, profit: profitSim, margin });
   };
 
   const openCategoryHint = (cat: ExpenseCategory) => {
@@ -997,6 +1025,11 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
     settings.initial_budget > 0
       ? ((totalExpense / settings.initial_budget) * 100).toFixed(1)
       : '0';
+  const breakevenSellingPriceNum = parseInt(breakevenSellingPrice, 10) || 0;
+  const breakevenVariableCostNum = parseInt(breakevenVariableCost, 10) || 0;
+  const breakevenGrossProfit = breakevenSellingPriceNum - breakevenVariableCostNum;
+  const hasBreakevenPriceInputs =
+    breakevenSellingPrice.trim().length > 0 || breakevenVariableCost.trim().length > 0;
 
   // ======= LOADING =======
   if (loading) {
@@ -1016,7 +1049,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
     return (
       <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
         <Header
-          title="損益分岐点"
+          title="損益分岐点の計算"
           subtitle={`${branch.branch_code} - ${branch.branch_name}`}
           showBack
           onBack={onBack}
@@ -1068,6 +1101,21 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
                   <Text className="text-blue-700 text-xs">・材料費が上がって利益が出るか確認したいとき</Text>
                   <Text className="text-blue-700 text-xs">・目標販売数を現実的に決めたいとき</Text>
                 </View>
+                <View className="bg-white/70 rounded-lg p-3 border border-blue-100 mt-1">
+                  <Text className="text-blue-800 text-xs font-semibold mb-1">
+                    複数商品がある場合の考え方（平均粗利）
+                  </Text>
+                  <Text className="text-blue-700 text-xs leading-4">
+                    複数の商品を売る場合は、1商品の代わりに「平均粗利（販売価格 - 変動費）」で考えると目安を出せます。
+                  </Text>
+                  <Text className="text-blue-700 text-xs leading-4 mt-1">
+                    例：クレープ粗利280円（60%）・ドリンク粗利150円（40%）なら、平均粗利は
+                    約228円（280×0.6 + 150×0.4）。
+                  </Text>
+                  <Text className="text-blue-700 text-xs leading-4 mt-1">
+                    固定費が18,000円なら、損益分岐点の目安は約79個（18,000 ÷ 228）です。
+                  </Text>
+                </View>                
               </View>
             )}
           </Card>
@@ -1123,6 +1171,25 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
                     placeholderTextColor="#9CA3AF"
                   />
                 </View>
+              </View>
+              <View className="bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+                <Text className="text-indigo-700 text-xs font-semibold mb-1">粗利（自動計算）</Text>
+                {!hasBreakevenPriceInputs ? (
+                  <Text className="text-indigo-600 text-sm">
+                    販売価格 - 変動費 = 粗利（ここに自動表示されます）
+                  </Text>
+                ) : (
+                  <Text
+                    className={`text-sm text-indigo-600  ${
+                      breakevenGrossProfit > 0 ? 'text-indigo-700' : 'text-red-600'
+                    }`}
+                  >
+                    （販売価格：¥{breakevenSellingPriceNum.toLocaleString()} ） - （変動費：¥
+                    {breakevenVariableCostNum.toLocaleString()} ）= （粗利：¥
+                    {breakevenGrossProfit.toLocaleString()}）
+                    {breakevenGrossProfit <= 0 ? '（販売価格は変動費より大きくしてください）' : ''}
+                  </Text>
+                )}
               </View>
               <View>
                 <View className="flex-row items-center justify-between mb-1">
@@ -1183,20 +1250,89 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
             {showSimulation && (
               <View className="mt-3 gap-3">
                 <View>
-                  <Text className="text-gray-600 text-sm mb-1">予想販売数</Text>
-                  <TextInput
-                    value={simQuantity}
-                    onChangeText={setSimQuantity}
-                    keyboardType="numeric"
-                    placeholder="100"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-                    placeholderTextColor="#9CA3AF"
-                  />
+                  <Text className="text-gray-600 text-sm mb-1">シミュレーションの入力方法</Text>
+                  <View className="flex-row gap-2">
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSimMode('quantity');
+                        setSimResult(null);
+                      }}
+                      className={`flex-1 rounded-lg px-3 py-2 border ${
+                        simMode === 'quantity'
+                          ? 'bg-indigo-600 border-indigo-600'
+                          : 'bg-white border-gray-300'
+                      }`}
+                    >
+                      <Text
+                        className={`text-center text-sm font-semibold ${
+                          simMode === 'quantity' ? 'text-white' : 'text-gray-700'
+                        }`}
+                      >
+                        予想販売数で計算
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSimMode('profit');
+                        setSimResult(null);
+                      }}
+                      className={`flex-1 rounded-lg px-3 py-2 border ${
+                        simMode === 'profit'
+                          ? 'bg-indigo-600 border-indigo-600'
+                          : 'bg-white border-gray-300'
+                      }`}
+                    >
+                      <Text
+                        className={`text-center text-sm font-semibold ${
+                          simMode === 'profit' ? 'text-white' : 'text-gray-700'
+                        }`}
+                      >
+                        目標利益で計算
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-                <Button title="シミュレーション実行" onPress={handleSimulation} variant="thirdy" />
+                <View>
+                  {simMode === 'quantity' ? (
+                    <>
+                      <Text className="text-gray-600 text-sm mb-1">予想販売数</Text>
+                      <TextInput
+                        value={simQuantity}
+                        onChangeText={setSimQuantity}
+                        keyboardType="numeric"
+                        placeholder="100"
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+                        placeholderTextColor="#9CA3AF"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <Text className="text-gray-600 text-sm mb-1">目標利益（円）</Text>
+                      <TextInput
+                        value={simTargetProfit}
+                        onChangeText={setSimTargetProfit}
+                        keyboardType="numeric"
+                        placeholder="10000"
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+                        placeholderTextColor="#9CA3AF"
+                      />
+                      <Text className="text-gray-500 text-xs mt-1">
+                        目標利益を達成するために必要な販売数を逆算します。
+                      </Text>
+                    </>
+                  )}
+                </View>
 
                 {simResult && (
                   <View className="mt-2 gap-3">
+                    {simMode === 'profit' && (
+                      <View className="bg-indigo-50 rounded-xl p-3">
+                        <Text className="text-gray-500 text-xs">必要販売数（目標利益達成の目安）</Text>
+                        <Text className="text-indigo-700 text-2xl font-bold">
+                          {simResult.quantity}個
+                        </Text>
+                      </View>
+                    )}
                     <View className="flex-row gap-3">
                       <View className="flex-1 bg-blue-50 rounded-xl p-3">
                         <Text className="text-gray-500 text-xs">売上</Text>
@@ -1231,6 +1367,8 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
                     </View>
                   </View>
                 )}
+                <Button title="シミュレーション実行" onPress={handleSimulation} variant="thirdy" />
+
               </View>
             )}
           </Card>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppState, Platform, Text, View } from 'react-native';
+import { AppState, Platform, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getPendingTransactions, getPendingVisitorCounts } from '../../lib/storage';
 import { getSyncEnabled } from '../../lib/syncMode';
@@ -9,15 +9,17 @@ import { useSubscription } from '../../contexts/SubscriptionContext';
 
 interface SyncStatusBannerProps {
   branchId: string | null;
+  onSyncNow?: () => Promise<void> | void;
 }
 
-export const SyncStatusBanner = ({ branchId }: SyncStatusBannerProps) => {
+export const SyncStatusBanner = ({ branchId, onSyncNow }: SyncStatusBannerProps) => {
   const { authState } = useAuth();
   const { isFreePlan } = useSubscription();
   const insets = useSafeAreaInsets();
   const [pendingTx, setPendingTx] = useState(0);
   const [pendingVisitors, setPendingVisitors] = useState(0);
   const [online, setOnline] = useState(true);
+  const [syncingNow, setSyncingNow] = useState(false);
 
   const syncEnabled = getSyncEnabled();
   const hasSupabase = hasSupabaseEnvConfigured();
@@ -114,6 +116,18 @@ export const SyncStatusBanner = ({ branchId }: SyncStatusBannerProps) => {
   // 表示する必要がない状態（オンライン正常）は何も描画しない
   if (!branchId || style === null) return null;
 
+  const handlePressSync = async () => {
+    if (!onSyncNow || syncingNow) return;
+    setSyncingNow(true);
+    try {
+      await onSyncNow();
+      await refreshPending();
+      await probeNetwork();
+    } finally {
+      setSyncingNow(false);
+    }
+  };
+
   return (
     <View
       className={`${style.bg} px-4 pb-2 border-b border-gray-200`}
@@ -121,14 +135,28 @@ export const SyncStatusBanner = ({ branchId }: SyncStatusBannerProps) => {
     >
       <View className="flex-row items-center justify-between">
         <Text className={`${style.text} text-xs font-semibold`}>{style.label}</Text>
-        {pendingTotal > 0 && (
-          <Text className={`${style.text} text-xs`}>
-            未同期 {pendingTotal}件
-            { pendingVisitors > 0  && (
-            <Text>（売上{pendingTx} 件/ 来客{pendingVisitors}人）</Text>
-            )}
-          </Text>
-        )}
+        <View className="flex-row items-center gap-2">
+          {pendingTotal > 0 && (
+            <Text className={`${style.text} text-xs`}>
+              未同期 {pendingTotal}件
+              { pendingVisitors > 0  && (
+              <Text>（売上{pendingTx} 件/ 来客{pendingVisitors}人）</Text>
+              )}
+            </Text>
+          )}
+          {!!onSyncNow && pendingTotal > 0 && online && !isLocalMode && (
+            <TouchableOpacity
+              onPress={() => { void handlePressSync(); }}
+              activeOpacity={0.8}
+              className="px-2 py-1 rounded-md border border-yellow-300 bg-white/70"
+              disabled={syncingNow}
+            >
+              <Text className={`${style.text} text-xs font-semibold`}>
+                {syncingNow ? '同期中...' : '同期'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     </View>
   );

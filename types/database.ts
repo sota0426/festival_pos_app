@@ -1,7 +1,13 @@
 // Database types for Supabase
 
 // SaaS types
-export type PlanType = 'free' | 'store' | 'organization';
+export type PlanType =
+  | 'free'
+  | 'store'
+  | 'org_light'
+  | 'org_standard'
+  | 'org_premium'
+  | 'organization'; // legacy
 export type SubscriptionStatus = 'active' | 'trialing' | 'past_due' | 'canceled' | 'incomplete';
 export type OrgRole = 'owner' | 'admin' | 'member';
 
@@ -61,6 +67,7 @@ export interface Branch {
   branch_code: string;
   branch_name: string;
   password: string;
+  kiosk_exit_pin?: string | null;
   sales_target: number;
   status: 'active' | 'inactive';
   created_at: string;
@@ -155,6 +162,7 @@ export interface StoreSettings {
   payment_mode: PaymentMode;
   payment_methods: PaymentMethodSettings;
   cashless_label: string;
+  kiosk_exit_pin?: string;
   order_board_enabled: boolean;
   sub_screen_mode: boolean;
   sync_enabled: boolean;

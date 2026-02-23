@@ -29,7 +29,7 @@ import {
 import * as Crypto from 'expo-crypto';
 import { hasSupabaseEnvConfigured, supabase } from '../../../lib/supabase';
 import { getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
-import { saveKioskMode, verifyAdminPassword } from '../../../lib/storage';
+import { getBranchKioskExitPin, saveKioskMode } from '../../../lib/storage';
 import type {
   BranchPublic,
   CustomerIdentifierType,
@@ -64,6 +64,8 @@ export interface CustomerOrderScreenProps {
    * キオスク開始後はこの導線を表示しない。
    */
   onBackBeforeKiosk?: () => void;
+  /** キオスク解除PINの設定画面へ戻る（管理者画面） */
+  onOpenKioskPinSettings?: () => void;
   /**
    * デモ中のみ表示する「ログイン画面に戻る」コールバック。
    */
@@ -137,6 +139,7 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
   isKioskMode,
   onExitKiosk,
   onBackBeforeKiosk,
+  onOpenKioskPinSettings,
   onReturnToLoggedInFromDemo,
   isDemoMode = false,
 }) => {
@@ -166,8 +169,12 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
   // ---- キオスクモード: PIN認証モーダル ----
   const [showLockModal, setShowLockModal] = useState(false);
   const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState(false);
+  const [pinErrorMessage, setPinErrorMessage] = useState<string | null>(null);
   const [pinVerifying, setPinVerifying] = useState(false);
+  const [kioskExitPin, setKioskExitPin] = useState('');
+  const [kioskPinFailCount, setKioskPinFailCount] = useState(0);
+  const [kioskPinLockedUntil, setKioskPinLockedUntil] = useState<number | null>(null);
+  const [lockNowMs, setLockNowMs] = useState(Date.now());
 
   // ---- カート ----
   const [cart, setCart] = useState<CustomerCartItem[]>([]);
@@ -184,6 +191,34 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
   // ---- タブレットモード: 端末名入力 ----
   const [deviceNameInput, setDeviceNameInput] = useState(deviceName ?? '');
   const [deviceNameConfirmed, setDeviceNameConfirmed] = useState(!!deviceName || !!tableNumber);
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const [kioskPinChecked, setKioskPinChecked] = useState(false);
+
+  useEffect(() => {
+    if (!isKioskMode) return;
+    if (!branch?.id) return;
+    let mounted = true;
+    (async () => {
+      const pin = await getBranchKioskExitPin(branch.id);
+      if (!mounted) return;
+      setKioskExitPin(String(pin ?? '').trim());
+      setKioskPinChecked(true);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [branch?.id, isKioskMode]);
+
+  useEffect(() => {
+    if (!kioskPinLockedUntil) return;
+    const timer = setInterval(() => setLockNowMs(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, [kioskPinLockedUntil]);
+
+  const lockRemainingSeconds = kioskPinLockedUntil
+    ? Math.max(0, Math.ceil((kioskPinLockedUntil - lockNowMs) / 1000))
+    : 0;
+  const isKioskPinLocked = lockRemainingSeconds > 0;
 
   // ------------------------------------------------------------------
   // 1. ブランチ解決
@@ -472,26 +507,65 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
   // タブレットモード: 端末名入力画面
   // ------------------------------------------------------------------
   if (!deviceNameConfirmed) {
+    const kioskPinMissingInSetup = isKioskMode && kioskPinChecked && !kioskExitPin;
     return (
       <SafeAreaView className="flex-1 bg-gray-50 items-center justify-center px-8">
         <View className="bg-white rounded-2xl p-8 w-full max-w-sm shadow-sm">
           <Text className="text-2xl font-bold text-gray-900 mb-2 text-center">端末設定</Text>
-          <Text className="text-gray-500 text-sm mb-6 text-center">
-            この端末の識別名を入力してください。{'\n'}
-            例: 「タブレットA」「カウンター1」
-          </Text>
-          <TextInput
-            value={deviceNameInput}
-            onChangeText={setDeviceNameInput}
-            placeholder="端末名を入力"
-            className="border border-gray-300 rounded-xl px-4 py-3 text-gray-900 text-base mb-4"
-            autoFocus
-            maxLength={20}
-          />
+          {!kioskPinMissingInSetup ? (
+            <>
+              <Text className="text-gray-500 text-sm mb-6 text-center">
+                この端末の識別名を入力してください。{'\n'}
+                例: 「タブレットA」「カウンター1」
+              </Text>
+              <TextInput
+                value={deviceNameInput}
+                onChangeText={(text) => {
+                  setDeviceNameInput(text);
+                  setSetupError(null);
+                }}
+                placeholder="端末名を入力"
+                className="border border-gray-300 rounded-xl px-4 py-3 text-gray-900 text-base mb-4"
+                autoFocus
+                maxLength={20}
+              />
+              <Text className="text-gray-500 text-xs mb-3">
+                解除PINは店舗共通設定を使用します。
+              </Text>
+            </>
+          ) : null}
+          {kioskPinMissingInSetup ? (
+            <View className="bg-pink-50 border border-pink-200 rounded-xl p-3 mb-3">
+              <Text className="text-pink-900 text-xs font-semibold text-center">
+                解除PINが未設定です。
+              </Text>
+              <Text className="text-pink-700 text-[11px] text-center mt-1">
+                管理者設定から設定を行なってください。
+              </Text>
+              {onOpenKioskPinSettings ? (
+                <TouchableOpacity
+                  onPress={onOpenKioskPinSettings}
+                  className="mt-4 rounded-lg bg-blue-600  py-2 items-center"
+                  activeOpacity={0.8}
+                >
+                  <Text className="text-white text-base font-semibold">解除PIN設定画面に移る</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+          {setupError ? (
+            <Text className="text-red-500 text-xs mb-3 text-center">{setupError}</Text>
+          ) : null}
           <TouchableOpacity
             onPress={async () => {
               const name = deviceNameInput.trim();
               if (name.length === 0) return;
+              const configuredPin = branch?.id ? await getBranchKioskExitPin(branch.id) : '';
+              setKioskExitPin(configuredPin);
+              if (isKioskMode && !configuredPin) {
+                setSetupError('解除PINが未設定です。管理者設定から設定を行なってください。');
+                return;
+              }
               // キオスクモードを localStorage に保存 (リロード後も復元できるように)
               if (isKioskMode) {
                 await saveKioskMode({
@@ -503,12 +577,17 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
               }
               setDeviceNameConfirmed(true);
             }}
-            disabled={deviceNameInput.trim().length === 0}
-            className="bg-blue-600 rounded-xl py-3.5 items-center"
+            disabled={deviceNameInput.trim().length === 0 || (isKioskMode && kioskPinChecked && !kioskExitPin)}
+            className={`rounded-xl py-3.5 items-center ${
+              deviceNameInput.trim().length === 0 || (isKioskMode && kioskPinChecked && !kioskExitPin)
+                ? 'bg-gray-300'
+                : 'bg-blue-600'
+            }`}
             activeOpacity={0.8}
           >
             <Text className="text-white font-bold text-base">確定してキオスクモードを開始</Text>
           </TouchableOpacity>
+          
           {onBackBeforeKiosk ? (
             <View className="mt-3 gap-2">
               <TouchableOpacity
@@ -520,8 +599,8 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
               </TouchableOpacity>
             </View>
           ) : null}
-          <Text className="text-gray-400 text-xs text-center mt-3">
-            確定後は管理者PINを入力するまでこの画面から出られません
+          <Text className="text-amber-700 text-xs text-center mt-3 ">
+            注意：確定後は、店舗共通の解除PINを入力しないとキオスク画面を終了できません。
           </Text>
         </View>
       </SafeAreaView>
@@ -795,31 +874,36 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
           pointerEvents="box-none"
         >
           <View className="bg-white rounded-2xl p-8 w-80 shadow-xl">
-            <Text className="text-xl font-bold text-gray-900 text-center mb-1">管理者認証</Text>
+            <Text className="text-xl font-bold text-gray-900 text-center mb-1">キオスク解除</Text>
             <Text className="text-gray-500 text-sm text-center mb-6">
-              管理者PINを入力してください
+              店舗共通の解除PINを入力してください
             </Text>
 
             {/* PIN 入力: セキュリティのため secureTextEntry */}
             <TextInput
               value={pinInput}
-              onChangeText={(v) => { setPinInput(v); setPinError(false); }}
+              onChangeText={(v) => { setPinInput(v.replace(/[^\d]/g, '')); setPinErrorMessage(null); }}
               placeholder="PIN を入力"
               secureTextEntry
               keyboardType="number-pad"
               maxLength={8}
               autoFocus
-              className={`border-2 rounded-xl px-4 py-3 text-gray-900 text-base text-center mb-2 ${pinError ? 'border-red-400' : 'border-gray-300'}`}
+              className={`border-2 rounded-xl px-4 py-3 text-gray-900 text-base text-center mb-2 ${pinErrorMessage ? 'border-red-400' : 'border-gray-300'}`}
             />
-            {pinError && (
+            {pinErrorMessage && (
               <Text className="text-red-500 text-xs text-center mb-3">
-                PINが正しくありません
+                {pinErrorMessage}
+              </Text>
+            )}
+            {isKioskPinLocked && (
+              <Text className="text-amber-600 text-xs text-center mb-3">
+                連続失敗のため {lockRemainingSeconds} 秒待ってから再試行してください
               </Text>
             )}
 
             <View className="flex-row gap-3 mt-2">
               <TouchableOpacity
-                onPress={() => { setShowLockModal(false); setPinInput(''); setPinError(false); }}
+                onPress={() => { setShowLockModal(false); setPinInput(''); setPinErrorMessage(null); }}
                 className="flex-1 py-3 bg-gray-200 rounded-xl items-center"
                 activeOpacity={0.7}
               >
@@ -828,24 +912,44 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
               <TouchableOpacity
                 onPress={async () => {
                   if (pinVerifying) return;
+                  if (isKioskPinLocked) return;
                   setPinVerifying(true);
                   try {
-                    const ok = await verifyAdminPassword(pinInput);
+                    const configuredPin = kioskExitPin || (branch?.id ? await getBranchKioskExitPin(branch.id) : '');
+                    setKioskExitPin(configuredPin);
+                    if (!configuredPin) {
+                      setPinErrorMessage('解除PINが未設定です。管理者画面で設定してください');
+                      return;
+                    }
+                    const ok = pinInput.trim() === configuredPin;
                     if (ok) {
                       // 認証成功: キオスクモード解除して管理画面へ
                       setShowLockModal(false);
                       setPinInput('');
+                      setPinErrorMessage(null);
+                      setKioskPinFailCount(0);
+                      setKioskPinLockedUntil(null);
                       await onExitKiosk();
                     } else {
-                      setPinError(true);
+                      const nextFailCount = kioskPinFailCount + 1;
+                      setKioskPinFailCount(nextFailCount);
+                      if (nextFailCount >= 5) {
+                        setKioskPinLockedUntil(Date.now() + 10_000);
+                        setKioskPinFailCount(0);
+                        setPinErrorMessage('PINが正しくありません');
+                      } else {
+                        setPinErrorMessage('PINが正しくありません');
+                      }
                       setPinInput('');
                     }
                   } finally {
                     setPinVerifying(false);
                   }
                 }}
-                disabled={pinInput.length === 0 || pinVerifying}
-                className={`flex-1 py-3 rounded-xl items-center ${pinInput.length === 0 || pinVerifying ? 'bg-gray-300' : 'bg-blue-600'}`}
+                disabled={pinInput.length === 0 || pinVerifying || isKioskPinLocked}
+                className={`flex-1 py-3 rounded-xl items-center ${
+                  pinInput.length === 0 || pinVerifying || isKioskPinLocked ? 'bg-gray-300' : 'bg-blue-600'
+                }`}
                 activeOpacity={0.8}
               >
                 <Text className="text-white font-bold">
@@ -892,7 +996,11 @@ export const CustomerOrderScreen: React.FC<CustomerOrderScreenProps> = ({
           {/* キオスクモード: 管理者用ロックボタン (目立たないが操作可能) */}
           {isKioskMode && (
             <TouchableOpacity
-              onPress={() => setShowLockModal(true)}
+              onPress={() => {
+                setPinInput('');
+                setPinErrorMessage(null);
+                setShowLockModal(true);
+              }}
               className="w-9 h-9 rounded-full bg-gray-100 items-center justify-center"
               activeOpacity={0.6}
             >

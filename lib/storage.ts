@@ -41,6 +41,8 @@ const EXPENSE_RECORDER_KEY_PREFIX = '@festival_pos/expense_recorder';
 const BRANCH_RECORDERS_KEY_PREFIX = '@festival_pos/branch_recorders';
 const RECORDER_ACCESS_LOGS_KEY_PREFIX = '@festival_pos/recorder_access_logs';
 const RECORDER_CONFIG_KEY_PREFIX = '@festival_pos/recorder_config';
+const ORDER_COUNTER_KEY_PREFIX = '@festival_pos/order_counter';
+const KIOSK_EXIT_PIN_KEY_PREFIX = '@festival_pos/kiosk_exit_pin';
 const DEVICE_ID_KEY = '@festival_pos/device_id';
 
 export interface BreakevenDraft {
@@ -49,6 +51,8 @@ export interface BreakevenDraft {
   variable_cost: string;
   fixed_cost: string;
   sim_quantity: string;
+  sim_mode?: 'quantity' | 'profit';
+  sim_profit_target?: string;
   show_analysis: boolean;
   show_simulation: boolean;
 }
@@ -105,6 +109,10 @@ export const savePendingTransaction = async (transaction: PendingTransaction): P
 export const getPendingTransactions = async (): Promise<PendingTransaction[]> => {
   const data = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_TRANSACTIONS);
   return data ? JSON.parse(data) : [];
+};
+
+export const savePendingTransactions = async (transactions: PendingTransaction[]): Promise<void> => {
+  await AsyncStorage.setItem(STORAGE_KEYS.PENDING_TRANSACTIONS, JSON.stringify(transactions));
 };
 
 export const clearSyncedTransactions = async (): Promise<void> => {
@@ -170,6 +178,10 @@ export const savePendingVisitorCount = async (visitorCount: PendingVisitorCount)
 export const getPendingVisitorCounts = async (): Promise<PendingVisitorCount[]> => {
   const data = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_VISITOR_COUNTS);
   return data ? JSON.parse(data) : [];
+};
+
+export const savePendingVisitorCounts = async (counts: PendingVisitorCount[]): Promise<void> => {
+  await AsyncStorage.setItem(STORAGE_KEYS.PENDING_VISITOR_COUNTS, JSON.stringify(counts));
 };
 
 const toLocalDateKey = (iso: string): string => {
@@ -255,7 +267,7 @@ export const saveStoreSettings = async (settings: StoreSettings): Promise<void> 
   await AsyncStorage.setItem(STORAGE_KEYS.STORE_SETTINGS, JSON.stringify(settings));
 };
 
-const DEFAULT_PAYMENT_METHODS = { cash: false, cashless: true, voucher: true };
+const DEFAULT_PAYMENT_METHODS = { cash: true, cashless: true, voucher: true };
 
 export const getStoreSettings = async (): Promise<StoreSettings> => {
   const data = await AsyncStorage.getItem(STORAGE_KEYS.STORE_SETTINGS);
@@ -267,6 +279,7 @@ export const getStoreSettings = async (): Promise<StoreSettings> => {
       payment_mode: parsed.payment_mode ?? 'cashless',
       payment_methods: { ...DEFAULT_PAYMENT_METHODS, ...parsed.payment_methods },
       cashless_label: String(parsed.cashless_label ?? 'PayPay').trim() || 'PayPay',
+      kiosk_exit_pin: String(parsed.kiosk_exit_pin ?? '').trim(),
       order_board_enabled: parsed.order_board_enabled ?? false,
       sub_screen_mode: parsed.sub_screen_mode ?? false,
       sync_enabled: syncEnabled,
@@ -277,16 +290,31 @@ export const getStoreSettings = async (): Promise<StoreSettings> => {
     payment_mode: 'cashless',
     payment_methods: DEFAULT_PAYMENT_METHODS,
     cashless_label: 'PayPay',
+    kiosk_exit_pin: '',
     order_board_enabled: false,
     sub_screen_mode: false,
     sync_enabled: true,
   };
 };
 
-// Order counter storage (sequential order numbers 01-99, resets daily)
-export const getNextOrderNumber = async (): Promise<number> => {
+export const saveBranchKioskExitPin = async (branchId: string, pin: string): Promise<void> => {
+  await AsyncStorage.setItem(`${KIOSK_EXIT_PIN_KEY_PREFIX}/${branchId}`, String(pin).trim());
+};
+
+export const getBranchKioskExitPin = async (branchId: string): Promise<string> => {
+  const scoped = await AsyncStorage.getItem(`${KIOSK_EXIT_PIN_KEY_PREFIX}/${branchId}`);
+  if (scoped != null) return String(scoped).trim();
+
+  // 互換: 旧グローバル設定に残っている値を初回だけ読む（以後は店舗別に移行）
+  const settings = await getStoreSettings();
+  return String(settings.kiosk_exit_pin ?? '').trim();
+};
+
+// Order counter storage (sequential order numbers 01-99, resets daily, per branch)
+export const getNextOrderNumber = async (branchId?: string): Promise<number> => {
   const today = new Date().toISOString().split('T')[0]; // 'YYYY-MM-DD'
-  const data = await AsyncStorage.getItem(STORAGE_KEYS.ORDER_COUNTER);
+  const scopedKey = branchId ? `${ORDER_COUNTER_KEY_PREFIX}/${branchId}` : STORAGE_KEYS.ORDER_COUNTER;
+  const data = await AsyncStorage.getItem(scopedKey);
   let counter = 1;
 
   if (data) {
@@ -297,7 +325,7 @@ export const getNextOrderNumber = async (): Promise<number> => {
     }
   }
 
-  await AsyncStorage.setItem(STORAGE_KEYS.ORDER_COUNTER, JSON.stringify({ date: today, counter }));
+  await AsyncStorage.setItem(scopedKey, JSON.stringify({ date: today, counter }));
   return counter;
 };
 
@@ -428,7 +456,7 @@ export const getBranchRecorderConfig = async (branchId: string): Promise<BranchR
   if (!data) {
     return {
       branch_id: branchId,
-      registration_mode: 'restricted',
+      registration_mode: 'open',
       updated_at: new Date().toISOString(),
     };
   }
@@ -583,4 +611,100 @@ export const getLocalStorage = async (): Promise<LocalStorage> => {
     pending_transactions,
     last_sync_time,
   };
+};
+
+// 無料→有料移行時に、ローカル保存の branch_id をクラウド側 branch_id に合わせる
+export const replaceLocalBranchIdReferences = async (
+  oldBranchId: string,
+  newBranchId: string,
+): Promise<void> => {
+  if (!oldBranchId || !newBranchId || oldBranchId === newBranchId) return;
+
+  const [branch, menus, categories, pendingTransactions, pendingVisitorCounts, budgetSettings, budgetExpenses] =
+    await Promise.all([
+      getBranch(),
+      getMenus(),
+      getMenuCategories(),
+      getPendingTransactions(),
+      getPendingVisitorCounts(),
+      getBudgetSettings(oldBranchId),
+      getBudgetExpenses(),
+    ]);
+
+  if (branch && branch.id === oldBranchId) {
+    await saveBranch({ ...branch, id: newBranchId });
+  }
+
+  await saveMenus(
+    menus.map((menu) => (menu.branch_id === oldBranchId ? { ...menu, branch_id: newBranchId } : menu))
+  );
+  await saveMenuCategories(
+    categories.map((category) =>
+      category.branch_id === oldBranchId ? { ...category, branch_id: newBranchId } : category
+    )
+  );
+  await savePendingTransactions(
+    pendingTransactions.map((tx) => (tx.branch_id === oldBranchId ? { ...tx, branch_id: newBranchId } : tx))
+  );
+  await savePendingVisitorCounts(
+    pendingVisitorCounts.map((count) => (count.branch_id === oldBranchId ? { ...count, branch_id: newBranchId } : count))
+  );
+
+  if (budgetSettings.branch_id === oldBranchId) {
+    await saveBudgetSettings({ ...budgetSettings, branch_id: newBranchId });
+  }
+  await saveBudgetExpenses(
+    budgetExpenses.map((expense) =>
+      expense.branch_id === oldBranchId ? { ...expense, branch_id: newBranchId } : expense
+    )
+  );
+
+  const [visitorGroups, prepIngredients, defaultExpenseRecorder, recorders, recorderLogs, recorderConfig] =
+    await Promise.all([
+      getVisitorGroups(oldBranchId),
+      getPrepIngredients(oldBranchId),
+      getDefaultExpenseRecorder(oldBranchId),
+      getBranchRecorders(oldBranchId),
+      getRecorderAccessLogs(oldBranchId),
+      getBranchRecorderConfig(oldBranchId),
+    ]);
+
+  if (visitorGroups.length > 0) {
+    await saveVisitorGroups(
+      newBranchId,
+      visitorGroups.map((g) => ({ ...g, branch_id: newBranchId }))
+    );
+    await AsyncStorage.removeItem(`${VISITOR_GROUPS_KEY_PREFIX}/${oldBranchId}`);
+  }
+
+  if (prepIngredients.length > 0) {
+    await savePrepIngredients(
+      newBranchId,
+      prepIngredients.map((i) => ({ ...i, branch_id: newBranchId }))
+    );
+    await AsyncStorage.removeItem(`${PREP_INGREDIENTS_KEY_PREFIX}/${oldBranchId}`);
+  }
+
+  if (defaultExpenseRecorder) {
+    await saveDefaultExpenseRecorder(newBranchId, defaultExpenseRecorder);
+    await AsyncStorage.removeItem(`${EXPENSE_RECORDER_KEY_PREFIX}/${oldBranchId}`);
+  }
+
+  if (recorders.length > 0) {
+    await saveBranchRecorders(newBranchId, recorders.map((r) => ({ ...r, branch_id: newBranchId })));
+    await AsyncStorage.removeItem(`${BRANCH_RECORDERS_KEY_PREFIX}/${oldBranchId}`);
+  }
+
+  if (recorderLogs.length > 0) {
+    await saveRecorderAccessLogs(
+      newBranchId,
+      recorderLogs.map((log) => ({ ...log, branch_id: newBranchId }))
+    );
+    await AsyncStorage.removeItem(`${RECORDER_ACCESS_LOGS_KEY_PREFIX}/${oldBranchId}`);
+  }
+
+  if (recorderConfig.branch_id === oldBranchId) {
+    await saveBranchRecorderConfig(newBranchId, { ...recorderConfig, branch_id: newBranchId });
+    await AsyncStorage.removeItem(`${RECORDER_CONFIG_KEY_PREFIX}/${oldBranchId}`);
+  }
 };

@@ -1,14 +1,28 @@
 // Supabase Edge Function: Stripe Checkout Session 作成
 // デプロイ: supabase functions deploy create-checkout-session
-// 環境変数: STRIPE_SECRET_KEY, STRIPE_STORE_PRICE_ID, STRIPE_ORG_PRICE_ID, APP_URL
+// 環境変数:
+// STRIPE_SECRET_KEY, STRIPE_STORE_PRICE_ID,
+// STRIPE_ORG_LIGHT_PRICE_ID, STRIPE_ORG_STANDARD_PRICE_ID, STRIPE_ORG_PREMIUM_PRICE_ID,
+// (互換) STRIPE_ORG_PRICE_ID, APP_URL
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY')!;
 const STRIPE_STORE_PRICE_ID = Deno.env.get('STRIPE_STORE_PRICE_ID')!;
-const STRIPE_ORG_PRICE_ID = Deno.env.get('STRIPE_ORG_PRICE_ID')!;
+const STRIPE_ORG_LIGHT_PRICE_ID = Deno.env.get('STRIPE_ORG_LIGHT_PRICE_ID')!;
+const STRIPE_ORG_STANDARD_PRICE_ID = Deno.env.get('STRIPE_ORG_STANDARD_PRICE_ID') || Deno.env.get('STRIPE_ORG_PRICE_ID')!;
+const STRIPE_ORG_PREMIUM_PRICE_ID = Deno.env.get('STRIPE_ORG_PREMIUM_PRICE_ID')!;
 const APP_URL = Deno.env.get('APP_URL') || 'https://localhost:8081';
+
+type CheckoutPlan = 'store' | 'org_light' | 'org_standard' | 'org_premium';
+
+const PRICE_ID_BY_PLAN: Record<CheckoutPlan, string> = {
+  store: STRIPE_STORE_PRICE_ID,
+  org_light: STRIPE_ORG_LIGHT_PRICE_ID,
+  org_standard: STRIPE_ORG_STANDARD_PRICE_ID,
+  org_premium: STRIPE_ORG_PREMIUM_PRICE_ID,
+};
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -49,7 +63,14 @@ serve(async (req) => {
     }
 
     const { plan } = await req.json();
-    const priceId = plan === 'organization' ? STRIPE_ORG_PRICE_ID : STRIPE_STORE_PRICE_ID;
+    if (!plan || !(plan in PRICE_ID_BY_PLAN)) {
+      return new Response(JSON.stringify({ error: 'Invalid plan' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const targetPlan = plan as CheckoutPlan;
+    const priceId = PRICE_ID_BY_PLAN[targetPlan];
 
     // Stripe Customer を取得または作成
     const { data: sub } = await supabase
@@ -81,7 +102,7 @@ serve(async (req) => {
         .eq('user_id', user.id);
     }
 
-    // Checkout Session 作成
+    // Checkout Session 作成（3か月利用パス: 一回払い）
     const sessionRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
       method: 'POST',
       headers: {
@@ -92,11 +113,12 @@ serve(async (req) => {
         customer: customerId!,
         'line_items[0][price]': priceId,
         'line_items[0][quantity]': '1',
-        mode: 'subscription',
+        mode: 'payment',
         success_url: `${APP_URL}?checkout=success`,
         cancel_url: `${APP_URL}?checkout=cancel`,
         'metadata[supabase_user_id]': user.id,
-        'metadata[plan]': plan,
+        'metadata[plan]': targetPlan,
+        'metadata[pass_duration_days]': '90',
       }),
     });
 

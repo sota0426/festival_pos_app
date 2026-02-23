@@ -94,7 +94,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
   const [editingBranchName, setEditingBranchName] = useState('');
-  const [editingBranchPassword, setEditingBranchPassword] = useState('');
   const [editingBranchStatus, setEditingBranchStatus] = useState<'active' | 'inactive'>('active');
   const [savingBranchName, setSavingBranchName] = useState(false);
   const [deletingBranch, setDeletingBranch] = useState(false);
@@ -114,6 +113,21 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   const organizationId =
     authState.status === 'authenticated' ? authState.subscription.organization_id : null;
 
+  const getActiveSubscriptionId = useCallback(async (): Promise<string | null> => {
+    if (subscriptionId) return subscriptionId;
+    if (!userId) return null;
+
+    const { data } = await supabase
+      .from('subscriptions')
+      .select('id')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    return data?.id ?? null;
+  }, [subscriptionId, userId]);
+
   // ─── Data loading ───
 
   const loadData = useCallback(async () => {
@@ -128,20 +142,23 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     if (!userId) return;
     setLoading(true);
     try {
+      let resolvedBranches: Branch[] = [];
       const { data: branchData } = await supabase
         .from('branches')
         .select('*')
         .eq('owner_id', userId)
         .order('branch_code');
       if ((branchData?.length ?? 0) > 0) {
-        setBranches(branchData ?? []);
+        resolvedBranches = branchData ?? [];
+        setBranches(resolvedBranches);
       } else {
         const { data: fallbackData, error: fallbackError } = await supabase
           .from('branches')
           .select('*')
           .order('branch_code');
         if (fallbackError) throw fallbackError;
-        setBranches(fallbackData ?? []);
+        resolvedBranches = (fallbackData ?? []) as Branch[];
+        setBranches(resolvedBranches);
       }
 
       const codes = await getLoginCodesForUser(userId);
@@ -149,13 +166,28 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
       for (const code of codes) {
         codeMap[code.branch_id] = code;
       }
+
+      // 有料プランでは全店舗でログインコードを自動生成する（手動「生成」は不要）
+      if (resolvedBranches.length > 0) {
+        const activeSubId = await getActiveSubscriptionId();
+        if (activeSubId) {
+          for (const branch of resolvedBranches) {
+            if (codeMap[branch.id]) continue;
+            const createdCode = await createLoginCode(branch.id, activeSubId, userId);
+            if (createdCode) {
+              codeMap[branch.id] = createdCode;
+            }
+          }
+        }
+      }
+
       setLoginCodes(codeMap);
     } catch (e) {
       console.error('Failed to load stores:', e);
     } finally {
       setLoading(false);
     }
-  }, [isFreePlan, userId]);
+  }, [getActiveSubscriptionId, isFreePlan, userId]);
 
   useEffect(() => {
     loadData();
@@ -223,15 +255,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     }
   };
 
-  const handleCreateCode = async (branchId: string) => {
-    if (!userId || !subscriptionId) return;
-
-    const newCode = await createLoginCode(branchId, subscriptionId, userId);
-    if (newCode) {
-      setLoginCodes((prev) => ({ ...prev, [branchId]: newCode }));
-    }
-  };
-
   // ─── Branch code helpers ───
 
   const generateBranchCode = (existingBranches: Array<Pick<Branch, 'branch_code'>>): string => {
@@ -251,27 +274,15 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     return generateBranchCode((data ?? []) as Array<Pick<Branch, 'branch_code'>>);
   }, []);
 
-  const getActiveSubscriptionId = useCallback(async (): Promise<string | null> => {
-    if (subscriptionId) return subscriptionId;
-    if (!userId) return null;
-
-    const { data } = await supabase
-      .from('subscriptions')
-      .select('id')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    return data?.id ?? null;
-  }, [subscriptionId, userId]);
-
   // ─── Store CRUD ───
 
   const handleCreateStore = async () => {
     if (!userId) return;
     if (!isFreePlan && Number.isFinite(maxStores) && branches.length >= maxStores) {
-      alertNotify('店舗上限', '現在のプランではこれ以上店舗を追加できません');
+      alertNotify(
+        '店舗上限',
+        `現在のプランでは最大${maxStores}店舗までです。上位プランへ変更すると追加できます。`
+      );
       return;
     }
 
@@ -346,14 +357,12 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   const handleOpenRename = (branch: Branch) => {
     setEditingBranch(branch);
     setEditingBranchName(branch.branch_name);
-    setEditingBranchPassword(branch.password ?? '');
     setEditingBranchStatus(branch.status ?? 'active');
   };
 
   const handleCloseRename = () => {
     setEditingBranch(null);
     setEditingBranchName('');
-    setEditingBranchPassword('');
     setEditingBranchStatus('active');
     setSavingBranchName(false);
   };
@@ -369,11 +378,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
       alertNotify('入力エラー', '店舗名を入力してください');
       return;
     }
-    if (!editingBranchPassword.trim()) {
-      alertNotify('入力エラー', 'パスワードを入力してください');
-      return;
-    }
-
     setSavingBranchName(true);
     try {
       const storedBranch = await getBranch();
@@ -382,7 +386,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         const nextBranch = {
           ...storedBranch,
           branch_name: nextName,
-          password: editingBranchPassword.trim(),
           status: editingBranchStatus,
         };
         await saveBranch(nextBranch);
@@ -392,12 +395,11 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           .from('branches')
           .update({
             branch_name: nextName,
-            password: editingBranchPassword.trim(),
             status: editingBranchStatus,
           })
           .eq('id', editingBranch.id)
           .eq('owner_id', userId)
-          .select('id, branch_name, password, status')
+          .select('id, branch_name, status')
           .single();
         if (error) throw error;
         if (!data) throw new Error('更新対象の店舗が見つかりません');
@@ -408,7 +410,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
               ? {
                   ...b,
                   branch_name: nextName,
-                  password: editingBranchPassword.trim(),
                   status: editingBranchStatus,
                 }
               : b,
@@ -422,7 +423,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           await saveBranch({
             ...storedBranch,
             branch_name: nextName,
-            password: editingBranchPassword.trim(),
             status: editingBranchStatus,
           });
         }
@@ -845,9 +845,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
             <Text className="text-base font-semibold text-gray-900" numberOfLines={1}>
               {item.branch_name}
             </Text>
-            <View className="flex-row items-center gap-3 mt-1">
-              <Text className="text-gray-500 text-xs">PW: {item.password}</Text>
-            </View>
             {/* Login code inline */}
             {!isFreePlan && (
               <View className="flex-row items-center gap-2 mt-1.5">
@@ -871,12 +868,9 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
                     </TouchableOpacity>
                   </View>
                 ) : (
-                  <TouchableOpacity
-                    onPress={() => handleCreateCode(item.id)}
-                    className="px-2 py-0.5 bg-blue-50 rounded"
-                  >
-                    <Text className="text-blue-600 text-[10px] font-medium">生成</Text>
-                  </TouchableOpacity>
+                  <View className="px-2 py-0.5 bg-gray-100 rounded">
+                    <Text className="text-gray-500 text-[10px] font-medium">準備中...</Text>
+                  </View>
                 )}
               </View>
             )}
@@ -1000,12 +994,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           onChangeText={setEditingBranchName}
           placeholder="店舗名を入力"
         />
-        <Input
-          label="パスワード"
-          value={editingBranchPassword}
-          onChangeText={setEditingBranchPassword}
-          placeholder="4桁以上を推奨"
-        />
         <View className="mt-2">
           <Text className="text-gray-700 font-medium mb-2">稼働状態</Text>
           <View className="flex-row gap-2">
@@ -1035,7 +1023,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           {editingBranchStatus === 'inactive' && (
             <View className="mt-2 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
               <Text className="text-yellow-700 text-xs">
-                停止中にすると「店舗に入る」「支店番号+パスワードログイン」「ログインコードログイン」が利用できなくなります。
+                停止中にすると「店舗に入る」「ログインコードログイン」が利用できなくなります。
               </Text>
             </View>
           )}
@@ -1049,7 +1037,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
               title="保存"
               onPress={handleRenameStore}
               loading={savingBranchName}
-              disabled={!editingBranchName.trim() || !editingBranchPassword.trim()}
+              disabled={!editingBranchName.trim()}
             />
           </View>
         </View>

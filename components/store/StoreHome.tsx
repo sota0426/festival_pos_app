@@ -17,6 +17,7 @@ import {
   getDefaultExpenseRecorder,
   getBranchRecorders, getRecorderAccessLogs, getBranchRecorderConfig,
   saveBranchRecorders, saveRecorderAccessLogs, saveBranchRecorderConfig,
+  getBranchKioskExitPin, saveBranchKioskExitPin,
 } from '../../lib/storage';
 import {
   createBranchRecorder,
@@ -85,6 +86,8 @@ interface StoreHomeProps {
   onNavigateToCustomerOrder: () => void;
   onNavigateToPricing?: () => void;
   onNavigateToDemoHome?: () => void;
+  autoOpenKioskPinSettings?: boolean;
+  onHandledAutoOpenKioskPinSettings?: () => void;
   onBranchUpdated?: (branch: Branch) => void;
   onLogout: () => void;
 }
@@ -96,6 +99,41 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'budget', label: '会計' },
   { key: 'settings', label: '設定' },
 ];
+
+const TAB_COLOR_STYLES: Record<
+  TabKey,
+  {
+    activeBorder: string;
+    activeText: string;
+    activeBg: string;
+  }
+> = {
+  main: {
+    activeBorder: 'border-sky-500',
+    activeText: 'text-sky-600',
+    activeBg: 'bg-sky-50',
+  },
+  sub: {
+    activeBorder: 'border-orange-400',
+    activeText: 'text-orange-500',
+    activeBg: 'bg-orange-50',
+  },
+  share: {
+    activeBorder: 'border-indigo-500',
+    activeText: 'text-indigo-600',
+    activeBg: 'bg-indigo-50',
+  },
+  budget: {
+    activeBorder: 'border-emerald-500',
+    activeText: 'text-emerald-600',
+    activeBg: 'bg-emerald-50',
+  },
+  settings: {
+    activeBorder: 'border-slate-500',
+    activeText: 'text-slate-700',
+    activeBg: 'bg-slate-100',
+  },
+};
 
 const DATA_CATEGORY_DEFS: { key: ExportableCategory; label: string; desc: string }[] = [
   { key: 'sales', label: '売上データ', desc: '取引履歴・会計データ' },
@@ -117,8 +155,31 @@ const DATA_CATEGORY_LABELS: Record<DeleteCategory, string> = {
 };
 
 const MANAGER_RECORDER_PREFIX = '管理者';
+const ADMIN_RECORDER_GROUP_ID = 0;
 const isManagerRecorderName = (name: string): boolean => name.trim().startsWith(MANAGER_RECORDER_PREFIX);
+const isStoreChiefRecorderName = (name: string): boolean => name.trim() === '店長';
+const isAdminGroupRecorder = (recorder: Pick<BranchRecorder, 'group_id' | 'recorder_name'>): boolean =>
+  (recorder.group_id ?? 1) === ADMIN_RECORDER_GROUP_ID ||
+  isManagerRecorderName(recorder.recorder_name) ||
+  isStoreChiefRecorderName(recorder.recorder_name);
 const CASHLESS_LABEL_TEMPLATES = ['PayPay', 'QR決済', 'キャッシュレス'] as const;
+
+const sortRecordersForDisplay = (items: BranchRecorder[]): BranchRecorder[] => {
+  const rank = (name: string): number => {
+    const normalized = name.trim();
+    if (isManagerRecorderName(normalized)) return 0;
+    if (normalized === '店長') return 1;
+    if (/^店員\d+$/.test(normalized)) return 2;
+    return 3;
+  };
+  return [...items].sort((a, b) => {
+    const rankDiff = rank(a.recorder_name) - rank(b.recorder_name);
+    if (rankDiff !== 0) return rankDiff;
+    const groupDiff = (a.group_id ?? 1) - (b.group_id ?? 1);
+    if (groupDiff !== 0) return groupDiff;
+    return a.recorder_name.localeCompare(b.recorder_name, 'ja');
+  });
+};
 
 const toCsvCell = (value: unknown): string => {
   const normalized =
@@ -226,6 +287,8 @@ export const StoreHome = ({
   onNavigateToCustomerOrder,
   onNavigateToPricing,
   onNavigateToDemoHome,
+  autoOpenKioskPinSettings = false,
+  onHandledAutoOpenKioskPinSettings,
   onBranchUpdated,
   onLogout,
 }: StoreHomeProps) => {
@@ -241,12 +304,17 @@ export const StoreHome = ({
   const [cashlessLabel, setCashlessLabel] = useState('PayPay');
   const [showCashlessLabelEditor, setShowCashlessLabelEditor] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [showKioskPinModal, setShowKioskPinModal] = useState(false);
   const [showBranchNameModal, setShowBranchNameModal] = useState(false);
   const [branchNameInput, setBranchNameInput] = useState(branch.branch_name);
   const [branchNameError, setBranchNameError] = useState('');
   const [savingBranchName, setSavingBranchName] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [kioskExitPin, setKioskExitPin] = useState('');
+  const [kioskExitPinConfirm, setKioskExitPinConfirm] = useState('');
+  const [kioskExitPinError, setKioskExitPinError] = useState('');
+  const [savingKioskExitPin, setSavingKioskExitPin] = useState(false);
   const [passwordError, setPasswordError] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
   const [showDataDeleteModal, setShowDataDeleteModal] = useState(false);
@@ -269,6 +337,7 @@ export const StoreHome = ({
   const [importSourceName, setImportSourceName] = useState('');
   const [importError, setImportError] = useState('');
   const isFreeAuthenticatedPlan = authState.status === 'authenticated' && isFreePlan;
+  const canSyncToSupabase = isSupabaseConfigured() && authState.status !== 'demo' && !isFreeAuthenticatedPlan;
 
   // Restriction management state
   const [restrictions, setRestrictions] = useState<RestrictionSettings>({
@@ -321,7 +390,6 @@ export const StoreHome = ({
   const [recorderSessionChecked, setRecorderSessionChecked] = useState(false);
   const [currentDeviceId, setCurrentDeviceId] = useState('');
   const [recorderLogsLoaded, setRecorderLogsLoaded] = useState(false);
-  const canSyncToSupabase = isSupabaseConfigured() && authState.status !== 'demo' && !isFreeAuthenticatedPlan;
   const managerRecorderDefaultName = useMemo(() => {
     if (authState.status !== 'authenticated') return null;
     const raw =
@@ -331,6 +399,11 @@ export const StoreHome = ({
       'オーナー';
     return `${MANAGER_RECORDER_PREFIX}（${raw}）`;
   }, [authState]);
+  const managerRecorder = useMemo(
+    () => recorders.find((item) => isManagerRecorderName(item.recorder_name)) ?? null,
+    [recorders],
+  );
+  const isAuthenticatedManager = authState.status === 'authenticated';
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -349,12 +422,23 @@ export const StoreHome = ({
           setPaymentMethods(settings.payment_methods);
         }
         setCashlessLabel(settings.cashless_label || 'PayPay');
+        const branchKioskPin = String(branch.kiosk_exit_pin ?? '').trim();
+        const localKioskPin = await getBranchKioskExitPin(branch.id);
+        const resolvedKioskPin = canSyncToSupabase ? (branchKioskPin || localKioskPin) : localKioskPin;
+        setKioskExitPin(resolvedKioskPin);
+        if (resolvedKioskPin !== localKioskPin) {
+          await saveBranchKioskExitPin(branch.id, resolvedKioskPin);
+        }
+        // 互換: 旧グローバルkiosk_exit_pinは使わないので空に戻す
+        if (String(settings.kiosk_exit_pin ?? '').trim()) {
+          await saveStoreSettings({ ...settings, kiosk_exit_pin: '' });
+        }
       }
       const r = await getRestrictions();
       setRestrictions(r);
     };
     loadSettings();
-  }, [authState.status]);
+  }, [authState.status, branch.id, branch.kiosk_exit_pin, canSyncToSupabase]);
 
   useEffect(() => {
     if (authState.status === 'login_code') {
@@ -370,6 +454,18 @@ export const StoreHome = ({
   }, [isFreeAuthenticatedPlan, settingsView]);
 
   useEffect(() => {
+    if (!autoOpenKioskPinSettings) return;
+    setActiveTab('settings');
+    setSettingsView('admin');
+    const currentPin = String(kioskExitPin ?? '').trim();
+    setKioskExitPin(currentPin);
+    setKioskExitPinConfirm(currentPin);
+    setKioskExitPinError('');
+    setShowKioskPinModal(true);
+    onHandledAutoOpenKioskPinSettings?.();
+  }, [autoOpenKioskPinSettings, kioskExitPin, onHandledAutoOpenKioskPinSettings]);
+
+  useEffect(() => {
     const refreshBranchName = async () => {
       if (!canSyncToSupabase) return;
       const { data, error } = await supabase
@@ -381,14 +477,15 @@ export const StoreHome = ({
       if (
         data.branch_name !== branch.branch_name ||
         data.password !== branch.password ||
-        data.status !== branch.status
+        data.status !== branch.status ||
+        (data.kiosk_exit_pin ?? '') !== (branch.kiosk_exit_pin ?? '')
       ) {
         await saveBranch(data);
         onBranchUpdated?.(data);
       }
     };
     refreshBranchName();
-  }, [branch.id, branch.branch_name, branch.password, branch.status, canSyncToSupabase, onBranchUpdated]);
+  }, [branch.id, branch.branch_name, branch.password, branch.status, branch.kiosk_exit_pin, canSyncToSupabase, onBranchUpdated]);
 
   useEffect(() => {
     setBranchNameInput(branch.branch_name);
@@ -452,8 +549,23 @@ export const StoreHome = ({
   }, [authState, branch.id, canSyncToSupabase]);
 
   useEffect(() => {
+    let cancelled = false;
+
     const loadRecorders = async () => {
       let items = await fetchBranchRecorders(branch.id, canSyncToSupabase);
+
+      // 使い始めやすいように、既定の登録者（店長/店員1-3）は不足分を補完する
+      for (const defaultName of ['店長', '店員1', '店員2', '店員3']) {
+        if (items.some((item) => item.recorder_name === defaultName && item.is_active)) continue;
+        const created = await createBranchRecorder(
+          branch.id,
+          defaultName,
+          defaultName === '店長' ? '店長' : '',
+          defaultName === '店長' ? ADMIN_RECORDER_GROUP_ID : 1,
+          canSyncToSupabase,
+        );
+        items = created.recorders;
+      }
 
       if (authState.status === 'authenticated' && managerRecorderDefaultName) {
         const hasManager = items.some((item) => isManagerRecorderName(item.recorder_name));
@@ -462,21 +574,25 @@ export const StoreHome = ({
             branch.id,
             managerRecorderDefaultName,
             '管理者',
-            1,
+            ADMIN_RECORDER_GROUP_ID,
             canSyncToSupabase,
           );
           items = created.recorders;
         }
       }
 
-      setRecorders(items);
-      if (items.length > 0 && !sessionRecorderId) {
+      if (cancelled) return;
+      setRecorders(sortRecordersForDisplay(items));
+      if (items.length > 0) {
         const manager = items.find((item) => isManagerRecorderName(item.recorder_name));
-        setSessionRecorderId(manager?.id ?? items[0].id);
+        setSessionRecorderId((prev) => prev || manager?.id || items[0].id);
       }
     };
     loadRecorders();
-  }, [authState.status, branch.id, canSyncToSupabase, managerRecorderDefaultName, sessionRecorderId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [authState.status, branch.id, canSyncToSupabase, managerRecorderDefaultName]);
 
   useEffect(() => {
     const loadRecorderConfig = async () => {
@@ -491,6 +607,13 @@ export const StoreHome = ({
     if (recorders.some((item) => item.id === sessionRecorderId)) return;
     setSessionRecorderId(recorders[0]?.id ?? '');
   }, [recorders, sessionRecorderId]);
+
+  useEffect(() => {
+    if (!isAuthenticatedManager) return;
+    if (!managerRecorder) return;
+    if (sessionRecorderId === managerRecorder.id) return;
+    setSessionRecorderId(managerRecorder.id);
+  }, [isAuthenticatedManager, managerRecorder, sessionRecorderId]);
 
   useEffect(() => {
     const loadDeviceId = async () => {
@@ -571,11 +694,11 @@ export const StoreHome = ({
       } else {
         alertNotify('エラー', '登録者の追加に失敗しました');
       }
-      setRecorders(result.recorders);
+      setRecorders(sortRecordersForDisplay(result.recorders));
       return;
     }
 
-    setRecorders(result.recorders);
+    setRecorders(sortRecordersForDisplay(result.recorders));
     setNewRecorderName('');
     setNewRecorderNote('');
     setNewRecorderGroupId(1);
@@ -610,6 +733,7 @@ export const StoreHome = ({
     if (!selectedRecorderForLogs) return;
     const rawName = selectedRecorderEditName.trim();
     const isManager = isManagerRecorderName(selectedRecorderForLogs.recorder_name);
+    const isStoreChief = isStoreChiefRecorderName(selectedRecorderForLogs.recorder_name);
     const name =
       isManager && !isManagerRecorderName(rawName)
         ? `${MANAGER_RECORDER_PREFIX}（${rawName || 'オーナー'}）`
@@ -627,7 +751,7 @@ export const StoreHome = ({
         {
           recorderName: name,
           note: selectedRecorderEditNote,
-          groupId: selectedRecorderEditGroupId,
+          groupId: (isManager || isStoreChief) ? ADMIN_RECORDER_GROUP_ID : selectedRecorderEditGroupId,
         },
         canSyncToSupabase,
       );
@@ -637,10 +761,10 @@ export const StoreHome = ({
         } else {
           alertNotify('エラー', '登録者の更新に失敗しました');
         }
-        setRecorders(result.recorders);
+        setRecorders(sortRecordersForDisplay(result.recorders));
         return;
       }
-      setRecorders(result.recorders);
+      setRecorders(sortRecordersForDisplay(result.recorders));
       const updated = result.recorders.find((item) => item.id === selectedRecorderForLogs.id);
       if (updated) {
         setSelectedRecorderForLogs(updated);
@@ -675,11 +799,11 @@ export const StoreHome = ({
       setDeletingRecorder(true);
       const result = await deactivateBranchRecorder(branch.id, selectedRecorderForLogs.id, canSyncToSupabase);
       if (!result.ok) {
-        setRecorders(result.recorders);
+        setRecorders(sortRecordersForDisplay(result.recorders));
         alertNotify('エラー', '登録者の削除に失敗しました');
         return;
       }
-      setRecorders(result.recorders);
+      setRecorders(sortRecordersForDisplay(result.recorders));
       if (sessionRecorderId === selectedRecorderForLogs.id) {
         setSessionRecorderId(result.recorders[0]?.id ?? '');
       }
@@ -693,7 +817,9 @@ export const StoreHome = ({
   };
 
   const handleSaveRecorderSession = async () => {
-    const selected = recorders.find((item) => item.id === sessionRecorderId);
+    const selected = isAuthenticatedManager
+      ? managerRecorder
+      : recorders.find((item) => item.id === sessionRecorderId);
     if (!selected) {
       alertNotify('エラー', '登録者を選択してください');
       return;
@@ -794,6 +920,16 @@ export const StoreHome = ({
       .sort((a, b) => new Date(b.accessed_at).getTime() - new Date(a.accessed_at).getTime())[0];
     return latestByDevice?.recorder_name ?? null;
   }, [allRecorderLogs, currentDeviceId, recorders, sessionRecorderId]);
+
+  const currentSessionRecorder = useMemo(() => {
+    if (isAuthenticatedManager) return managerRecorder;
+    return recorders.find((item) => item.id === sessionRecorderId) ?? null;
+  }, [isAuthenticatedManager, managerRecorder, recorders, sessionRecorderId]);
+
+  const canOpenAdminSettings = useMemo(() => {
+    if (!currentSessionRecorder) return false;
+    return isAdminGroupRecorder(currentSessionRecorder);
+  }, [currentSessionRecorder]);
 
   const selectedRecorderDevices = useMemo(() => {
     const latestByDevice = new Map<string, RecorderAccessLog>();
@@ -912,6 +1048,13 @@ export const StoreHome = ({
     setPasswordError('');
   };
 
+  const resetKioskPinForm = () => {
+    const currentPin = String(kioskExitPin ?? '').trim();
+    setKioskExitPin(currentPin);
+    setKioskExitPinConfirm(currentPin);
+    setKioskExitPinError('');
+  };
+
   const resetBranchNameForm = () => {
     setBranchNameInput(branch.branch_name);
     setBranchNameError('');
@@ -975,35 +1118,63 @@ export const StoreHome = ({
 
     setSavingPassword(true);
     try {
-      const nextPassword = newPassword.trim();
-
-      if (canSyncToSupabase) {
-        const { data, error } = await supabase
-          .from('branches')
-          .update({ password: nextPassword })
-          .eq('id', branch.id)
-          .select('*')
-          .single();
-        if (error) throw error;
-        if (!data) throw new Error('店舗データの更新に失敗しました');
-
-        await saveBranch(data);
-        onBranchUpdated?.(data);
-      } else {
-        const updatedBranch: Branch = { ...branch, password: nextPassword };
-        await saveBranch(updatedBranch);
-        onBranchUpdated?.(updatedBranch);
-      }
-
       await saveAdminPassword(newPassword);
       setShowPasswordModal(false);
       resetPasswordForm();
-      alertNotify('完了', '管理者パスワードを変更しました');
+      alertNotify('完了', '管理者パスワードを変更しました（この端末に保存）');
     } catch (error) {
       console.error('Error changing password:', error);
       setPasswordError('パスワードの変更に失敗しました');
     } finally {
       setSavingPassword(false);
+    }
+  };
+
+  const handleSaveKioskExitPin = async () => {
+    const nextPin = kioskExitPin.trim();
+    if (!nextPin) {
+      setKioskExitPinError('解除PINを入力してください');
+      return;
+    }
+    if (!/^\d{4,6}$/.test(nextPin)) {
+      setKioskExitPinError('解除PINは4〜6桁の数字で入力してください');
+      return;
+    }
+    if (nextPin !== kioskExitPinConfirm.trim()) {
+      setKioskExitPinError('解除PIN（確認）が一致しません');
+      return;
+    }
+    setSavingKioskExitPin(true);
+    setKioskExitPinError('');
+    try {
+      await saveBranchKioskExitPin(branch.id, nextPin);
+
+      if (canSyncToSupabase) {
+        const { data, error } = await supabase
+          .from('branches')
+          .update({ kiosk_exit_pin: nextPin })
+          .eq('id', branch.id)
+          .select('*')
+          .single();
+        if (error) throw error;
+        if (data) {
+          await saveBranch(data);
+          onBranchUpdated?.(data);
+        }
+      } else {
+        const updatedBranch: Branch = { ...branch, kiosk_exit_pin: nextPin };
+        await saveBranch(updatedBranch);
+        onBranchUpdated?.(updatedBranch);
+      }
+
+      setShowKioskPinModal(false);
+      setKioskExitPinConfirm(nextPin);
+      alertNotify('完了', 'キオスク解除PINを保存しました');
+    } catch (error) {
+      console.error('Error saving kiosk exit pin:', error);
+      setKioskExitPinError('キオスク解除PINの保存に失敗しました');
+    } finally {
+      setSavingKioskExitPin(false);
     }
   };
 
@@ -1149,7 +1320,7 @@ export const StoreHome = ({
           await saveRecorderAccessLogs(branch.id, []);
           await saveBranchRecorderConfig(branch.id, {
             branch_id: branch.id,
-            registration_mode: 'restricted',
+            registration_mode: 'open',
             updated_at: new Date().toISOString(),
           });
         } catch (e) {
@@ -2119,24 +2290,28 @@ export const StoreHome = ({
 
       {/* Tab Bar */}
       <View className="flex-row bg-white border-b border-gray-200">
-        {TABS.map((tab) => (
+        {TABS.map((tab) => {
+          const colorStyle = TAB_COLOR_STYLES[tab.key];
+          const isActive = activeTab === tab.key;
+          return (
           <TouchableOpacity
             key={tab.key}
             onPress={() => handleTabChange(tab.key)}
             activeOpacity={0.7}
             className={`flex-1 py-3 items-center border-b-2 ${
-              activeTab === tab.key ? 'border-blue-500' : 'border-transparent'
+              isActive ? `${colorStyle.activeBorder} ${colorStyle.activeBg}` : 'border-transparent'
             }`}
           >
             <Text
               className={`text-base font-bold ${
-                activeTab === tab.key ? 'text-blue-600' : 'text-gray-400'
+                isActive ? colorStyle.activeText : 'text-gray-400'
               }`}
             >
               {tab.label}
             </Text>
           </TouchableOpacity>
-        ))}
+          );
+        })}
       </View>
 
       {/* Tab Content */}
@@ -2204,25 +2379,25 @@ export const StoreHome = ({
 
             {/* 注文受付 */}
             <TouchableOpacity onPress={() => handleSubFeatureNavigation(onNavigateToOrderBoard)} activeOpacity={0.8}>
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-orange-300 opacity-70' : 'bg-orange-400'} p-4`}>
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-orange-300 opacity-70' : 'bg-orange-500'} p-4`}>
                 <Text className="text-white text-2xl font-bold text-center">注文受付</Text>
-                <Text className="text-amber-100 text-center mt-2">別端末で注文を表示・管理</Text>
+                <Text className="text-orange-100 text-center mt-2">別端末で注文を表示・管理</Text>
               </Card>
             </TouchableOpacity>
 
             {/* 来客カウンター */}
             <TouchableOpacity onPress={() => handleSubFeatureNavigation(onNavigateToCounter)} activeOpacity={0.8}>
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-purple-400 opacity-70' : 'bg-purple-500'} p-4`}>
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-amber-300 opacity-70' : 'bg-amber-500'} p-4`}>
                 <Text className="text-white text-2xl font-bold text-center">来客カウンター</Text>
-                <Text className="text-purple-100 text-center mt-2">ボタンをタップして来場者数を記録</Text>
+                <Text className="text-amber-100 text-center mt-2">ボタンをタップして来場者数を記録</Text>
               </Card>
             </TouchableOpacity>
 
             {/* モバイルオーダー */}
             <TouchableOpacity onPress={() => handleSubFeatureNavigation(onNavigateToCustomerOrder)} activeOpacity={0.8}>
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-teal-400 opacity-70' : 'bg-teal-500'} p-4`}>
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-rose-300 opacity-70' : 'bg-rose-500'} p-4`}>
                 <Text className="text-white text-2xl font-bold text-center">モバイルオーダー</Text>
-                <Text className="text-teal-100 text-center mt-2">この端末を客用注文画面として使用</Text>
+                <Text className="text-rose-100 text-center mt-2">この端末を客用注文画面として使用</Text>
               </Card>
             </TouchableOpacity>
 
@@ -2276,9 +2451,9 @@ export const StoreHome = ({
               }}
               activeOpacity={0.8}
             >
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-rose-400 opacity-70' : 'bg-rose-500'} p-4`}>
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-indigo-300 opacity-70' : 'bg-indigo-500'} p-4`}>
                 <Text className="text-white text-2xl font-bold text-center">在庫確認</Text>
-                <Text className="text-rose-100 text-center mt-2">材料・在庫をみんなで共有</Text>
+                <Text className="text-indigo-100 text-center mt-2">材料・在庫をみんなで共有</Text>
               </Card>
             </TouchableOpacity>
 
@@ -2295,7 +2470,7 @@ export const StoreHome = ({
               }}
               activeOpacity={0.8}
             >
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-blue-400 opacity-70' : 'bg-blue-500'} p-4`}>
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-blue-300 opacity-70' : 'bg-blue-500'} p-4`}>
                 <Text className="text-white text-2xl font-bold text-center">仕事チェックリスト</Text>
                 <Text className="text-blue-100 text-center mt-2">やることをみんなで確認・管理</Text>
               </Card>
@@ -2314,9 +2489,9 @@ export const StoreHome = ({
               }}
               activeOpacity={0.8}
             >
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-indigo-400 opacity-70' : 'bg-indigo-500'} p-4`}>
+              <Card className={`${isFreeAuthenticatedPlan ? 'bg-violet-300 opacity-70' : 'bg-violet-500'} p-4`}>
                 <Text className="text-white text-2xl font-bold text-center">シフト・引き継ぎ</Text>
-                <Text className="text-indigo-100 text-center mt-2">担当・引き継ぎ事項を共有</Text>
+                <Text className="text-violet-100 text-center mt-2">担当・引き継ぎ事項を共有</Text>
               </Card>
             </TouchableOpacity>
           </View>
@@ -2333,16 +2508,16 @@ export const StoreHome = ({
             </TouchableOpacity>
 
             <TouchableOpacity onPress={onNavigateToBudgetBreakeven} activeOpacity={0.8}>
-              <Card className="bg-violet-500 p-4">
+              <Card className="bg-teal-500 p-4">
                 <Text className="text-white text-2xl  font-bold text-center">損益分岐点の計算</Text>
-                <Text className="text-violet-100 text-center mt-2">価格・原価から必要販売数を試算</Text>
+                <Text className="text-teal-100 text-center mt-2">価格・原価から必要販売数を試算</Text>
               </Card>
             </TouchableOpacity>
 
             <TouchableOpacity onPress={onNavigateToBudget} activeOpacity={0.8}>
-              <Card className="bg-indigo-500 p-4">
+              <Card className="bg-cyan-600 p-4">
                 <Text className="text-white text-2xl  font-bold text-center">会計処理</Text>
-                <Text className="text-indigo-100 text-center mt-2">予算設定・収支確認・報告書の作成</Text>
+                <Text className="text-cyan-100 text-center mt-2">予算設定・収支確認・報告書の作成</Text>
               </Card>
             </TouchableOpacity>
 
@@ -2357,25 +2532,34 @@ export const StoreHome = ({
             {settingsView === 'top' && (
               <>
                 <TouchableOpacity onPress={() => setSettingsView('payment')} activeOpacity={0.8}>
-                  <Card className="bg-blue-500 p-4">
+                  <Card className="bg-slate-600 p-4">
                     <Text className="text-white text-2xl font-bold text-center">支払い設定</Text>
-                    <Text className="text-blue-100 text-center mt-2">レジで使用する支払い方法を選択</Text>
+                    <Text className="text-slate-200 text-center mt-2">レジで使用する支払い方法を選択</Text>
                   </Card>
                 </TouchableOpacity>
 
                 {!isFreeAuthenticatedPlan ? (
                   <TouchableOpacity onPress={() => setSettingsView('recorder')} activeOpacity={0.8}>
-                    <Card className="bg-emerald-500 p-4">
+                    <Card className="bg-indigo-600 p-4">
                       <Text className="text-white text-2xl font-bold text-center">登録者設定</Text>
-                      <Text className="text-emerald-100 text-center mt-2">登録者の追加とアクセス端末の確認</Text>
+                      <Text className="text-indigo-100 text-center mt-2">登録者の追加とアクセス端末の確認</Text>
                     </Card>
                   </TouchableOpacity>
                 ) : null}
 
-                <TouchableOpacity onPress={() => setSettingsView('admin')} activeOpacity={0.8}>
-                  <Card className="bg-gray-600 p-4">
+                <TouchableOpacity
+                  onPress={() => {
+                    if (!canOpenAdminSettings) {
+                      alertNotify('案内', '管理者設定は「管理者グループ」の登録者のみアクセスできます。');
+                      return;
+                    }
+                    setSettingsView('admin');
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Card className="bg-slate-800 p-4">
                     <Text className="text-white text-2xl font-bold text-center">管理者設定</Text>
-                    <Text className="text-gray-300 text-center mt-2">パスワード・制限・データ管理</Text>
+                    <Text className="text-slate-300 text-center mt-2">パスワード・制限・データ管理（管理者グループ）</Text>
                   </Card>
                 </TouchableOpacity>
 
@@ -2688,7 +2872,9 @@ export const StoreHome = ({
                             .map(([groupId, list]) => (
                               <View key={`group-${groupId}`} className="mb-1">
                                 <View className="bg-indigo-50 rounded-lg px-3 py-1.5 mb-1">
-                                  <Text className="text-indigo-700 text-xs font-bold">グループ {groupId}</Text>
+                                  <Text className="text-indigo-700 text-xs font-bold">
+                                    {groupId === ADMIN_RECORDER_GROUP_ID ? '管理者グループ' : `グループ ${groupId}`}
+                                  </Text>
                                 </View>
                                 <View className="gap-2">
                                   {list.map((recorder) => {
@@ -2704,6 +2890,10 @@ export const StoreHome = ({
                                         {isManagerRecorderName(recorder.recorder_name) ? (
                                           <Text className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold mt-1 self-start">
                                             役職: 管理者
+                                          </Text>
+                                        ) : isStoreChiefRecorderName(recorder.recorder_name) ? (
+                                          <Text className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold mt-1 self-start">
+                                            役職: 店長
                                           </Text>
                                         ) : null}
                                         {recorder.note ? (
@@ -2736,10 +2926,14 @@ export const StoreHome = ({
                                     <Text className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">
                                       管理者
                                     </Text>
+                                  ) : isStoreChiefRecorderName(recorder.recorder_name) ? (
+                                    <Text className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">
+                                      店長
+                                    </Text>
                                   ) : null}
                                   {hasMultipleGroups ? (
                                     <Text className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-semibold">
-                                      G{recorder.group_id}
+                                      {recorder.group_id === ADMIN_RECORDER_GROUP_ID ? '管理者' : `G${recorder.group_id}`}
                                     </Text>
                                   ) : null}
                                 </View>
@@ -2803,6 +2997,37 @@ export const StoreHome = ({
                     <View className="flex-1">
                       <Text className="text-slate-900 font-semibold">パスワード設定</Text>
                       <Text className="text-slate-500 text-xs">管理者パスワードの変更</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() =>
+                      withRestrictionCheck('settings_access', () => {
+                        resetKioskPinForm();
+                        setShowKioskPinModal(true);
+                      })
+                    }
+                    activeOpacity={0.8}
+                    className="flex-row items-center gap-3 rounded-xl border border-teal-200 bg-teal-50 px-3 py-3 mb-2"
+                  >
+                    <View className="w-9 h-9 rounded-full bg-teal-200 items-center justify-center">
+                      <Text className="text-teal-700 font-bold">MO</Text>
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-teal-900 font-semibold">モバイルオーダー設定</Text>
+                      <Text className="text-teal-700 text-xs">
+                        キオスク解除PIN（店舗共通）を設定
+                      </Text>
+                    </View>
+                    <View className="items-end">
+                      <Text className="text-teal-900 text-xs font-semibold">
+                        {kioskExitPin ? '設定済み' : '未設定'}
+                      </Text>
+                      {kioskExitPin ? (
+                        <Text className="text-teal-700 text-[10px]">
+                          {'*'.repeat(Math.max(0, kioskExitPin.length - 2)) + kioskExitPin.slice(-2)}
+                        </Text>
+                      ) : null}
                     </View>
                   </TouchableOpacity>
 
@@ -2940,6 +3165,12 @@ export const StoreHome = ({
         }}
         title="管理者パスワード変更"
       >
+        <Text className="text-slate-500 text-xs mb-2">
+          デフォルトの管理者パスワードは「0000」です
+        </Text>
+        <Text className="text-slate-500 text-xs mb-2">
+          このパスワードは店舗ログイン用ではなく、設定・削除などの管理者確認に使います（この端末に保存）。
+        </Text>
         <Input
           label="新しいパスワード"
           value={newPassword}
@@ -2976,6 +3207,65 @@ export const StoreHome = ({
               onPress={handleChangePassword}
               loading={savingPassword}
               disabled={!newPassword.trim() || !confirmPassword.trim()}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showKioskPinModal}
+        onClose={() => {
+          setShowKioskPinModal(false);
+          resetKioskPinForm();
+        }}
+        title="モバイルオーダー設定"
+      >
+        <Text className="text-slate-500 text-xs mb-2">
+          キオスク解除時に使う店舗共通PINです。すべてのタブレットで同じPINを使用します。
+        </Text>
+        <Input
+          label="キオスク解除PIN（4〜6桁の数字）"
+          value={kioskExitPin}
+          onChangeText={(text) => {
+            setKioskExitPin(text.replace(/[^\d]/g, '').slice(0, 6));
+            setKioskExitPinError('');
+          }}
+          placeholder="例：2468"
+          keyboardType="numeric"
+        />
+        <Input
+          label="キオスク解除PIN（確認）"
+          value={kioskExitPinConfirm}
+          onChangeText={(text) => {
+            setKioskExitPinConfirm(text.replace(/[^\d]/g, '').slice(0, 6));
+            setKioskExitPinError('');
+          }}
+          placeholder="もう一度入力"
+          keyboardType="numeric"
+          error={kioskExitPinError}
+        />
+        <View className="bg-teal-50 rounded-lg px-3 py-2 mt-1">
+          <Text className="text-teal-800 text-xs">
+            モバイルオーダーのキオスク解除時は、管理者パスワードではなくこのPINを使用します。
+          </Text>
+        </View>
+        <View className="flex-row gap-3 mt-2">
+          <View className="flex-1">
+            <Button
+              title="キャンセル"
+              onPress={() => {
+                setShowKioskPinModal(false);
+                resetKioskPinForm();
+              }}
+              variant="secondary"
+            />
+          </View>
+          <View className="flex-1">
+            <Button
+              title="保存"
+              onPress={handleSaveKioskExitPin}
+              loading={savingKioskExitPin}
+              disabled={!kioskExitPin.trim() || !kioskExitPinConfirm.trim()}
             />
           </View>
         </View>
@@ -3033,28 +3323,39 @@ export const StoreHome = ({
           この端末で利用する登録者と端末名を設定してください
         </Text>
         <Text className="text-gray-600 text-sm mb-1">登録者</Text>
-        <View className="flex-row flex-wrap gap-2 mb-3">
-          {recorders.map((recorder) => (
-            <TouchableOpacity
-              key={recorder.id}
-              onPress={() => setSessionRecorderId(recorder.id)}
-              className={`px-3 py-1.5 rounded-full border ${
-                sessionRecorderId === recorder.id ? 'bg-indigo-500 border-indigo-500' : 'bg-white border-gray-300'
-              }`}
-              activeOpacity={0.8}
-            >
-              <Text className={`text-xs font-semibold ${sessionRecorderId === recorder.id ? 'text-white' : 'text-gray-700'}`}>
-                {hasMultipleGroups ? `G${recorder.group_id} ` : ''}{recorder.recorder_name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {isAuthenticatedManager ? (
+          <View className="mb-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2">
+            <Text className="text-xs font-semibold text-indigo-700">管理者ログインのため登録者は管理者で固定です</Text>
+            <Text className="mt-1 text-sm text-indigo-900">
+              {managerRecorder
+                ? `${hasMultipleGroups ? `${managerRecorder.group_id === ADMIN_RECORDER_GROUP_ID ? '管理者' : `G${managerRecorder.group_id}`} ` : ''}${managerRecorder.recorder_name}`
+                : '管理者を準備中...'}
+            </Text>
+          </View>
+        ) : (
+          <View className="flex-row flex-wrap gap-2 mb-3">
+            {recorders.map((recorder) => (
+              <TouchableOpacity
+                key={recorder.id}
+                onPress={() => setSessionRecorderId(recorder.id)}
+                className={`px-3 py-1.5 rounded-full border ${
+                  sessionRecorderId === recorder.id ? 'bg-indigo-500 border-indigo-500' : 'bg-white border-gray-300'
+                }`}
+                activeOpacity={0.8}
+              >
+                <Text className={`text-xs font-semibold ${sessionRecorderId === recorder.id ? 'text-white' : 'text-gray-700'}`}>
+                  {hasMultipleGroups ? `${recorder.group_id === ADMIN_RECORDER_GROUP_ID ? '管理者' : `G${recorder.group_id}`} ` : ''}{recorder.recorder_name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         <Input
           label="端末名"
           value={sessionDeviceName}
           onChangeText={setSessionDeviceName}
-          placeholder="例：iPhone-レジ前"
+          placeholder="例：スマホ / タブレット / PC"
         />
 
         <View className="mt-2">
@@ -3062,7 +3363,7 @@ export const StoreHome = ({
             title="保存して開始"
             onPress={handleSaveRecorderSession}
             loading={savingRecorderSession}
-            disabled={recorders.length === 0 || !sessionRecorderId || !sessionDeviceName.trim()}
+            disabled={recorders.length === 0 || (isAuthenticatedManager ? !managerRecorder : !sessionRecorderId) || !sessionDeviceName.trim()}
           />
         </View>
       </Modal>
@@ -3086,6 +3387,11 @@ export const StoreHome = ({
                 <Text className="text-gray-900 text-sm font-semibold mb-2">登録者情報</Text>
                 {selectedRecorderForLogs && isManagerRecorderName(selectedRecorderForLogs.recorder_name) ? (
                   <Text className="text-amber-700 text-xs mb-2">役職: 管理者（削除不可）</Text>
+                ) : selectedRecorderForLogs && isStoreChiefRecorderName(selectedRecorderForLogs.recorder_name) ? (
+                  <Text className="text-emerald-700 text-xs mb-2">役職: 店長（管理者グループ）</Text>
+                ) : null}
+                {selectedRecorderForLogs && isAdminGroupRecorder(selectedRecorderForLogs) ? (
+                  <Text className="text-indigo-700 text-xs mb-2">グループは管理者グループ（G0）に固定されます</Text>
                 ) : null}
                 <Input
                   label="登録者名"
@@ -3106,12 +3412,16 @@ export const StoreHome = ({
                     .map((groupId) => (
                       <TouchableOpacity
                         key={`recorder-edit-group-${groupId}`}
-                        onPress={() => setSelectedRecorderEditGroupId(groupId)}
+                        onPress={() => {
+                          if (selectedRecorderForLogs && isAdminGroupRecorder(selectedRecorderForLogs)) return;
+                          setSelectedRecorderEditGroupId(groupId);
+                        }}
                         className={`px-3 py-1.5 rounded-full border ${
                           selectedRecorderEditGroupId === groupId
                             ? 'bg-indigo-500 border-indigo-500'
                             : 'bg-white border-gray-300'
                         }`}
+                        disabled={!!selectedRecorderForLogs && isAdminGroupRecorder(selectedRecorderForLogs)}
                         activeOpacity={0.8}
                       >
                         <Text
@@ -3119,7 +3429,7 @@ export const StoreHome = ({
                             selectedRecorderEditGroupId === groupId ? 'text-white' : 'text-gray-700'
                           }`}
                         >
-                          {groupId === 1 ? '標準（1）' : `G${groupId}`}
+                          {groupId === ADMIN_RECORDER_GROUP_ID ? '管理者（0）' : groupId === 1 ? '標準（1）' : `G${groupId}`}
                         </Text>
                       </TouchableOpacity>
                     ))}
@@ -3128,7 +3438,9 @@ export const StoreHome = ({
                   <View className="flex-1">
                     <Button
                       title="変更を保存"
-                      onPress={() => withRestrictionCheck('recorder_manage', () => { void handleUpdateRecorder(); })}
+                      onPress={() => {
+                        withRestrictionCheck('recorder_manage', () => { void handleUpdateRecorder(); })
+                      }}
                       loading={savingRecorderEdit}
                       disabled={!selectedRecorderEditName.trim()}
                     />

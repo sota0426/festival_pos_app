@@ -270,7 +270,7 @@ export const ManualCounterScreen = ({ branch, onBack }: Props) => {
      {/* 説明文 */}
       <View className="mt-6 items-end">
         <Text className="text-gray-600 text-center text-xs pb-3 pr-2">
-          ※ ボタン長押し：各種設定
+          ※ 長押しで設定画面
         </Text>
       </View>
 
@@ -288,10 +288,14 @@ export const ManualCounterScreen = ({ branch, onBack }: Props) => {
         title={resetMode === "today" ? "本日の来客数をリセット" : "来客数をすべて削除"}
       >
         <View className="gap-3">
-          <Text className="text-gray-600 text-sm">
-            管理者パスワードを入力して実行してください。
-            {"\n"}初期パスワードは「0000」です。設定タブから変更できます。
-          </Text>
+          <View>
+            <Text className="text-gray-600 text-sm">
+              管理者パスワードを入力して実行してください。
+            </Text>
+              <Text className="text-gray-600 opacity-70 text-xs">
+                初期パスワードは「0000」
+            </Text>
+          </View>
           <TextInput
             value={adminPasswordInput}
             onChangeText={(text) => {
@@ -320,6 +324,7 @@ export const ManualCounterScreen = ({ branch, onBack }: Props) => {
               <Text className="text-white font-semibold">実行</Text>
             </TouchableOpacity>
           </View>
+
         </View>
       </Modal>
     </SafeAreaView>

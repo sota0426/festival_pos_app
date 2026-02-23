@@ -17,7 +17,7 @@ import { useAuth } from '../contexts/AuthContext';
 const SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
 const VISITOR_SYNC_INTERVAL = 15 * 60 * 1000; // 15 minutes
 // 未同期データがある場合のリトライ間隔（短め）
-const RETRY_INTERVAL = 30 * 1000; // 30 seconds
+const RETRY_INTERVAL = 60 * 1000; // 60 seconds
 const ALLOWED_VISITOR_GROUP_TYPES = new Set(['group1', 'group2', 'group3', 'group4']);
 
 const normalizeVisitorGroupType = (value?: string | null): string => {

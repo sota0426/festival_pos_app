@@ -25,6 +25,7 @@ interface HQDashboardProps {
 }
 
 type DashboardTab = 'dashboard' | 'results';
+type DashboardViewTab = 'sales' | 'visitors';
 
 type BranchFinance = BranchSales & {
   total_expense: number;
@@ -106,6 +107,7 @@ const toCsvCell = (value: string | number): string => {
 
 export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps) => {
   const [activeTab, setActiveTab] = useState<DashboardTab>('dashboard');
+  const [dashboardViewTab, setDashboardViewTab] = useState<DashboardViewTab>('sales');
   const [resultPanelIndex, setResultPanelIndex] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -344,6 +346,7 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
   const achievementRate = overallTarget > 0 ? Math.round((totalSales.total_sales / overallTarget) * 100) : 0;
   const activeSalesSlot = pinnedSalesSlot ?? hoveredSalesSlot;
   const activeVisitorSlot = pinnedVisitorSlot ?? hoveredVisitorSlot;
+  const visitorCounterUnused = visitorRows.length === 0 || totalVisitors <= 0;
 
   const transactionToBranch = useMemo(() => {
     const map = new Map<string, string>();
@@ -760,6 +763,24 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
           <Text className={`font-bold ${activeTab === 'results' ? 'text-white' : 'text-gray-500'}`}>総合結果</Text>
         </TouchableOpacity>
       </View>
+      {activeTab === 'dashboard' && (
+        <View className="mx-4 mt-4 mb-1 rounded-xl border border-gray-200 bg-white p-1 flex-row">
+          <TouchableOpacity
+            className={`flex-1 py-2.5 items-center rounded-lg ${dashboardViewTab === 'sales' ? 'bg-blue-600' : 'bg-white'}`}
+            onPress={() => setDashboardViewTab('sales')}
+            activeOpacity={0.85}
+          >
+            <Text className={`font-semibold ${dashboardViewTab === 'sales' ? 'text-white' : 'text-gray-600'}`}>売上</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className={`flex-1 py-2.5 items-center rounded-lg ${dashboardViewTab === 'visitors' ? 'bg-purple-600' : 'bg-white'}`}
+            onPress={() => setDashboardViewTab('visitors')}
+            activeOpacity={0.85}
+          >
+            <Text className={`font-semibold ${dashboardViewTab === 'visitors' ? 'text-white' : 'text-gray-600'}`}>来客</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {loading ? (
         <View className="flex-1 items-center justify-center">
@@ -782,6 +803,8 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
         >
           {activeTab === 'dashboard' && (
             <>
+              {dashboardViewTab === 'sales' && (
+                <>
               <Card className="mb-4">
                 <Text className="text-lg font-bold text-gray-900 mb-3">全体売上</Text>
                 <View className="flex-row flex-wrap">
@@ -803,7 +826,11 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
                   </View>
                 </View>
               </Card>
+                </>
+              )}
 
+              {dashboardViewTab === 'visitors' && (
+                <>
               <Card className="mb-4 bg-purple-50">
                 <Text className="text-lg font-bold text-purple-900 mb-3">来場者数</Text>
                 <View className="flex-row flex-wrap">
@@ -822,6 +849,15 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
                   </View>
                 </View>
               </Card>
+
+              {visitorCounterUnused && (
+                <Card className="mb-4 border border-amber-200 bg-amber-50">
+                  <Text className="text-amber-900 font-bold mb-1">来客カウンターがまだ使われていません</Text>
+                  <Text className="text-amber-800 text-sm leading-5">
+                    各店舗で「来客カウンター」を使うと、来場者数の合計や時間帯ごとの混雑状況を本部ダッシュボードで確認できます。
+                  </Text>
+                </Card>
+              )}
 
               <Card className="mb-4">
                 <Text className="text-lg font-bold text-gray-900 mb-3">15分毎の来場者数（店舗別積み上げ）</Text>
@@ -882,7 +918,11 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
                 ))}
                 {quarterHourlyVisitors.length === 0 && <Text className="text-gray-500 text-center py-4">データがありません</Text>}
               </Card>
+                </>
+              )}
 
+              {dashboardViewTab === 'sales' && (
+                <>
               <Card className="mb-4">
                 <Text className="text-lg font-bold text-gray-900 mb-3">支払い方法別</Text>
                 <View className="flex-row">
@@ -990,6 +1030,8 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
                 ))}
                 {hourlySalesStack.length === 0 && <Text className="text-gray-500 text-center py-4">データがありません</Text>}
               </Card>
+                </>
+              )}
             </>
           )}
 

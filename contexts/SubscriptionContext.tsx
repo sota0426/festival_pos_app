@@ -1,9 +1,31 @@
-import React, { createContext, useContext, useMemo, useEffect } from 'react';
+import React, { createContext, useContext, useMemo, useEffect, useCallback } from 'react';
 import { Alert, Linking, Platform } from 'react-native';
 import { useAuth } from './AuthContext';
 import { supabase } from '../lib/supabase';
 import { setSyncEnabled } from '../lib/syncMode';
 import type { PlanType, SubscriptionStatus } from '../types/database';
+
+type CheckoutPlan = 'store' | 'org_light' | 'org_standard' | 'org_premium';
+
+const ORG_PLANS: PlanType[] = ['org_light', 'org_standard', 'org_premium', 'organization'];
+
+const getMaxStoresByPlan = (plan: PlanType): number => {
+  switch (plan) {
+    case 'store':
+      return 1;
+    case 'org_light':
+      return 3;
+    case 'org_standard':
+      return 10;
+    case 'org_premium':
+      return 30;
+    case 'organization': // legacy
+      return 10;
+    case 'free':
+    default:
+      return 1;
+  }
+};
 
 interface SubscriptionContextValue {
   plan: PlanType;
@@ -14,7 +36,7 @@ interface SubscriptionContextValue {
   isFreePlan: boolean;
   isStorePlan: boolean;
   isOrgPlan: boolean;
-  openCheckout: (plan: 'store' | 'organization') => Promise<void>;
+  openCheckout: (plan: CheckoutPlan) => Promise<void>;
   openPortal: () => Promise<void>;
 }
 
@@ -35,11 +57,19 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const plan: PlanType = subscription?.plan_type ?? 'free';
   const status: SubscriptionStatus = subscription?.status ?? 'active';
-  const isActive = status === 'active' || status === 'trialing';
+  const currentPeriodEndMs = subscription?.current_period_end
+    ? new Date(subscription.current_period_end).getTime()
+    : null;
+  const isExpiredByDate =
+    currentPeriodEndMs !== null && Number.isFinite(currentPeriodEndMs)
+      ? currentPeriodEndMs <= Date.now()
+      : false;
+  const isActive = (status === 'active' || status === 'trialing') && !isExpiredByDate;
 
-  const canSync = isActive && (plan === 'store' || plan === 'organization');
-  const canAccessHQ = isActive && plan === 'organization';
-  const maxStores = plan === 'organization' ? Infinity : 1;
+  const isOrgPlan = ORG_PLANS.includes(plan);
+  const canSync = isActive && (plan === 'store' || isOrgPlan);
+  const canAccessHQ = isActive && isOrgPlan;
+  const maxStores = getMaxStoresByPlan(plan);
 
   // ログインコードの場合はSync有効、デモモードでは無効
   const isLoginCode = authState.status === 'login_code';
@@ -53,7 +83,7 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [canSync, isLoginCode, isDemo]);
 
-  const openCheckout = async (targetPlan: 'store' | 'organization') => {
+  const openCheckout = useCallback(async (targetPlan: CheckoutPlan) => {
     if (authState.status !== 'authenticated') return;
 
     try {
@@ -91,9 +121,9 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
         'プラン変更の処理に失敗しました。しばらくしてからもう一度お試しください。'
       );
     }
-  };
+  }, [authState.status]);
 
-  const openPortal = async () => {
+  const openPortal = useCallback(async () => {
     if (authState.status !== 'authenticated') return;
 
     try {
@@ -114,7 +144,7 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
         'お支払い管理画面の表示に失敗しました。しばらくしてからもう一度お試しください。'
       );
     }
-  };
+  }, [authState.status]);
 
   const value = useMemo(
     () => ({
@@ -125,11 +155,11 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
       maxStores,
       isFreePlan: plan === 'free',
       isStorePlan: plan === 'store',
-      isOrgPlan: plan === 'organization',
+      isOrgPlan,
       openCheckout,
       openPortal,
     }),
-    [plan, status, canSync, canAccessHQ, maxStores, authState.status]
+    [plan, status, canSync, canAccessHQ, maxStores, isOrgPlan, openCheckout, openPortal]
   );
 
   return (

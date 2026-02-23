@@ -8,7 +8,10 @@ interface PlanBadgeProps {
 const planConfig: Record<PlanType, { label: string; bg: string; text: string }> = {
   free: { label: '無料', bg: 'bg-green-100', text: 'text-green-700' },
   store: { label: '店舗', bg: 'bg-blue-100', text: 'text-blue-700' },
-  organization: { label: '団体', bg: 'bg-purple-100', text: 'text-purple-700' },
+  org_light: { label: '団体L', bg: 'bg-violet-100', text: 'text-violet-700' },
+  org_standard: { label: '団体S', bg: 'bg-purple-100', text: 'text-purple-700' },
+  org_premium: { label: '団体P', bg: 'bg-fuchsia-100', text: 'text-fuchsia-700' },
+  organization: { label: '団体S', bg: 'bg-purple-100', text: 'text-purple-700' }, // legacy
 };
 
 export const PlanBadge = ({ plan }: PlanBadgeProps) => {

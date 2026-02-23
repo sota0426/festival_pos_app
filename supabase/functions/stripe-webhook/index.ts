@@ -7,7 +7,40 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY')!;
 const STRIPE_WEBHOOK_SECRET = Deno.env.get('STRIPE_WEBHOOK_SECRET')!;
+const STRIPE_STORE_PRICE_ID = Deno.env.get('STRIPE_STORE_PRICE_ID') || '';
+const STRIPE_ORG_LIGHT_PRICE_ID = Deno.env.get('STRIPE_ORG_LIGHT_PRICE_ID') || '';
+const STRIPE_ORG_STANDARD_PRICE_ID = Deno.env.get('STRIPE_ORG_STANDARD_PRICE_ID') || Deno.env.get('STRIPE_ORG_PRICE_ID') || '';
+const STRIPE_ORG_PREMIUM_PRICE_ID = Deno.env.get('STRIPE_ORG_PREMIUM_PRICE_ID') || '';
 const LOGIN_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+type PlanType = 'free' | 'store' | 'org_light' | 'org_standard' | 'org_premium' | 'organization';
+
+const normalizePlan = (plan: string | null | undefined): PlanType | null => {
+  if (!plan) return null;
+  if (plan === 'store' || plan === 'org_light' || plan === 'org_standard' || plan === 'org_premium' || plan === 'organization') {
+    return plan;
+  }
+  return null;
+};
+
+const inferPlanFromStripeSubscription = (stripeSub: any): PlanType | null => {
+  const priceId = stripeSub?.items?.data?.[0]?.price?.id;
+  if (!priceId) return null;
+  if (priceId === STRIPE_STORE_PRICE_ID) return 'store';
+  if (priceId === STRIPE_ORG_LIGHT_PRICE_ID) return 'org_light';
+  if (priceId === STRIPE_ORG_STANDARD_PRICE_ID) return 'org_standard';
+  if (priceId === STRIPE_ORG_PREMIUM_PRICE_ID) return 'org_premium';
+  return null;
+};
+
+const isOrganizationPlan = (plan: PlanType | null): boolean =>
+  plan === 'org_light' || plan === 'org_standard' || plan === 'org_premium' || plan === 'organization';
+
+const addDays = (base: Date, days: number): Date => {
+  const next = new Date(base);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+};
 
 const generateLoginCode = (): string => {
   let code = '';
@@ -46,35 +79,55 @@ serve(async (req) => {
       case 'checkout.session.completed': {
         const session = event.data.object;
         const userId = session.metadata?.supabase_user_id;
-        const plan = session.metadata?.plan;
+        const metadataPlan = normalizePlan(session.metadata?.plan);
         const subscriptionId = session.subscription;
+        const passDurationDays = Number.parseInt(session.metadata?.pass_duration_days ?? '90', 10) || 90;
 
         console.log('[Webhook] checkout.session.completed', {
           sessionId: session.id,
           userId,
-          plan,
+          plan: metadataPlan,
           subscriptionId,
           customer: session.customer,
         });
 
-        if (userId && plan && subscriptionId) {
-          // Stripe Subscription の詳細を取得
-          const subRes = await fetch(
-            `https://api.stripe.com/v1/subscriptions/${subscriptionId}`,
-            {
-              headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}` },
-            }
-          );
-          const stripeSub = await subRes.json();
+        if (userId) {
+          let plan: PlanType | null = metadataPlan;
+          let currentPeriodStartIso = new Date().toISOString();
+          let currentPeriodEndIso = addDays(new Date(), passDurationDays).toISOString();
 
-          console.log('[Webhook] Stripe subscription fetch', {
-            status: subRes.status,
-            subscriptionStatus: stripeSub.status,
-            currentPeriodEnd: stripeSub.current_period_end,
-          });
+          // 互換: 旧サブスク方式の checkout.session.completed も処理可能にしておく
+          if (subscriptionId) {
+            const subRes = await fetch(
+              `https://api.stripe.com/v1/subscriptions/${subscriptionId}`,
+              {
+                headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}` },
+              }
+            );
+            const stripeSub = await subRes.json();
+
+            console.log('[Webhook] Stripe subscription fetch', {
+              status: subRes.status,
+              subscriptionStatus: stripeSub.status,
+              currentPeriodEnd: stripeSub.current_period_end,
+            });
+
+            const inferredPlan = inferPlanFromStripeSubscription(stripeSub);
+            plan = inferredPlan ?? metadataPlan;
+            currentPeriodStartIso = new Date(stripeSub.current_period_start * 1000).toISOString();
+            currentPeriodEndIso = new Date(stripeSub.current_period_end * 1000).toISOString();
+          }
+
+          if (!plan) {
+            console.warn('[Webhook] Unknown plan (metadata + price mapping failed)', {
+              metadataPlan,
+              subscriptionId,
+            });
+            break;
+          }
 
           let organizationId: string | null = null;
-          if (plan === 'organization') {
+          if (isOrganizationPlan(plan)) {
             const { data: existingOrg, error: orgSelectError } = await supabaseAdmin
               .from('organizations')
               .select('id')
@@ -124,17 +177,33 @@ serve(async (req) => {
             }
           }
 
-          // サブスクリプション更新（最重要）
+          // 既存期限が将来なら、購入時点から90日ではなく「残期間の後に延長」して時間を失わないようにする
+          const { data: existingSub } = await supabaseAdmin
+            .from('subscriptions')
+            .select('current_period_end')
+            .eq('user_id', userId)
+            .maybeSingle();
+
+          if (!subscriptionId) {
+            const existingEnd = existingSub?.current_period_end ? new Date(existingSub.current_period_end) : null;
+            const now = new Date();
+            const extensionBase = existingEnd && existingEnd.getTime() > now.getTime() ? existingEnd : now;
+            currentPeriodStartIso = now.toISOString();
+            currentPeriodEndIso = addDays(extensionBase, passDurationDays).toISOString();
+          }
+
+          // サブスクリプション更新（3か月利用パスの状態保存）
           const { error: updateError } = await supabaseAdmin
             .from('subscriptions')
             .update({
-              stripe_subscription_id: subscriptionId,
+              stripe_subscription_id: subscriptionId ?? null,
               stripe_customer_id: session.customer,
               plan_type: plan,
               organization_id: organizationId,
               status: 'active',
-              current_period_start: new Date(stripeSub.current_period_start * 1000).toISOString(),
-              current_period_end: new Date(stripeSub.current_period_end * 1000).toISOString(),
+              cancel_at_period_end: false,
+              current_period_start: currentPeriodStartIso,
+              current_period_end: currentPeriodEndIso,
               updated_at: new Date().toISOString(),
             })
             .eq('user_id', userId);
@@ -226,7 +295,7 @@ serve(async (req) => {
             console.log('[Webhook] Existing branches assigned to organization');
           }
         } else {
-          console.warn('[Webhook] Missing metadata:', { userId, plan, subscriptionId });
+          console.warn('[Webhook] Missing metadata:', { userId, metadataPlan, subscriptionId });
         }
         break;
       }
@@ -237,18 +306,24 @@ serve(async (req) => {
 
         console.log('[Webhook] customer.subscription.updated', { stripeSubId, status: subscription.status });
 
+        const nextPlan = inferPlanFromStripeSubscription(subscription);
+        const updatePayload: Record<string, unknown> = {
+          status: subscription.status === 'active' ? 'active' :
+                  subscription.status === 'trialing' ? 'trialing' :
+                  subscription.status === 'past_due' ? 'past_due' :
+                  'canceled',
+          current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
+          current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+          cancel_at_period_end: subscription.cancel_at_period_end || false,
+          updated_at: new Date().toISOString(),
+        };
+        if (nextPlan) {
+          updatePayload.plan_type = nextPlan;
+        }
+
         const { error: subUpdateError } = await supabaseAdmin
           .from('subscriptions')
-          .update({
-            status: subscription.status === 'active' ? 'active' :
-                    subscription.status === 'trialing' ? 'trialing' :
-                    subscription.status === 'past_due' ? 'past_due' :
-                    'canceled',
-            current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
-            current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
-            cancel_at_period_end: subscription.cancel_at_period_end || false,
-            updated_at: new Date().toISOString(),
-          })
+          .update(updatePayload)
           .eq('stripe_subscription_id', stripeSubId);
 
         if (subUpdateError) {

@@ -336,7 +336,7 @@ export const LoginCodeEntry = ({ onBack }: LoginCodeEntryProps) => {
                 setDeviceName(text);
                 setError(null);
               }}
-              placeholder="例：iPhone-レジ前"
+              placeholder="例：スマホ / タブレット / PC"
               className="bg-white border-2 border-gray-300 rounded-xl px-4 py-4 text-base text-gray-900 mb-4"
             />
 

@@ -13,8 +13,18 @@ import { HQLogin, HQDashboard, HQBranchReports, HQPresentation } from './compone
 import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, PrepInventory, BudgetManager } from './components/store';
 import { CustomerOrderScreen } from './components/store/main/CustomerOrderScreen';
 import { useSync } from './hooks/useSync';
-import type { Branch } from './types/database';
-import { getKioskModeSync, saveKioskMode, clearKioskMode } from './lib/storage';
+import type { Branch, BudgetExpense, Menu, MenuCategory, PrepIngredient } from './types/database';
+import {
+  clearKioskMode,
+  getBranch as getLocalBranch,
+  getBudgetExpenses,
+  getKioskModeSync,
+  getMenuCategories,
+  getMenus,
+  getPrepIngredients,
+  replaceLocalBranchIdReferences,
+  saveKioskMode,
+} from './lib/storage';
 import { HQHome } from 'components/hq/HQHome';
 
 import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
@@ -126,6 +136,13 @@ function AppContent() {
   const [myStoresReturnScreen, setMyStoresReturnScreen] = useState<'account_dashboard' | 'hq_home'>('account_dashboard');
   const [checkoutProcessing, setCheckoutProcessing] = useState(false);
   const [demoReturnScreen, setDemoReturnScreen] = useState<Screen | null>(null);
+  const [autoOpenKioskPinSettingsOnStoreHome, setAutoOpenKioskPinSettingsOnStoreHome] = useState(false);
+  const allowFreeWebInDev = __DEV__;
+  const isWebFreeAuthenticatedPlan =
+    Platform.OS === 'web' &&
+    authState.status === 'authenticated' &&
+    authState.subscription.plan_type === 'free' &&
+    !allowFreeWebInDev;
 
   const handleNavigateToAuthEntry = useCallback(() => {
     if (authState.status === 'authenticated') {
@@ -137,6 +154,8 @@ function AppContent() {
 
   // Initialize sync
   const {
+    syncNow,
+    syncVisitorNow,
     syncDialog,
     closeSyncDialog,
     handleConfirmSync,
@@ -178,16 +197,30 @@ function AppContent() {
     [isUuid],
   );
 
+  const navigateToStoreEntry = useCallback(() => {
+    if (authState.status === 'authenticated') {
+      setMyStoresReturnScreen('account_dashboard');
+      setCurrentScreen('my_stores');
+      return;
+    }
+    setCurrentScreen('store_login');
+  }, [authState.status]);
+
   const handleBranchLogin = useCallback(async (branch: Branch) => {
     const resolved = await resolveBranchForStore(branch);
     if (!resolved) {
       setCurrentBranch(null);
-      setCurrentScreen('store_login');
+      navigateToStoreEntry();
       return;
     }
     setCurrentBranch(resolved);
     setCurrentScreen('store_home');
-  }, [resolveBranchForStore]);
+  }, [navigateToStoreEntry, resolveBranchForStore]);
+
+  const handleManualSyncFromBanner = useCallback(async () => {
+    await syncNow();
+    await syncVisitorNow();
+  }, [syncNow, syncVisitorNow]);
 
   const handleBranchLogout = useCallback(() => {
     if (authState.status === 'authenticated') {
@@ -252,25 +285,161 @@ function AppContent() {
     resolveLoginCodeBranch();
   }, [authState, currentScreen, resolveBranchForStore]);
 
+  useEffect(() => {
+    if (!isWebFreeAuthenticatedPlan) return;
+
+    const webRestrictedScreens: Screen[] = [
+      'store_login',
+      'store_home',
+      'store_menus',
+      'store_register',
+      'store_history',
+      'store_counter',
+      'store_order_board',
+      'store_prep',
+      'store_checklist',
+      'store_shift_handover',
+      'store_budget',
+      'store_budget_expense',
+      'store_budget_breakeven',
+    ];
+
+    if (webRestrictedScreens.includes(currentScreen)) {
+      setCurrentBranch(null);
+      setCurrentScreen('pricing');
+    }
+  }, [currentScreen, isWebFreeAuthenticatedPlan]);
+
   // Stripe Checkout 完了後のリトライ付きサブスクリプション更新
   const handleCheckoutSuccess = useCallback(async () => {
     setCheckoutProcessing(true);
     try {
+      let upgradedSubscription = null as Awaited<ReturnType<typeof refreshSubscription>>;
       const maxRetries = 5;
       const baseDelay = 1500;
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         const sub = await refreshSubscription();
+        upgradedSubscription = sub;
         if (sub && sub.plan_type !== 'free') break;
         if (attempt < maxRetries - 1) {
           await new Promise(r => setTimeout(r, baseDelay * Math.pow(2, attempt)));
         }
       }
+
+      // 無料プランで作成していたローカルデータを、アップグレード後のDB店舗へ移行する
+      if (
+        authState.status === 'authenticated' &&
+        authState.subscription.plan_type === 'free' &&
+        upgradedSubscription &&
+        upgradedSubscription.plan_type !== 'free'
+      ) {
+        try {
+          const localBranch = await getLocalBranch();
+          if (localBranch) {
+            const { data: dbBranch } = await supabase
+              .from('branches')
+              .select('*')
+              .eq('owner_id', authState.user.id)
+              .order('created_at', { ascending: true })
+              .limit(1)
+              .maybeSingle();
+
+            if (dbBranch) {
+              const targetBranchId = dbBranch.id;
+              const oldLocalBranchId = localBranch.id;
+              if (oldLocalBranchId !== targetBranchId) {
+                await replaceLocalBranchIdReferences(oldLocalBranchId, targetBranchId);
+              }
+
+              const [localMenus, localCategories, localPrepIngredients, localBudgetExpenses] =
+                await Promise.all([
+                  getMenus(),
+                  getMenuCategories(),
+                  getPrepIngredients(targetBranchId),
+                  getBudgetExpenses(),
+                ]);
+
+              await supabase
+                .from('branches')
+                .update({
+                  branch_name: localBranch.branch_name,
+                  password: localBranch.password,
+                  sales_target: localBranch.sales_target,
+                  status: localBranch.status,
+                  owner_id: authState.user.id,
+                  organization_id: upgradedSubscription.organization_id ?? null,
+                })
+                .eq('id', targetBranchId);
+
+              // DB側に残っている初期データを消して、ローカルデータを優先反映
+              await supabase.from('menus').delete().eq('branch_id', targetBranchId);
+              await supabase.from('menu_categories').delete().eq('branch_id', targetBranchId);
+
+              const categoryRows: MenuCategory[] = localCategories.map((c) => ({
+                ...c,
+                branch_id: targetBranchId,
+              }));
+              if (categoryRows.length > 0) {
+                const { error: categoryUploadError } = await supabase
+                  .from('menu_categories')
+                  .insert(categoryRows);
+                if (categoryUploadError) {
+                  console.error('Upgrade migration: failed to upload menu categories', categoryUploadError);
+                }
+              }
+
+              const menuRows: Menu[] = localMenus.map((m) => ({
+                ...m,
+                branch_id: targetBranchId,
+              }));
+              if (menuRows.length > 0) {
+                const { error: menuUploadError } = await supabase.from('menus').insert(menuRows);
+                if (menuUploadError) {
+                  console.error('Upgrade migration: failed to upload menus', menuUploadError);
+                }
+              }
+
+              const prepRows: PrepIngredient[] = localPrepIngredients.map((i) => ({
+                ...i,
+                branch_id: targetBranchId,
+              }));
+              if (prepRows.length > 0) {
+                const { error: prepUploadError } = await supabase
+                  .from('prep_ingredients')
+                  .upsert(prepRows, { onConflict: 'id' });
+                if (prepUploadError) {
+                  console.error('Upgrade migration: failed to upload prep ingredients', prepUploadError);
+                }
+              }
+
+              const budgetRows: BudgetExpense[] = localBudgetExpenses
+                .filter((e) => e.branch_id === targetBranchId)
+                .map((e) => ({ ...e, synced: true }));
+              if (budgetRows.length > 0) {
+                const { error: expenseUploadError } = await supabase
+                  .from('budget_expenses')
+                  .upsert(budgetRows, { onConflict: 'id' });
+                if (expenseUploadError) {
+                  console.error('Upgrade migration: failed to upload budget expenses', expenseUploadError);
+                }
+              }
+
+              // 未同期売上・来客データは既存同期ロジックへ渡す
+              await syncNow();
+              await syncVisitorNow();
+            }
+          }
+        } catch (migrationError) {
+          console.error('Upgrade migration failed:', migrationError);
+        }
+      }
+
       setMyStoresReturnScreen('account_dashboard');
       setCurrentScreen('my_stores');
     } finally {
       setCheckoutProcessing(false);
     }
-  }, [refreshSubscription]);
+  }, [authState, refreshSubscription, syncNow, syncVisitorNow]);
 
   // ?checkout=success URL パラメータ検出
   useEffect(() => {
@@ -362,6 +531,12 @@ function AppContent() {
                 setCustomerOrderParams(null);
                 setCurrentScreen('store_home');
               }}
+              onOpenKioskPinSettings={() => {
+                void clearKioskMode();
+                setCustomerOrderParams(null);
+                setAutoOpenKioskPinSettingsOnStoreHome(true);
+                setCurrentScreen('store_home');
+              }}
               onReturnToLoggedInFromDemo={
                 (authState.status === 'demo' && hasDemoReturnTarget) ||
                 (!!customerOrderParams?.fromDemoKiosk && authState.status === 'authenticated')
@@ -426,7 +601,7 @@ function AppContent() {
       case 'account_dashboard':
         return (
           <AccountDashboard
-            onNavigateToStore={() => setCurrentScreen('store_login')}
+            onNavigateToStore={navigateToStoreEntry}
             onNavigateToHQ={() => setCurrentScreen('hq_home')}
             onNavigateToPricing={() => setCurrentScreen('pricing')}
             onLogout={() => setCurrentScreen('landing')}
@@ -454,7 +629,7 @@ function AppContent() {
           <>
             <DemoBanner />
             <Home
-              onNavigateToStore={() => setCurrentScreen('store_login')}
+              onNavigateToStore={navigateToStoreEntry}
               onNavigateToHQ={() => setCurrentScreen('hq_login')}
               onReturnToLoggedIn={
                 authState.status === 'demo' && hasDemoReturnTarget && demoReturnScreen
@@ -578,7 +753,7 @@ function AppContent() {
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <StoreHome
               branch={currentBranch}
               onNavigateToRegister={() => setCurrentScreen('store_register')}
@@ -612,6 +787,8 @@ function AppContent() {
                 enterDemo();
                 setCurrentScreen('home');
               }}
+              autoOpenKioskPinSettings={autoOpenKioskPinSettingsOnStoreHome}
+              onHandledAutoOpenKioskPinSettings={() => setAutoOpenKioskPinSettingsOnStoreHome(false)}
               onBranchUpdated={(updatedBranch) => setCurrentBranch(updatedBranch)}
               onLogout={handleBranchLogout}
             />
@@ -620,13 +797,13 @@ function AppContent() {
 
       case 'store_menus':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
+          navigateToStoreEntry();
           return null;
         }
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <MenuManagement
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -636,13 +813,13 @@ function AppContent() {
 
       case 'store_register':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
+          navigateToStoreEntry();
           return null;
         }
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <Register
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -654,13 +831,13 @@ function AppContent() {
 
       case 'store_history':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
+          navigateToStoreEntry();
           return null;
         }
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <SalesHistory
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -670,13 +847,13 @@ function AppContent() {
 
       case 'store_counter':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
+          navigateToStoreEntry();
           return null;
         }
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <ManualCounterScreen
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -686,13 +863,13 @@ function AppContent() {
 
       case 'store_order_board':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
+          navigateToStoreEntry();
           return null;
         }
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <OrderBoard
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -702,13 +879,13 @@ function AppContent() {
 
       case 'store_prep':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
+          navigateToStoreEntry();
           return null;
         }
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <PrepInventory
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -718,13 +895,13 @@ function AppContent() {
 
       case 'store_checklist':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
+          navigateToStoreEntry();
           return null;
         }
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <TaskChecklist
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -734,13 +911,13 @@ function AppContent() {
 
       case 'store_shift_handover':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
+          navigateToStoreEntry();
           return null;
         }
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <ShiftHandover
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -750,13 +927,13 @@ function AppContent() {
 
       case 'store_budget':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
+          navigateToStoreEntry();
           return null;
         }
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <BudgetManager
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -766,13 +943,13 @@ function AppContent() {
 
       case 'store_budget_expense':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
+          navigateToStoreEntry();
           return null;
         }
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <BudgetExpenseRecorder
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
@@ -782,13 +959,13 @@ function AppContent() {
 
       case 'store_budget_breakeven':
         if (!currentBranch) {
-          setCurrentScreen('store_login');
+          navigateToStoreEntry();
           return null;
         }
         return (
           <>
             <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <BudgetManager
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}

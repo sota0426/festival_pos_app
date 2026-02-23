@@ -4,7 +4,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Card, Header, Modal } from '../../common';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
-import { getMenus, saveMenus, savePendingTransaction, getNextOrderNumber, getStoreSettings, getMenuCategories, saveMenuCategories, getPendingTransactions } from '../../../lib/storage';
+import {
+  getMenus,
+  saveMenus,
+  savePendingTransaction,
+  getNextOrderNumber,
+  getStoreSettings,
+  getMenuCategories,
+  saveMenuCategories,
+  getPendingTransactions,
+  markTransactionSynced,
+  clearSyncedTransactions,
+} from '../../../lib/storage';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
 import type { Branch, Menu, MenuCategory, CartItem, PendingTransaction, PaymentMethodSettings } from '../../../types/database';
 import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
@@ -448,7 +459,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     const now = new Date();
     const dateStr = `${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
     const timeStr = `${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`;
-    const orderNumber = await getNextOrderNumber();
+    const orderNumber = await getNextOrderNumber(branch.id);
     const orderStr = orderNumber.toString().padStart(2, '0');
     return `${branch.branch_code}-${dateStr}${timeStr}-${orderStr}`;
   };
@@ -553,6 +564,10 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
                 .eq('id', menu.id);
             }
           }
+
+          // 即時同期に成功したら、その場でローカル未同期キューも解消してバナー表示を残さない
+          await markTransactionSynced(transactionId);
+          await clearSyncedTransactions();
         } catch (syncError) {
           console.log('Sync failed, will retry later:', syncError);
         }
@@ -947,10 +962,10 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
           <Text className="text-lg font-bold text-gray-900">注文内容</Text>
           <TouchableOpacity
             onPress={() => setShowHint(prev => !prev)}
-            className="w-12 h-6 items-center justify-center rounded-full bg-yellow-200"
+            className="w-8 h-6 items-center justify-center rounded-full bg-yellow-200"
             activeOpacity={0.7}
           >
-            <Text className="text-xs text-yellow-600 font-bold">ヒント</Text>
+            <Text className="text-xs text-yellow-600 font-bold">？</Text>
           </TouchableOpacity>
         </View>
         <Modal
@@ -959,7 +974,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
           title="メニューの割引について"
         >
           <Text className="text-gray-700">
-            割引を設定したい商品を、カート内で長押ししてください。
+            カート内のメニューを長押しすると、割引設定画面が現れます。
           </Text>
       </Modal>
 
