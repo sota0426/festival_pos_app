@@ -78,7 +78,7 @@ interface StoreHomeProps {
   onNavigateToOrderBoard: () => void;
   onNavigateToPrep: () => void;
   onNavigateToChecklist: () => void;
-  onNavigateToShiftHandover: () => void;
+  onNavigateToCookingManual: () => void;
   onNavigateToBudget: () => void;
   onNavigateToBudgetExpense: () => void;
   onNavigateToBudgetBreakeven: () => void;
@@ -280,7 +280,7 @@ export const StoreHome = ({
   onNavigateToOrderBoard,
   onNavigateToPrep,
   onNavigateToChecklist,
-  onNavigateToShiftHandover,
+  onNavigateToCookingManual,
   onNavigateToBudget,
   onNavigateToBudgetExpense,
   onNavigateToBudgetBreakeven,
@@ -389,7 +389,6 @@ export const StoreHome = ({
   const [recorderSessionRegistered, setRecorderSessionRegistered] = useState(false);
   const [recorderSessionChecked, setRecorderSessionChecked] = useState(false);
   const [currentDeviceId, setCurrentDeviceId] = useState('');
-  const [recorderLogsLoaded, setRecorderLogsLoaded] = useState(false);
   const managerRecorderDefaultName = useMemo(() => {
     if (authState.status !== 'authenticated') return null;
     const raw =
@@ -625,17 +624,48 @@ export const StoreHome = ({
 
   useEffect(() => {
     const loadRecorderLogs = async () => {
-      setRecorderLogsLoaded(false);
       const logs = await fetchRecorderAccessLogs(branch.id, canSyncToSupabase);
       setAllRecorderLogs(logs);
-      setRecorderLogsLoaded(true);
     };
     loadRecorderLogs();
   }, [branch.id, canSyncToSupabase]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const checkRecorderSessionFromLocal = async () => {
+      if (!currentDeviceId) return;
+
+      const localLogs = await getRecorderAccessLogs(branch.id);
+      if (cancelled) return;
+
+      const existing = localLogs.find((log) => log.device_id === currentDeviceId);
+      if (existing) {
+        setRecorderSessionRegistered(true);
+        if (!sessionDeviceName.trim()) {
+          setSessionDeviceName(existing.device_name ?? '');
+        }
+        const matchedRecorder = recorders.find(
+          (recorder) =>
+            recorder.id === existing.recorder_id || recorder.recorder_name === existing.recorder_name,
+        );
+        if (matchedRecorder) {
+          setSessionRecorderId(matchedRecorder.id);
+        }
+      } else {
+        setRecorderSessionRegistered(false);
+      }
+      setRecorderSessionChecked(true);
+    };
+
+    checkRecorderSessionFromLocal();
+    return () => {
+      cancelled = true;
+    };
+  }, [branch.id, currentDeviceId, recorders, sessionDeviceName]);
+
+  useEffect(() => {
     if (!currentDeviceId) return;
-    if (!recorderLogsLoaded) return;
 
     const existing = allRecorderLogs.find((log) => log.device_id === currentDeviceId);
     if (existing) {
@@ -653,8 +683,13 @@ export const StoreHome = ({
     } else {
       setRecorderSessionRegistered(false);
     }
-    setRecorderSessionChecked(true);
-  }, [allRecorderLogs, currentDeviceId, recorderLogsLoaded, recorders, sessionDeviceName]);
+  }, [allRecorderLogs, currentDeviceId, recorders, sessionDeviceName]);
+
+  useEffect(() => {
+    if (!recorderSessionRegistered) return;
+    if (!showRecorderSessionModal) return;
+    setShowRecorderSessionModal(false);
+  }, [recorderSessionRegistered, showRecorderSessionModal]);
 
   useEffect(() => {
     if (authState.status !== 'authenticated') return;
@@ -668,7 +703,6 @@ export const StoreHome = ({
   useEffect(() => {
     setRecorderSessionRegistered(false);
     setRecorderSessionChecked(false);
-    setRecorderLogsLoaded(false);
     setShowRecorderSessionModal(false);
     setSessionDeviceName('');
     setSessionRecorderId('');
@@ -848,7 +882,6 @@ export const StoreHome = ({
       setShowRecorderSessionModal(false);
       const logs = await fetchRecorderAccessLogs(branch.id, canSyncToSupabase);
       setAllRecorderLogs(logs);
-      setRecorderLogsLoaded(true);
       alertNotify('保存完了', '登録者と端末情報を保存しました');
     } finally {
       setSavingRecorderSession(false);
@@ -2410,7 +2443,7 @@ export const StoreHome = ({
               <Card className="bg-amber-50 border border-amber-200 p-4">
                 <Text className="text-amber-900 font-bold text-base text-center">無料プランでは共有機能は利用できません</Text>
                 <Text className="text-amber-700 text-center mt-1 text-xs">
-                  在庫共有・チェックリスト・引き継ぎ共有は有料プランでご利用いただけます。
+                  在庫共有・チェックリスト・調理マニュアルは有料プランでご利用いただけます。
                 </Text>
                 {(onNavigateToPricing || onNavigateToDemoHome) && (
                   <View className="flex-row justify-center gap-2 mt-3">
@@ -2481,17 +2514,17 @@ export const StoreHome = ({
                 if (isFreeAuthenticatedPlan) {
                   alertNotify(
                     '無料プランでは共有機能は利用できません',
-                    'シフト・引き継ぎは有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
+                    '調理マニュアルは有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
                   );
                   return;
                 }
-                onNavigateToShiftHandover();
+                onNavigateToCookingManual();
               }}
               activeOpacity={0.8}
             >
               <Card className={`${isFreeAuthenticatedPlan ? 'bg-violet-300 opacity-70' : 'bg-violet-500'} p-4`}>
-                <Text className="text-white text-2xl font-bold text-center">シフト・引き継ぎ</Text>
-                <Text className="text-violet-100 text-center mt-2">担当・引き継ぎ事項を共有</Text>
+                <Text className="text-white text-2xl font-bold text-center">調理マニュアル</Text>
+                <Text className="text-violet-100 text-center mt-2">メニュー別の食材・原価・備考を管理</Text>
               </Card>
             </TouchableOpacity>
           </View>

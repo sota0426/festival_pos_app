@@ -15,6 +15,7 @@ export interface DemoTaskChecklistItem {
   title: string;
   is_done: boolean;
   done_by: string | null;
+  assigned_to?: string | null;
   note: string;
   category: string;
   sort_order: number;

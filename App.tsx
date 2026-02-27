@@ -10,7 +10,7 @@ import { SubscriptionProvider } from './contexts/SubscriptionContext';
 import { DemoProvider } from './contexts/DemoContext';
 
 import { HQLogin, HQDashboard, HQBranchReports, HQPresentation } from './components/hq';
-import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, PrepInventory, BudgetManager } from './components/store';
+import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, PrepInventory, CookingManual, BudgetManager } from './components/store';
 import { CustomerOrderScreen } from './components/store/main/CustomerOrderScreen';
 import { useSync } from './hooks/useSync';
 import type { Branch, BudgetExpense, Menu, MenuCategory, PrepIngredient } from './types/database';
@@ -29,7 +29,6 @@ import { HQHome } from 'components/hq/HQHome';
 
 import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
 import { TaskChecklist } from 'components/store/sub/TaskChecklist';
-import { ShiftHandover } from 'components/store/sub/ShiftHandover';
 import { Home } from 'components/Home';
 import { BudgetExpenseRecorder } from 'components/store/budget/BudgetExpenseRecorder';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
@@ -70,7 +69,7 @@ type Screen =
   | 'store_order_board'
   | 'store_prep'
   | 'store_checklist'
-  | 'store_shift_handover'
+  | 'store_cooking_manual'
   | 'store_budget'
   | 'store_budget_expense'
   | 'store_budget_breakeven';
@@ -197,14 +196,36 @@ function AppContent() {
     [isUuid],
   );
 
-  const navigateToStoreEntry = useCallback(() => {
+  const navigateToStoreEntry = useCallback(async () => {
     if (authState.status === 'authenticated') {
+      if (authState.subscription.plan_type === 'free') {
+        const { data, error } = await supabase
+          .from('branches')
+          .select('*')
+          .eq('owner_id', authState.user.id)
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+
+        if (error || !data) {
+          console.error('[App] Failed to resolve free plan branch:', error ?? 'not found');
+          setCurrentBranch(null);
+          setMyStoresReturnScreen('account_dashboard');
+          setCurrentScreen('my_stores');
+          return;
+        }
+
+        setCurrentBranch(data);
+        setCurrentScreen('store_home');
+        return;
+      }
+
       setMyStoresReturnScreen('account_dashboard');
       setCurrentScreen('my_stores');
       return;
     }
     setCurrentScreen('store_login');
-  }, [authState.status]);
+  }, [authState]);
 
   const handleBranchLogin = useCallback(async (branch: Branch) => {
     const resolved = await resolveBranchForStore(branch);
@@ -298,7 +319,7 @@ function AppContent() {
       'store_order_board',
       'store_prep',
       'store_checklist',
-      'store_shift_handover',
+      'store_cooking_manual',
       'store_budget',
       'store_budget_expense',
       'store_budget_breakeven',
@@ -763,7 +784,7 @@ function AppContent() {
               onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
               onNavigateToPrep={() => setCurrentScreen('store_prep')}
               onNavigateToChecklist={() => setCurrentScreen('store_checklist')}
-              onNavigateToShiftHandover={() => setCurrentScreen('store_shift_handover')}
+              onNavigateToCookingManual={() => setCurrentScreen('store_cooking_manual')}
               onNavigateToBudget={() => setCurrentScreen('store_budget')}
               onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
               onNavigateToBudgetBreakeven={() => setCurrentScreen('store_budget_breakeven')}
@@ -909,7 +930,7 @@ function AppContent() {
           </>
         );
 
-      case 'store_shift_handover':
+      case 'store_cooking_manual':
         if (!currentBranch) {
           navigateToStoreEntry();
           return null;
@@ -918,7 +939,7 @@ function AppContent() {
           <>
             <DemoBanner />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <ShiftHandover
+            <CookingManual
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
             />

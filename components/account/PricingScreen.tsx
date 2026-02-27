@@ -41,8 +41,8 @@ const plans: {
     buttonColor: 'bg-green-600',
     accentBg: 'bg-emerald-50',
     accentText: 'text-emerald-700',
-    catch: 'まず試したい方向け',
-    savingText: '初期費用ゼロで即スタート',
+    catch: '広告なし・完全無料で使える',
+    savingText: '',
     features: [
       '1店舗のみ',
       'ローカル保存（端末内のみ）',
@@ -85,7 +85,8 @@ const plans: {
     useCases: [
       'レジ担当と受け渡し担当で端末を分けたい時',
       '端末故障時にデータを守りたい時',
-      '学園祭期間中に複数日運用する時',
+      '来客数を計りたい時',
+      'PC上で操作したい時'
     ],
     limitations: [
       '複数店舗は管理不可',
@@ -213,6 +214,12 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
   const renderPlanCard = (p: (typeof plans)[number], compact = false) => {
     const isCurrent = p.key === currentPlanKey;
     const isPaidPlanCard = p.key !== 'free';
+    const isOrgPlanCard = p.key === 'org_light' || p.key === 'org_standard' || p.key === 'org_premium';
+    const orgStoreLimitFeature = p.features.find((feature) => feature.startsWith('最大'));
+    const displayedFeatures =
+      compact && isOrgPlanCard
+        ? [orgStoreLimitFeature ?? '店舗数上限あり', '共通機能は上の「団体プラン共通でできること」を参照']
+        : p.features;
     const monthlyLabel = p.price === 0 ? '0円' : `${p.price.toLocaleString()}円`;
     return (
       <Card
@@ -233,7 +240,7 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
         {p.key === 'free' && (
           <View className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 self-start">
             <Text className="text-emerald-700 text-xs font-semibold">
-              無料プランはスマホ / タブレット向け
+              広告なし・完全無料（スマホ / タブレット向け）
             </Text>
           </View>
         )}
@@ -244,14 +251,9 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
           </View>
         )}
 
-        {!isCurrent && (
-          <View className={`${p.accentBg} rounded-lg px-3 py-2 mb-3`}>
-            <Text className={`${p.accentText} text-xs font-semibold`}>{p.savingText}</Text>
-          </View>
-        )}
 
         <View className="gap-1.5 mb-3">
-          {p.features.map((f) => (
+          {displayedFeatures.map((f) => (
             <View key={f} className="flex-row items-start">
               <Text className="text-green-500 mr-2 text-sm">+</Text>
               <Text className="text-gray-700 text-sm flex-1">{f}</Text>
@@ -338,6 +340,15 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
           </Text>
         </Card>
 
+        <Card className="bg-sky-50 border border-sky-200 p-4">
+          <Text className="text-sky-900 font-bold mb-1">DB連携の有料プランで使える機能（店舗/団体共通）</Text>
+          <Text className="text-sky-800 text-xs leading-5">・モバイルオーダー機能</Text>
+          <Text className="text-sky-800 text-xs leading-5">・来客カウンター機能</Text>
+          <Text className="text-sky-800 text-xs leading-5">・オーダーボード（提供ステータス管理）</Text>
+          <Text className="text-sky-800 text-xs leading-5">・在庫確認（仕込み在庫）</Text>
+          <Text className="text-sky-800 text-xs leading-5">・仕事チェックリスト</Text>
+        </Card>
+
         {basePlans.map((p) => renderPlanCard(p))}
 
         <Card className={`bg-white p-4 border-2 ${currentIsOrgPlan ? 'border-violet-400' : 'border-gray-100'}`}>
@@ -365,6 +376,15 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
             <Text className="text-violet-700 text-xs mt-1 leading-5">
               複数の模擬店を本部でまとめて管理したい場合に、店舗数に合わせて無駄なく選べます。
             </Text>
+          </View>
+
+          <View className="mt-3 bg-gray-50 rounded-lg px-3 py-2">
+            <Text className="text-gray-800 text-xs font-semibold mb-1">団体プラン共通でできること</Text>
+            <Text className="text-gray-600 text-xs leading-5">・DB連携（クラウド保存）</Text>
+            <Text className="text-gray-600 text-xs leading-5">・Web版での店舗操作</Text>
+            <Text className="text-gray-600 text-xs leading-5">・ログインコードで他端末アクセス</Text>
+            <Text className="text-gray-600 text-xs leading-5">・本部ダッシュボード / 全店舗集計 / 一括出力</Text>
+            <Text className="text-gray-600 text-xs leading-5">・違いは「上限店舗数（3 / 10 / 30）」のみ</Text>
           </View>
 
           <View className="mt-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">

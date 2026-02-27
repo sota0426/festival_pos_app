@@ -51,6 +51,7 @@ export const useSubscription = (): SubscriptionContextValue => {
 export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const { authState } = useAuth();
 
   const subscription = authState.status === 'authenticated' ? authState.subscription : null;
@@ -83,30 +84,73 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [canSync, isLoginCode, isDemo]);
 
+  const resolveValidAccessToken = useCallback(async (): Promise<string | null> => {
+    const isJwt = (token: string | null | undefined): token is string =>
+      !!token && token.split('.').length === 3;
+
+    // サーバー側でユーザー取得できる状態を先に作る
+    let { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) {
+      const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError || !refreshed.session) return null;
+      const retry = await supabase.auth.getUser();
+      if (retry.error || !retry.data.user) return null;
+    }
+
+    let { data: { session } } = await supabase.auth.getSession();
+    if (!isJwt(session?.access_token)) {
+      const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError || !isJwt(refreshed.session?.access_token)) return null;
+      session = refreshed.session;
+    }
+
+    return session.access_token;
+  }, []);
+
+  const invokeEdgeFunctionWithAuth = useCallback(
+    async (functionName: string, accessToken: string, body?: Record<string, unknown>) => {
+      if (!supabaseUrl) {
+        throw new Error('Supabase設定が不足しています');
+      }
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(body ?? {}),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message =
+          (payload && typeof payload === 'object' && 'message' in payload && typeof payload.message === 'string'
+            ? payload.message
+            : null) ||
+          (payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
+            ? payload.error
+            : null) ||
+          `HTTP ${response.status}`;
+        throw new Error(message);
+      }
+
+      return payload as { url?: string } | null;
+    },
+    [supabaseUrl],
+  );
+
   const openCheckout = useCallback(async (targetPlan: CheckoutPlan) => {
     if (authState.status !== 'authenticated') return;
 
     try {
-      // セッション確認
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      const accessToken = await resolveValidAccessToken();
+      if (!accessToken) {
         Alert.alert('エラー', 'セッションが切れました。再度ログインしてください。');
         return;
       }
 
-      const { data, error } = await supabase.functions.invoke('create-checkout-session', {
-        body: { plan: targetPlan },
-      });
-
-      if (error) {
-        // FunctionsHttpError の場合、レスポンスボディを取得
-        const context = (error as { context?: { json?: () => Promise<unknown> } })?.context;
-        if (context?.json) {
-          const errorBody = await context.json();
-          console.error('Edge Function error detail:', errorBody);
-        }
-        throw error;
-      }
+      const data = await invokeEdgeFunctionWithAuth('create-checkout-session', accessToken, { plan: targetPlan });
       if (data?.url) {
         if (Platform.OS === 'web') {
           window.location.href = data.url;
@@ -121,15 +165,19 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
         'プラン変更の処理に失敗しました。しばらくしてからもう一度お試しください。'
       );
     }
-  }, [authState.status]);
+  }, [authState.status, invokeEdgeFunctionWithAuth, resolveValidAccessToken]);
 
   const openPortal = useCallback(async () => {
     if (authState.status !== 'authenticated') return;
 
     try {
-      const { data, error } = await supabase.functions.invoke('create-portal-session', {});
+      const accessToken = await resolveValidAccessToken();
+      if (!accessToken) {
+        Alert.alert('エラー', 'セッションが切れました。再度ログインしてください。');
+        return;
+      }
 
-      if (error) throw error;
+      const data = await invokeEdgeFunctionWithAuth('create-portal-session', accessToken);
       if (data?.url) {
         if (Platform.OS === 'web') {
           window.location.href = data.url;
@@ -144,7 +192,7 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
         'お支払い管理画面の表示に失敗しました。しばらくしてからもう一度お試しください。'
       );
     }
-  }, [authState.status]);
+  }, [authState.status, invokeEdgeFunctionWithAuth, resolveValidAccessToken]);
 
   const value = useMemo(
     () => ({

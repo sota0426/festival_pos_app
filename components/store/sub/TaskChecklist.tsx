@@ -22,6 +22,7 @@ interface TaskItem {
   title: string;
   is_done: boolean;
   done_by: string | null;
+  assigned_to: string | null;
   note: string;
   category: string;
   sort_order: number;
@@ -54,14 +55,33 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
   const [newTitle, setNewTitle] = useState('');
   const [newNote, setNewNote] = useState('');
   const [newCategory, setNewCategory] = useState('その他');
+  const [newAssignee, setNewAssignee] = useState<string | null>(null);
   const [doneByName, setDoneByName] = useState('');
   const [saving, setSaving] = useState(false);
   const [filterDone, setFilterDone] = useState<'all' | 'todo' | 'done'>('all');
+  const [recorderNames, setRecorderNames] = useState<string[]>([]);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assigningTask, setAssigningTask] = useState<TaskItem | null>(null);
+  const [assigning, setAssigning] = useState(false);
+
+  const normalizeTask = useCallback((task: Partial<TaskItem>): TaskItem => ({
+    id: String(task.id ?? ''),
+    branch_id: String(task.branch_id ?? branch.id),
+    title: String(task.title ?? ''),
+    is_done: task.is_done === true,
+    done_by: typeof task.done_by === 'string' ? task.done_by : null,
+    assigned_to: typeof task.assigned_to === 'string' ? task.assigned_to : null,
+    note: String(task.note ?? ''),
+    category: String(task.category ?? 'その他'),
+    sort_order: Number(task.sort_order ?? 0),
+    created_at: String(task.created_at ?? new Date().toISOString()),
+    updated_at: String(task.updated_at ?? new Date().toISOString()),
+  }), [branch.id]);
 
   const fetchTasks = useCallback(async () => {
     if (isDemo && demoBranchId) {
       const seeded = (DEMO_TASK_CHECKLISTS[demoBranchId] ?? []).map((task) => ({
-        ...task,
+        ...normalizeTask(task),
         branch_id: branch.id,
       }));
       setTasks(seeded);
@@ -80,16 +100,45 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
         .order('sort_order', { ascending: true })
         .order('created_at', { ascending: true });
       if (error) throw error;
-      setTasks(data ?? []);
+      setTasks((data ?? []).map((row) => normalizeTask(row)));
     } catch (e) {
       console.error('[TaskChecklist] fetch error:', e);
     } finally {
       setLoading(false);
     }
-  }, [branch.id, isDemo, demoBranchId]);
+  }, [branch.id, isDemo, demoBranchId, normalizeTask]);
+
+  const fetchRecorders = useCallback(async () => {
+    if (isDemo) {
+      setRecorderNames(['店長', '店員1', '店員2', '店員3']);
+      return;
+    }
+    if (!isSupabaseConfigured()) {
+      setRecorderNames([]);
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('branch_recorders')
+        .select('recorder_name')
+        .eq('branch_id', branch.id)
+        .eq('is_active', true)
+        .order('group_id', { ascending: true })
+        .order('recorder_name', { ascending: true });
+      if (error) throw error;
+      const names = (data ?? [])
+        .map((row) => String(row.recorder_name ?? '').trim())
+        .filter((name) => name.length > 0);
+      setRecorderNames(names);
+    } catch (e) {
+      console.error('[TaskChecklist] fetch recorders error:', e);
+      setRecorderNames([]);
+    }
+  }, [branch.id, isDemo]);
 
   useEffect(() => {
     void fetchTasks();
+    void fetchRecorders();
 
     if (isDemo || !isSupabaseConfigured()) return;
 
@@ -103,7 +152,7 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
       .subscribe();
 
     return () => { void supabase.removeChannel(channel); };
-  }, [branch.id, fetchTasks, isDemo]);
+  }, [branch.id, fetchTasks, fetchRecorders, isDemo]);
 
   const handleToggleDone = async (task: TaskItem) => {
     if (isDemo) {
@@ -123,7 +172,7 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
     }
     try {
       const nowDone = !task.is_done;
-      await supabase
+      const { error } = await supabase
         .from('task_checklists')
         .update({
           is_done: nowDone,
@@ -131,6 +180,7 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
           updated_at: new Date().toISOString(),
         })
         .eq('id', task.id);
+      if (error) throw error;
       // リアルタイム購読で自動更新されるが、即時反映のためローカルも更新
       setTasks((prev) =>
         prev.map((t) =>
@@ -139,6 +189,7 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
             : t
         )
       );
+      void fetchTasks();
     } catch (e) {
       console.error('[TaskChecklist] toggle error:', e);
       alertNotify('エラー', 'チェックの更新に失敗しました');
@@ -162,6 +213,7 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
           title,
           is_done: false,
           done_by: null,
+          assigned_to: newAssignee?.trim() ? newAssignee : null,
           note: newNote.trim(),
           category: newCategory,
           sort_order: maxOrder + 1,
@@ -172,6 +224,7 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
       setNewTitle('');
       setNewNote('');
       setNewCategory('その他');
+      setNewAssignee(null);
       setShowAddModal(false);
       return;
     }
@@ -187,6 +240,7 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
         title,
         is_done: false,
         done_by: null,
+        assigned_to: newAssignee?.trim() ? newAssignee : null,
         note: newNote.trim(),
         category: newCategory,
         sort_order: maxOrder + 1,
@@ -195,12 +249,57 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
       setNewTitle('');
       setNewNote('');
       setNewCategory('その他');
+      setNewAssignee(null);
       setShowAddModal(false);
+      void fetchTasks();
     } catch (e) {
       console.error('[TaskChecklist] add error:', e);
       alertNotify('エラー', 'タスクの追加に失敗しました');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleAssignTask = async (task: TaskItem, assignee: string | null) => {
+    if (isDemo) {
+      setTasks((prev) =>
+        prev.map((item) =>
+          item.id === task.id
+            ? { ...item, assigned_to: assignee, updated_at: new Date().toISOString() }
+            : item
+        ),
+      );
+      setShowAssignModal(false);
+      setAssigningTask(null);
+      return;
+    }
+    if (!isSupabaseConfigured()) {
+      alertNotify('オフライン', 'オフライン時は担当者を変更できません');
+      return;
+    }
+
+    setAssigning(true);
+    try {
+      const { error } = await supabase
+        .from('task_checklists')
+        .update({
+          assigned_to: assignee,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', task.id);
+      if (error) throw error;
+
+      setTasks((prev) =>
+        prev.map((item) => (item.id === task.id ? { ...item, assigned_to: assignee } : item)),
+      );
+      setShowAssignModal(false);
+      setAssigningTask(null);
+      void fetchTasks();
+    } catch (e) {
+      console.error('[TaskChecklist] assign error:', e);
+      alertNotify('エラー', '担当者の更新に失敗しました');
+    } finally {
+      setAssigning(false);
     }
   };
 
@@ -211,8 +310,10 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
     }
     if (!isSupabaseConfigured()) return;
     try {
-      await supabase.from('task_checklists').delete().eq('id', id);
+      const { error } = await supabase.from('task_checklists').delete().eq('id', id);
+      if (error) throw error;
       setTasks((prev) => prev.filter((t) => t.id !== id));
+      void fetchTasks();
     } catch (e) {
       console.error('[TaskChecklist] delete error:', e);
       alertNotify('エラー', '削除に失敗しました');
@@ -226,11 +327,13 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
     }
     if (!isSupabaseConfigured()) return;
     try {
-      await supabase
+      const { error } = await supabase
         .from('task_checklists')
         .update({ is_done: false, done_by: null, updated_at: new Date().toISOString() })
         .eq('branch_id', branch.id);
+      if (error) throw error;
       setTasks((prev) => prev.map((t) => ({ ...t, is_done: false, done_by: null })));
+      void fetchTasks();
     } catch (e) {
       console.error('[TaskChecklist] reset error:', e);
       alertNotify('エラー', 'リセットに失敗しました');
@@ -354,9 +457,25 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
                     {task.note ? (
                       <Text className="text-sm text-gray-500 mt-0.5">{task.note}</Text>
                     ) : null}
+                    {task.assigned_to ? (
+                      <Text className="text-xs text-indigo-600 mt-1">担当: {task.assigned_to}</Text>
+                    ) : (
+                      <Text className="text-xs text-gray-400 mt-1">担当: 未設定</Text>
+                    )}
                     {task.is_done && task.done_by ? (
                       <Text className="text-xs text-blue-500 mt-1">{task.done_by} が完了</Text>
                     ) : null}
+                    <TouchableOpacity
+                      onPress={() => {
+                        setAssigningTask(task);
+                        setShowAssignModal(true);
+                      }}
+                      className="self-start mt-2 px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50"
+                    >
+                      <Text className="text-xs font-semibold text-indigo-700">
+                        {task.assigned_to ? '担当者を変更' : '担当者を割り当て'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
 
                   {/* 削除ボタン */}
@@ -432,9 +551,42 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
               ))}
             </View>
 
+            <Text className="text-sm font-medium text-gray-700 mb-2">担当者（任意）</Text>
+            <View className="flex-row flex-wrap gap-2 mb-5">
+              <TouchableOpacity
+                onPress={() => setNewAssignee(null)}
+                className={`px-3 py-1.5 rounded-full border ${
+                  !newAssignee ? 'bg-gray-600 border-gray-600' : 'bg-white border-gray-300'
+                }`}
+              >
+                <Text className={`text-sm font-medium ${!newAssignee ? 'text-white' : 'text-gray-600'}`}>
+                  未設定
+                </Text>
+              </TouchableOpacity>
+              {recorderNames.map((name) => (
+                <TouchableOpacity
+                  key={name}
+                  onPress={() => setNewAssignee(name)}
+                  className={`px-3 py-1.5 rounded-full border ${
+                    newAssignee === name ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-gray-300'
+                  }`}
+                >
+                  <Text className={`text-sm font-medium ${newAssignee === name ? 'text-white' : 'text-gray-600'}`}>
+                    {name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             <View className="flex-row gap-3">
               <TouchableOpacity
-                onPress={() => { setShowAddModal(false); setNewTitle(''); setNewNote(''); }}
+                onPress={() => {
+                  setShowAddModal(false);
+                  setNewTitle('');
+                  setNewNote('');
+                  setNewCategory('その他');
+                  setNewAssignee(null);
+                }}
                 className="flex-1 border border-gray-300 rounded-xl py-3 items-center"
               >
                 <Text className="text-gray-600 font-semibold">キャンセル</Text>
@@ -450,6 +602,60 @@ export const TaskChecklist = ({ branch, onBack }: TaskChecklistProps) => {
                 }
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 担当者割り当てモーダル */}
+      <Modal visible={showAssignModal} transparent animationType="slide" onRequestClose={() => setShowAssignModal(false)}>
+        <View className="flex-1 bg-black/40 justify-end">
+          <View className="bg-white rounded-t-2xl p-6">
+            <Text className="text-lg font-bold text-gray-900 mb-1">担当者を設定</Text>
+            <Text className="text-sm text-gray-500 mb-4">{assigningTask?.title ?? ''}</Text>
+
+            <View className="flex-row flex-wrap gap-2 mb-5">
+              <TouchableOpacity
+                onPress={() => assigningTask && handleAssignTask(assigningTask, null)}
+                disabled={assigning}
+                className={`px-3 py-1.5 rounded-full border ${
+                  !assigningTask?.assigned_to ? 'bg-gray-600 border-gray-600' : 'bg-white border-gray-300'
+                }`}
+              >
+                <Text className={`text-sm font-medium ${!assigningTask?.assigned_to ? 'text-white' : 'text-gray-600'}`}>
+                  未設定
+                </Text>
+              </TouchableOpacity>
+              {recorderNames.map((name) => (
+                <TouchableOpacity
+                  key={name}
+                  onPress={() => assigningTask && handleAssignTask(assigningTask, name)}
+                  disabled={assigning}
+                  className={`px-3 py-1.5 rounded-full border ${
+                    assigningTask?.assigned_to === name ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-gray-300'
+                  }`}
+                >
+                  <Text className={`text-sm font-medium ${assigningTask?.assigned_to === name ? 'text-white' : 'text-gray-600'}`}>
+                    {name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {recorderNames.length === 0 && (
+              <Text className="text-sm text-gray-500 mb-4">
+                登録者が見つかりません。設定画面で登録者を追加すると担当者に選べます。
+              </Text>
+            )}
+
+            <TouchableOpacity
+              onPress={() => {
+                setShowAssignModal(false);
+                setAssigningTask(null);
+              }}
+              className="border border-gray-300 rounded-xl py-3 items-center"
+            >
+              <Text className="text-gray-600 font-semibold">閉じる</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>

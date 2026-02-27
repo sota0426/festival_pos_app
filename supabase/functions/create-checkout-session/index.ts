@@ -42,16 +42,20 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    const accessToken = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (!accessToken) {
+      return new Response(JSON.stringify({ error: 'Missing access token' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_ANON_KEY')!,
-      {
-        global: { headers: { Authorization: authHeader } },
-      }
     );
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
     if (authError || !user) {
       return new Response(JSON.stringify({
         error: 'Unauthorized',
@@ -114,6 +118,8 @@ serve(async (req) => {
         'line_items[0][price]': priceId,
         'line_items[0][quantity]': '1',
         mode: 'payment',
+        'payment_method_types[0]': 'card',
+        'payment_method_types[1]': 'paypay',
         success_url: `${APP_URL}?checkout=success`,
         cancel_url: `${APP_URL}?checkout=cancel`,
         'metadata[supabase_user_id]': user.id,
