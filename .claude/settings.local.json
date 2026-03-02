@@ -21,7 +21,9 @@
       "Bash(supabase functions deploy:*)",
       "Bash(supabase functions list:*)",
       "Bash(ls:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(npm run build:*)",
+      "mcp__Claude_Preview__preview_start"
     ]
   }
 }
