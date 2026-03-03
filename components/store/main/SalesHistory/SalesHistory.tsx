@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, RefreshControl, ActivityIndicator, TextInput } from 'react-native';
+import { View, Text, FlatList, RefreshControl, ActivityIndicator, TextInput, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Modal, Button } from '../../../common';
 import { supabase, isSupabaseConfigured } from '../../../../lib/supabase';
-import { getPendingTransactions, getMenus, saveMenus, getRestrictions, verifyAdminPassword } from '../../../../lib/storage';
+import { getPendingTransactions, getMenus, saveMenus, getRestrictions, savePendingTransactions, verifyAdminPassword } from '../../../../lib/storage';
 import { alertConfirm, alertNotify } from '../../../../lib/alertUtils';
 import type { Branch, Transaction, TransactionItem, RestrictionSettings } from '../../../../types/database';
 import { MenuSalesSummary } from './MenuSalesSummary';
@@ -42,6 +42,8 @@ export const SalesHistory = ({
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionWithItems | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
+  const [showActionsModal, setShowActionsModal] = useState(false);
   const [view, setView] = useState<'history' | 'menuSales'>("history");
 
   // Restriction & admin guard state
@@ -50,6 +52,7 @@ export const SalesHistory = ({
   const [adminGuardPwInput, setAdminGuardPwInput] = useState('');
   const [adminGuardError, setAdminGuardError] = useState('');
   const [adminGuardCallback, setAdminGuardCallback] = useState<(() => void) | null>(null);
+  const [salesGuardPurpose, setSalesGuardPurpose] = useState<'cancel' | 'reset'>('cancel');
 
   const fetchTransactions = useCallback(async () => {
     try {
@@ -334,10 +337,70 @@ export const SalesHistory = ({
 
   const handleCancelTransaction = (transaction: TransactionWithItems) => {
     if (restrictions?.sales_cancel) {
+      setSalesGuardPurpose('cancel');
       openSalesGuard(() => executeCancelTransaction(transaction));
     } else {
       executeCancelTransaction(transaction);
     }
+  };
+
+  const executeClearAllSales = async () => {
+    setClearingAll(true);
+    try {
+      if (canSyncToSupabase) {
+        const { data: transRows, error: transFetchError } = await supabase
+          .from('transactions')
+          .select('id')
+          .eq('branch_id', branch.id);
+        if (transFetchError) throw transFetchError;
+
+        const transIds = (transRows ?? []).map((row) => row.id);
+        if (transIds.length > 0) {
+          const { error: itemDeleteError } = await supabase
+            .from('transaction_items')
+            .delete()
+            .in('transaction_id', transIds);
+          if (itemDeleteError) throw itemDeleteError;
+        }
+
+        const { error: txDeleteError } = await supabase
+          .from('transactions')
+          .delete()
+          .eq('branch_id', branch.id);
+        if (txDeleteError) throw txDeleteError;
+      }
+
+      if (!isDemo) {
+        const pending = await getPendingTransactions();
+        const remained = pending.filter((t) => t.branch_id !== branch.id);
+        await savePendingTransactions(remained);
+      }
+
+      setTransactions([]);
+      setShowDetailModal(false);
+      setSelectedTransaction(null);
+      alertNotify('完了', '販売履歴を全消去しました');
+    } catch (error) {
+      console.error('Error clearing all sales history:', error);
+      alertNotify('エラー', '販売履歴の全消去に失敗しました');
+    } finally {
+      setClearingAll(false);
+    }
+  };
+
+  const handleClearAllSales = () => {
+    if (transactionCount === 0) return;
+    alertConfirm(
+      '全消去の確認',
+      '販売履歴をすべて削除しますか？\nこの操作は取り消せません。',
+      () => {
+        setSalesGuardPurpose('reset');
+        openSalesGuard(() => {
+          void executeClearAllSales();
+        });
+      },
+      '削除する',
+    );
   };
 
   // Calculate totals
@@ -357,7 +420,7 @@ export const SalesHistory = ({
           <View className="flex-row gap-2">
             {view === 'history' ? (
               <Button
-                title="メニュー別"
+                title="メニュー別売上"
                 onPress={() => setView('menuSales')}
                 size="sm"
               />
@@ -368,12 +431,13 @@ export const SalesHistory = ({
                 size="sm"
               />
             )}
-            <Button
-              title="CSV出力"
-              onPress={()=>handleExportCSV({transactions,branch})}
-              size="sm"
-              variant="secondary"
-            />
+            <TouchableOpacity
+              onPress={() => setShowActionsModal(true)}
+              className="w-9 h-9 bg-gray-100 rounded-lg items-center justify-center"
+              activeOpacity={0.7}
+            >
+              <Text className="text-gray-700 text-lg font-bold leading-none">☰</Text>
+            </TouchableOpacity>
 
           </View>
         }
@@ -448,15 +512,66 @@ export const SalesHistory = ({
         formatDate={formatDate}
       />
 
+      <Modal
+        visible={showActionsModal}
+        onClose={() => setShowActionsModal(false)}
+        title="販売履歴操作"
+      >
+        <View className="gap-3">
+          <TouchableOpacity
+            onPress={() => {
+              setShowActionsModal(false);
+              handleExportCSV({ transactions, branch });
+            }}
+            className="flex-row items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3"
+            activeOpacity={0.7}
+          >
+            <Text className="text-lg">📤</Text>
+            <View className="flex-1">
+              <Text className="text-blue-800 font-semibold text-sm">CSV出力</Text>
+              <Text className="text-blue-600 text-xs">販売履歴データをCSVで出力</Text>
+            </View>
+          </TouchableOpacity>
+
+          {view === 'history' ? (
+            <TouchableOpacity
+              onPress={() => {
+                setShowActionsModal(false);
+                handleClearAllSales();
+              }}
+              disabled={transactionCount === 0 || clearingAll}
+              className={`flex-row items-center gap-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3 ${
+                transactionCount === 0 || clearingAll ? 'opacity-50' : ''
+              }`}
+              activeOpacity={0.7}
+            >
+              <Text className="text-lg">🗑️</Text>
+              <View className="flex-1">
+                <Text className="text-red-800 font-semibold text-sm">全消去</Text>
+                <Text className="text-red-600 text-xs">販売履歴をすべて削除</Text>
+              </View>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </Modal>
+
       {/* Admin Guard Modal for sales_cancel restriction */}
       <Modal
         visible={showAdminGuardModal}
         onClose={closeSalesGuard}
         title="管理者パスワード"
       >
-        <Text className="text-gray-600 text-sm mb-3">
-          売上の取消には管理者パスワードが必要です
-        </Text>
+          {salesGuardPurpose === 'reset'
+            ? (
+            <Text className="text-gray-600 text-sm mb-3">
+              販売履歴の全消去には管理者パスワードが必要です。{'\n'}初期パスワードは[0000]です。
+            </Text>
+            ): (
+          <Text className="text-gray-600 text-sm mb-3">
+            売上の取消には管理者パスワードが必要です
+            </Text>
+            )
+            }
         <TextInput
           value={adminGuardPwInput}
           onChangeText={(text) => {

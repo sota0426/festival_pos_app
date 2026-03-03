@@ -70,7 +70,6 @@ interface StoreHomeProps {
   onNavigateToHistory: () => void;
   onNavigateToOrderBoard: () => void;
   onNavigateToPrep: () => void;
-  onNavigateToCookingManual: () => void;
   onNavigateToBudget: () => void;
   onNavigateToBudgetExpense: () => void;
   onNavigateToPricing?: () => void;
@@ -125,7 +124,7 @@ const DELETE_DATA_CATEGORY_DEFS: { key: DeleteCategory; label: string; desc: str
   { key: 'sales', label: '売上データ', desc: '取引履歴・会計データ' },
   { key: 'menu', label: 'メニューデータ', desc: 'メニュー・カテゴリ一覧' },
   { key: 'budget', label: '会計データ', desc: '予算設定・支出記録' },
-  { key: 'prep', label: '下準備データ', desc: '材料・在庫管理記録' },
+  { key: 'prep', label: '下準備データ', desc: '食材・在庫管理記録' },
   { key: 'recorder', label: '登録者データ', desc: '登録者一覧・端末アクセス履歴・登録設定' },
 ];
 
@@ -261,7 +260,6 @@ export const StoreHome = ({
   onNavigateToHistory,
   onNavigateToOrderBoard,
   onNavigateToPrep,
-  onNavigateToCookingManual,
   onNavigateToBudget,
   onNavigateToBudgetExpense,
   onNavigateToPricing,
@@ -311,7 +309,7 @@ export const StoreHome = ({
   const [importSourceName, setImportSourceName] = useState('');
   const [importError, setImportError] = useState('');
   const isFreeAuthenticatedPlan = authState.status === 'authenticated' && isFreePlan;
-  const canSyncToSupabase = isSupabaseConfigured() && authState.status !== 'demo' && !isFreeAuthenticatedPlan;
+  const canSyncToSupabase = isSupabaseConfigured() && authState.status !== 'demo';
 
   // Restriction management state
   const [restrictions, setRestrictions] = useState<RestrictionSettings>({
@@ -344,13 +342,6 @@ export const StoreHome = ({
   const [selectedRecorderEditNote, setSelectedRecorderEditNote] = useState('');
   const [selectedRecorderEditGroupId, setSelectedRecorderEditGroupId] = useState<number>(1);
   const handleSubFeatureNavigation = (navigate: () => void) => {
-    if (isFreeAuthenticatedPlan) {
-      alertNotify(
-        '無料プランではサブ画面は利用できません',
-        '注文受付は有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
-      );
-      return;
-    }
     navigate();
   };
   const [savingRecorderEdit, setSavingRecorderEdit] = useState(false);
@@ -919,16 +910,6 @@ export const StoreHome = ({
     });
     return map;
   }, [sortedRecorders]);
-
-  const currentRecorderName = useMemo(() => {
-    const bySelected = recorders.find((item) => item.id === sessionRecorderId)?.recorder_name;
-    if (bySelected) return bySelected;
-    if (!currentDeviceId) return null;
-    const latestByDevice = allRecorderLogs
-      .filter((log) => log.device_id === currentDeviceId)
-      .sort((a, b) => new Date(b.accessed_at).getTime() - new Date(a.accessed_at).getTime())[0];
-    return latestByDevice?.recorder_name ?? null;
-  }, [allRecorderLogs, currentDeviceId, recorders, sessionRecorderId]);
 
   const selectedRecorderDevices = useMemo(() => {
     const latestByDevice = new Map<string, RecorderAccessLog>();
@@ -1634,6 +1615,7 @@ export const StoreHome = ({
         budget.budget_expenses = rows.map((row) => ({
           ...(row as unknown as BudgetExpense),
           amount: toNumberOr(row.amount),
+          is_reimbursed: row.is_reimbursed === '' ? false : toBoolean(row.is_reimbursed),
           receipt_image: row.receipt_image || null,
           synced: row.synced === '' ? true : toBoolean(row.synced),
         }));
@@ -1807,6 +1789,7 @@ export const StoreHome = ({
         const incomingExpenses = (budgetData.budget_expenses ?? []).map((expense) => ({
           ...expense,
           branch_id: branch.id,
+          is_reimbursed: expense.is_reimbursed ?? false,
         }));
 
         if (canSyncToSupabase) {
@@ -1927,11 +1910,6 @@ export const StoreHome = ({
           <View className="mt-1 gap-1">
             <Text className="text-sm text-gray-500">支店番号: {branch.branch_code}</Text>
             <View className="flex-row flex-wrap items-start gap-1.5">
-              <View className="px-2 py-0.5 rounded-full border border-emerald-200 bg-emerald-50">
-                <Text className="text-xs font-medium text-emerald-700">
-                  使用者: {currentRecorderName ?? '未設定'}
-                </Text>
-              </View>
 
               {canShowLoginCodeInHeader && maskedLoginCode ? (
                 <TouchableOpacity
@@ -2008,40 +1986,9 @@ export const StoreHome = ({
 
         {activeTab === 'share' && (
           <View className="flex-1 gap-4">
-            {isFreeAuthenticatedPlan && (
-              <Card className="bg-amber-50 border border-amber-200 p-4">
-                <Text className="text-amber-900 font-bold text-base text-center">無料プランでは共有機能は利用できません</Text>
-                <Text className="text-amber-700 text-center mt-1 text-xs">
-                  注文受付・在庫共有・調理マニュアルは有料プランでご利用いただけます。
-                </Text>
-                {(onNavigateToPricing || onNavigateToDemoHome) && (
-                  <View className="flex-row justify-center gap-2 mt-3">
-                    {onNavigateToPricing && (
-                      <TouchableOpacity
-                        onPress={onNavigateToPricing}
-                        activeOpacity={0.8}
-                        className="px-3 py-2 rounded-lg bg-white border border-amber-300"
-                      >
-                        <Text className="text-amber-800 text-xs font-semibold">有料プランを見る</Text>
-                      </TouchableOpacity>
-                    )}
-                    {onNavigateToDemoHome && (
-                      <TouchableOpacity
-                        onPress={onNavigateToDemoHome}
-                        activeOpacity={0.8}
-                        className="px-3 py-2 rounded-lg bg-white border border-amber-300"
-                      >
-                        <Text className="text-amber-800 text-xs font-semibold">デモ画面を見る</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
-              </Card>
-            )}
-
             {/* 注文受付 */}
             <TouchableOpacity onPress={() => handleSubFeatureNavigation(onNavigateToOrderBoard)} activeOpacity={0.8}>
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-orange-300 opacity-70' : 'bg-orange-500'} p-4`}>
+              <Card className="bg-orange-500 p-4">
                 <Text className="text-white text-2xl font-bold text-center">注文受付</Text>
                 <Text className="text-orange-100 text-center mt-2">別端末で注文を表示・管理</Text>
               </Card>
@@ -2049,42 +1996,15 @@ export const StoreHome = ({
 
             {/* 在庫確認（旧: 調理の下準備） */}
             <TouchableOpacity
-              onPress={() => {
-                if (isFreeAuthenticatedPlan) {
-                  alertNotify(
-                    '無料プランでは在庫確認は利用できません',
-                    '材料登録・在庫共有は有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
-                  );
-                  return;
-                }
-                onNavigateToPrep();
-              }}
+              onPress={onNavigateToPrep}
               activeOpacity={0.8}
             >
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-indigo-300 opacity-70' : 'bg-indigo-500'} p-4`}>
+              <Card className="bg-indigo-500 p-4">
                 <Text className="text-white text-2xl font-bold text-center">在庫確認</Text>
-                <Text className="text-indigo-100 text-center mt-2">材料・在庫をみんなで共有</Text>
+                <Text className="text-indigo-100 text-center mt-2">食材・在庫をみんなで共有</Text>
               </Card>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => {
-                if (isFreeAuthenticatedPlan) {
-                  alertNotify(
-                    '無料プランでは共有機能は利用できません',
-                    '調理マニュアルは有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
-                  );
-                  return;
-                }
-                onNavigateToCookingManual();
-              }}
-              activeOpacity={0.8}
-            >
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-violet-300 opacity-70' : 'bg-violet-500'} p-4`}>
-                <Text className="text-white text-2xl font-bold text-center">調理マニュアル</Text>
-                <Text className="text-violet-100 text-center mt-2">メニュー別の食材・原価・備考を管理</Text>
-              </Card>
-            </TouchableOpacity>
           </View>
         )}
 

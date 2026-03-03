@@ -195,7 +195,7 @@ export interface OrderBoardItem {
 
 // Budget management types
 export type ExpenseCategory = 'material' | 'decoration' | 'equipment' | 'other';
-export type ExpensePaymentMethod = 'cash' | 'online' | 'cashless';
+export type ExpensePaymentMethod = 'cash' | 'cashless' | 'bank_transfer' | 'advance';
 
 export interface BudgetExpense {
   id: string;
@@ -205,6 +205,7 @@ export interface BudgetExpense {
   amount: number;
   recorded_by: string;
   payment_method: ExpensePaymentMethod;
+  is_reimbursed: boolean;
   memo: string;
   receipt_image: string | null;
   created_at: string;

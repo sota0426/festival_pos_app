@@ -382,11 +382,14 @@ export const getBudgetExpenses = async (): Promise<BudgetExpense[]> => {
       ...expense,
       payment_method:
         legacyPaymentMethod === 'paypay'
-          ? 'online'
+          ? 'cashless'
           : legacyPaymentMethod === 'amazon'
-            ? 'cashless'
+            ? 'bank_transfer'
+            : legacyPaymentMethod === 'online'
+              ? 'bank_transfer'
             : expense.payment_method,
       recorded_by: expense.recorded_by ?? '',
+      is_reimbursed: (expense as unknown as { is_reimbursed?: boolean }).is_reimbursed ?? false,
     };
   });
 };

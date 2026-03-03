@@ -1,4 +1,4 @@
-import { View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSubscription } from '../../contexts/SubscriptionContext';
@@ -27,14 +27,12 @@ export const AccountDashboard = ({
   onLogout,
 }: AccountDashboardProps) => {
   const { authState, signOut } = useAuth();
-  const { plan, canAccessHQ, isFreePlan, openPortal } = useSubscription();
+  const { plan, canAccessHQ, isFreePlan } = useSubscription();
 
   if (authState.status !== 'authenticated') return null;
 
   const { profile } = authState;
   const planInfo = planLabels[plan] ?? planLabels.free;
-  const allowFreeWebInDev = __DEV__;
-  const isWebFreePlanRestricted = Platform.OS === 'web' && isFreePlan && !allowFreeWebInDev;
 
   const handleLogout = async () => {
     await signOut();
@@ -65,19 +63,15 @@ export const AccountDashboard = ({
         {/* クイックアクション */}
         <View className="gap-3 mb-6">
           <TouchableOpacity
-            onPress={isWebFreePlanRestricted ? onNavigateToPricing : onNavigateToStore}
+            onPress={onNavigateToStore}
             activeOpacity={0.8}
           >
-            <Card className={`${isWebFreePlanRestricted ? 'bg-green-300' : 'bg-green-500'} p-5`}>
+            <Card className="bg-green-500 p-5">
               <Text className="text-white text-lg font-bold text-center">
                 店舗管理
               </Text>
               <Text className="text-green-100 text-center text-sm mt-1">
-                {isWebFreePlanRestricted
-                  ? '無料プランのWeb操作は不可（店舗3か月パス以上で利用可）'
-                  : allowFreeWebInDev && Platform.OS === 'web' && isFreePlan
-                    ? '開発モード中のため無料プランでもWeb操作を許可中'
-                  : '店舗一覧・店舗設定・店舗画面へ移動'}
+                店舗一覧・店舗設定・店舗画面へ移動
               </Text>
             </Card>
           </TouchableOpacity>

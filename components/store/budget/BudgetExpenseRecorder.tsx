@@ -15,7 +15,6 @@ import {
 import { isSupabaseConfigured, supabase } from "lib/supabase";
 import type { Branch, BudgetExpense, ExpenseCategory, ExpensePaymentMethod } from "types/database";
 import { useAuth } from "contexts/AuthContext";
-import { useSubscription } from "contexts/SubscriptionContext";
 import { DEMO_BUDGET_EXPENSES, resolveDemoBranchId } from "data/demoData";
 
 interface Props {
@@ -24,7 +23,7 @@ interface Props {
 }
 
 const CATEGORY_LABELS: Record<ExpenseCategory, string> = {
-  material: "材料費",
+  material: "食材費",
   decoration: "装飾費",
   equipment: "機材・設備費",
   other: "その他",
@@ -46,14 +45,16 @@ const CATEGORY_COLORS: Record<ExpenseCategory, { bg: string; text: string }> = {
 
 const PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
   cash: "現金",
-  online: "オンライン支払い",
   cashless: "キャッシュレス",
+  bank_transfer: "振込・ネット決済",
+  advance: "立替",
 };
 
 const PAYMENT_METHOD_COLORS: Record<ExpensePaymentMethod, { bg: string; text: string }> = {
   cash: { bg: "bg-emerald-100", text: "text-emerald-700" },
-  online: { bg: "bg-sky-100", text: "text-sky-700" },
   cashless: { bg: "bg-indigo-100", text: "text-indigo-700" },
+  bank_transfer: { bg: "bg-sky-100", text: "text-sky-700" },
+  advance: { bg: "bg-amber-100", text: "text-amber-700" },
 };
 const INITIAL_VISIBLE_EXPENSES = 5;
 type ExpenseTab = "entry" | "history";
@@ -73,11 +74,9 @@ const EXPENSE_SORT_OPTIONS: { key: ExpenseSortKey; label: string }[] = [
 
 export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
   const { authState } = useAuth();
-  const { isFreePlan } = useSubscription();
   const isDemo = authState.status === "demo";
-  const isFreeAuthenticatedPlan = authState.status === "authenticated" && isFreePlan;
   const demoBranchId = resolveDemoBranchId(branch);
-  const canSyncToSupabase = isSupabaseConfigured() && !isDemo && !isFreeAuthenticatedPlan;
+  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
 
   const [expenses, setExpenses] = useState<BudgetExpense[]>([]);
   const [expCategory, setExpCategory] = useState<ExpenseCategory>("material");
@@ -85,6 +84,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
   const [expMemo, setExpMemo] = useState("");
   const [expRecorder, setExpRecorder] = useState("");
   const [expPaymentMethod, setExpPaymentMethod] = useState<ExpensePaymentMethod>("cash");
+  const [expIsReimbursed, setExpIsReimbursed] = useState(false);
   const [showCategoryHint, setShowCategoryHint] = useState(false);
   const [hintCategory, setHintCategory] = useState<ExpenseCategory>("material");
   const [syncing, setSyncing] = useState(false);
@@ -93,6 +93,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
   const [historyRecorderFilter, setHistoryRecorderFilter] = useState<string>("all");
   const [historyPaymentFilter, setHistoryPaymentFilter] = useState<"all" | ExpensePaymentMethod>("all");
   const [historySort, setHistorySort] = useState<ExpenseSortKey>("created_desc");
+  const [pendingReimbursedToggle, setPendingReimbursedToggle] = useState<BudgetExpense | null>(null);
 
   const buildDemoExpenses = useCallback((): BudgetExpense[] => {
     const base = (demoBranchId ? DEMO_BUDGET_EXPENSES[demoBranchId] ?? [] : [])
@@ -112,11 +113,11 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
       memo: string;
     }[] = [
       { category: "material", amount: 3000, recorded_by: "デモ担当", payment_method: "cash", memo: "追加食材の購入" },
-      { category: "equipment", amount: 2500, recorded_by: "デモ担当", payment_method: "online", memo: "ガスボンベ補充" },
-      { category: "decoration", amount: 1200, recorded_by: "デモ担当", payment_method: "cashless", memo: "POP作成材料" },
+      { category: "equipment", amount: 2500, recorded_by: "デモ担当", payment_method: "bank_transfer", memo: "ガスボンベ補充" },
+      { category: "decoration", amount: 1200, recorded_by: "デモ担当", payment_method: "cashless", memo: "POP作成食材" },
       { category: "other", amount: 800, recorded_by: "デモ担当", payment_method: "cash", memo: "備品雑費" },
-      { category: "material", amount: 1800, recorded_by: "デモ担当", payment_method: "online", memo: "容器・割り箸追加" },
-      { category: "equipment", amount: 1500, recorded_by: "デモ担当", payment_method: "cash", memo: "レンタル備品延長" },
+      { category: "material", amount: 1800, recorded_by: "デモ担当", payment_method: "advance", memo: "容器・割り箸追加" },
+      { category: "equipment", amount: 1500, recorded_by: "デモ担当", payment_method: "bank_transfer", memo: "レンタル備品延長" },
     ];
 
     const now = new Date();
@@ -132,6 +133,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
         amount: template.amount,
         recorded_by: template.recorded_by,
         payment_method: template.payment_method,
+        is_reimbursed: template.payment_method === "advance" ? i % 2 === 0 : false,
         memo: template.memo,
         receipt_image: null,
         created_at: createdAt,
@@ -170,6 +172,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
             amount: expense.amount,
             recorded_by: expense.recorded_by,
             payment_method: expense.payment_method,
+            is_reimbursed: expense.is_reimbursed ?? false,
             memo: expense.memo,
             receipt_image: expense.receipt_image,
             created_at: expense.created_at,
@@ -198,11 +201,14 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
           synced: true,
           payment_method:
             expense.payment_method === "paypay"
-              ? "online"
+              ? "cashless"
               : expense.payment_method === "amazon"
-                ? "cashless"
+                ? "bank_transfer"
+                : expense.payment_method === "online"
+                  ? "bank_transfer"
                 : expense.payment_method,
           recorded_by: expense.recorded_by ?? "",
+          is_reimbursed: expense.is_reimbursed ?? false,
         })),
         ...branchLocal
           .filter((expense) => failedIds.has(expense.id))
@@ -304,6 +310,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
       amount,
       recorded_by: recorderName,
       payment_method: expPaymentMethod,
+      is_reimbursed: expPaymentMethod === "advance" ? expIsReimbursed : false,
       memo: expMemo,
       receipt_image: null,
       created_at: new Date().toISOString(),
@@ -322,7 +329,30 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
 
     setExpAmount("");
     setExpMemo("");
+    setExpIsReimbursed(false);
     alertNotify("記録完了", "支出を記録しました");
+  };
+
+  const handleToggleReimbursed = async (expense: BudgetExpense) => {
+    if (expense.payment_method !== "advance") return;
+    const next = !expense.is_reimbursed;
+    const updated = { ...expense, is_reimbursed: next, synced: false };
+    setExpenses((prev) => prev.map((item) => (item.id === expense.id ? updated : item)));
+
+    if (!isDemo) {
+      const allLocal = await getBudgetExpenses();
+      const merged = allLocal.map((item) => (item.id === expense.id ? updated : item));
+      await saveBudgetExpenses(merged);
+    }
+
+    if (canSyncToSupabase) {
+      try {
+        await supabase.from("budget_expenses").update({ is_reimbursed: next }).eq("id", expense.id);
+        setExpenses((prev) => prev.map((item) => (item.id === expense.id ? { ...item, synced: true } : item)));
+      } catch (e) {
+        console.log("Reimbursed status sync failed:", e);
+      }
+    }
   };
 
   const handleDeleteExpense = (id: string) => {
@@ -379,9 +409,26 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
               {PAYMENT_METHOD_LABELS[expense.payment_method]}
             </Text>
           </View>
+          {expense.payment_method === "advance" ? (
+            <View className={`px-1.5 py-0.5 rounded ${expense.is_reimbursed ? "bg-emerald-100" : "bg-amber-100"}`}>
+              <Text className={`text-[10px] font-semibold ${expense.is_reimbursed ? "text-emerald-700" : "text-amber-700"}`}>
+                {expense.is_reimbursed ? "精算済み" : "未精算"}
+              </Text>
+            </View>
+          ) : null}
         </View>
       </View>
       <View className="flex-row items-center gap-2">
+        {expense.payment_method === "advance" ? (
+          <TouchableOpacity
+            onPress={() => setPendingReimbursedToggle(expense)}
+            className={`rounded-lg px-2 py-1 ${expense.is_reimbursed ? "bg-amber-100" : "bg-emerald-100"}`}
+          >
+            <Text className={`text-xs font-semibold ${expense.is_reimbursed ? "text-amber-700" : "text-emerald-700"}`}>
+              {expense.is_reimbursed ? "未精算に戻す" : "精算済みにする"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
         <Text className="text-gray-900 font-bold">¥{expense.amount.toLocaleString()}</Text>
         <TouchableOpacity
           onPress={() => handleDeleteExpense(expense.id)}
@@ -421,6 +468,38 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
           <Text className="text-gray-600 text-sm leading-5">
             {CATEGORY_HINTS[hintCategory]}
           </Text>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={!!pendingReimbursedToggle}
+        onClose={() => setPendingReimbursedToggle(null)}
+        title="精算状態の変更"
+      >
+        <Text className="text-gray-600 text-sm mb-3">
+          {pendingReimbursedToggle?.is_reimbursed
+            ? "この支出を未精算に戻しますか？"
+            : "この支出を精算済みにしますか？"}
+        </Text>
+        <View className="flex-row gap-3">
+          <View className="flex-1">
+            <Button
+              title="キャンセル"
+              variant="secondary"
+              onPress={() => setPendingReimbursedToggle(null)}
+            />
+          </View>
+          <View className="flex-1">
+            <Button
+              title="変更する"
+              onPress={() => {
+                if (pendingReimbursedToggle) {
+                  void handleToggleReimbursed(pendingReimbursedToggle);
+                }
+                setPendingReimbursedToggle(null);
+              }}
+            />
+          </View>
         </View>
       </Modal>
 
@@ -494,7 +573,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
               <View className="mb-3">
                 <Text className="text-gray-600 text-sm mb-1">支払い方法</Text>
                 <View className="flex-row gap-2">
-                  {(["cash", "online", "cashless"] as ExpensePaymentMethod[]).map((method) => (
+                  {(["cash", "cashless", "bank_transfer", "advance"] as ExpensePaymentMethod[]).map((method) => (
                     <TouchableOpacity
                       key={method}
                       onPress={() => setExpPaymentMethod(method)}
@@ -513,6 +592,21 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
                   ))}
                 </View>
               </View>
+
+              {expPaymentMethod === "advance" ? (
+                <View className="mb-3">
+                  <Text className="text-gray-600 text-sm mb-1">立替の精算状況</Text>
+                  <TouchableOpacity
+                    onPress={() => setExpIsReimbursed((prev) => !prev)}
+                    activeOpacity={0.8}
+                    className={`rounded-lg border px-3 py-2 ${expIsReimbursed ? "border-emerald-500 bg-emerald-50" : "border-amber-500 bg-amber-50"}`}
+                  >
+                    <Text className={`text-sm font-semibold ${expIsReimbursed ? "text-emerald-700" : "text-amber-700"}`}>
+                      {expIsReimbursed ? "精算済み" : "未精算"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
 
               <View className="mb-3">
                 <Text className="text-gray-600 text-sm mb-1">金額（円）</Text>
@@ -622,7 +716,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
                 >
                   <Text className={`text-xs font-semibold ${historyPaymentFilter === "all" ? "text-white" : "text-gray-600"}`}>すべて</Text>
                 </TouchableOpacity>
-                {(["cash", "online", "cashless"] as ExpensePaymentMethod[]).map((method) => (
+                {(["cash", "cashless", "bank_transfer", "advance"] as ExpensePaymentMethod[]).map((method) => (
                   <TouchableOpacity
                     key={method}
                     onPress={() => setHistoryPaymentFilter(method)}

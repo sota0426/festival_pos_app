@@ -27,7 +27,24 @@ import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED
 import { useAuth } from '../../../contexts/AuthContext';
 import { DEMO_MENU_CATEGORIES, DEMO_MENUS, resolveDemoBranchId } from '../../../data/demoData';
 
-const MENU_CSV_HEADER = 'menu_name,price,category,stock_management,stock_quantity,is_show';
+const MENU_CSV_HEADER_COLUMNS = ['メニュー名', '価格', 'カテゴリ', '在庫管理', '在庫数', '表示'];
+const MENU_CSV_HEADER = MENU_CSV_HEADER_COLUMNS.join(',');
+
+const normalizeHeaderCell = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, '');
+
+const MENU_CSV_HEADER_ALIASES = {
+  menu_name: ['メニュー名', 'menu_name', 'name'],
+  price: ['価格', 'price', '金額'],
+  category: ['カテゴリ', 'category'],
+  stock_management: ['在庫管理', 'stock_management'],
+  stock_quantity: ['在庫数', 'stock_quantity'],
+  is_show: ['表示', 'is_show', '公開'],
+} as const;
+
+const findHeaderIndex = (headers: string[], aliases: readonly string[]): number => {
+  const normalizedAliases = aliases.map(normalizeHeaderCell);
+  return headers.findIndex((header) => normalizedAliases.includes(normalizeHeaderCell(header)));
+};
 
 const toCsvCell = (value: string | number | boolean): string => {
   const text = String(value ?? '');
@@ -114,15 +131,9 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const [editingCategory, setEditingCategory] = useState<MenuCategory | null>(null);
   const [categoryName, setCategoryName] = useState('');
   const [savingCategory, setSavingCategory] = useState(false);
-  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
-  const [adminPasswordInput, setAdminPasswordInput] = useState('');
-  const [deleteAllError, setDeleteAllError] = useState('');
-  const [deletingAll, setDeletingAll] = useState(false);
-  const [showDeleteMenuModal, setShowDeleteMenuModal] = useState(false);
-  const [menuToDelete, setMenuToDelete] = useState<Menu | null>(null);
-  const [deleteMenuPasswordInput, setDeleteMenuPasswordInput] = useState('');
-  const [deleteMenuError, setDeleteMenuError] = useState('');
-  const [deletingMenu, setDeletingMenu] = useState(false);
+  const [isBulkDeleteMode, setIsBulkDeleteMode] = useState(false);
+  const [selectedMenuIds, setSelectedMenuIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importPreview, setImportPreview] = useState<MenuImportPreview | null>(null);
@@ -641,111 +652,71 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       await saveMenus(updatedMenus)
 
     }catch(error){
-      console.error("Error updating item visible")
+      console.error("Error updating item visible", error)
       Alert.alert("Error","メニューの表示設定の更新を失敗しました")
     }finally{
       setSaving(false)
     }
   }
 
-  const executeDeleteMenu = async (menu: Menu) => {
-    setDeletingMenu(true);
+  const startBulkDeleteMode = () => {
+    openMenuGuard(() => {
+      setSelectedMenuIds(new Set());
+      setIsBulkDeleteMode(true);
+    });
+  };
+
+  const stopBulkDeleteMode = () => {
+    setIsBulkDeleteMode(false);
+    setSelectedMenuIds(new Set());
+  };
+
+  const toggleMenuSelection = (menuId: string) => {
+    setSelectedMenuIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(menuId)) {
+        next.delete(menuId);
+      } else {
+        next.add(menuId);
+      }
+      return next;
+    });
+  };
+
+  const executeBulkDeleteMenus = async (menuIds: string[]) => {
+    if (menuIds.length === 0) return;
+    setBulkDeleting(true);
     try {
       if (canSyncToSupabase) {
-        const { error } = await supabase.from('menus').delete().eq('id', menu.id);
+        const { error } = await supabase.from('menus').delete().in('id', menuIds);
         if (error) throw error;
       }
 
-      const updatedMenus = menus.filter((m) => m.id !== menu.id);
+      const updatedMenus = menus.filter((menu) => !menuIds.includes(menu.id));
       setMenus(updatedMenus);
       await saveMenus(updatedMenus);
-
-      setShowDeleteMenuModal(false);
-      setMenuToDelete(null);
-      setDeleteMenuPasswordInput('');
-      setDeleteMenuError('');
+      alertNotify('完了', `${menuIds.length}件のメニューを削除しました`);
+      stopBulkDeleteMode();
     } catch (error) {
-      console.error('Error deleting menu:', error);
-      setDeleteMenuError('メニューの削除に失敗しました');
+      console.error('Error deleting selected menus:', error);
+      alertNotify('エラー', '選択したメニューの削除に失敗しました');
     } finally {
-      setDeletingMenu(false);
+      setBulkDeleting(false);
     }
   };
 
-  const handleDeleteMenu = (menu: Menu) => {
-    setMenuToDelete(menu);
-    setDeleteMenuPasswordInput('');
-    setDeleteMenuError('');
-    setShowDeleteMenuModal(true);
-  };
-
-  const handleDeleteMenuWithPassword = async () => {
-    if (!menuToDelete) return;
-    if (!deleteMenuPasswordInput.trim()) {
-      setDeleteMenuError('管理者パスワードを入力してください');
+  const handleDeleteSelectedMenus = () => {
+    const ids = Array.from(selectedMenuIds);
+    if (ids.length === 0) {
+      alertNotify('未選択', '削除するメニューを選択してください');
       return;
     }
-
-    const isValid = await verifyAdminPassword(deleteMenuPasswordInput);
-    if (!isValid) {
-      setDeleteMenuError('パスワードが正しくありません');
-      return;
-    }
-
     alertConfirm(
-      '最終確認',
-      `「${menuToDelete.menu_name}」を削除します。この操作は取り消せません。実行しますか？`,
-      () => executeDeleteMenu(menuToDelete),
-      '削除する',
-    );
-  };
-
-
-
-
-  const executeDeleteAllMenus = async () => {
-    setDeletingAll(true);
-    try {
-      if (canSyncToSupabase) {
-        const { error } = await supabase
-          .from('menus')
-          .delete()
-          .eq('branch_id', branch.id);
-        if (error) throw error;
-      }
-
-      const localMenus = await getMenus();
-      const remaining = localMenus.filter((m) => m.branch_id !== branch.id);
-      await saveMenus(remaining);
-      setMenus([]);
-
-      setShowDeleteAllModal(false);
-      setAdminPasswordInput('');
-      setDeleteAllError('');
-    } catch (error) {
-      console.error('Error deleting all menus:', error);
-      setDeleteAllError('メニューの全削除に失敗しました');
-    } finally {
-      setDeletingAll(false);
-    }
-  };
-
-  const handleDeleteAllMenus = async () => {
-    if (!adminPasswordInput.trim()) {
-      setDeleteAllError('管理者パスワードを入力してください');
-      return;
-    }
-
-    const isValid = await verifyAdminPassword(adminPasswordInput);
-    if (!isValid) {
-      setDeleteAllError('パスワードが正しくありません');
-      return;
-    }
-
-    alertConfirm(
-      '最終確認',
-      'この店舗のメニューを全削除します。この操作は取り消せません。実行しますか？',
-      executeDeleteAllMenus,
+      '選択メニュー削除',
+      `${ids.length}件のメニューを削除します。この操作は取り消せません。`,
+      () => {
+        void executeBulkDeleteMenus(ids);
+      },
       '削除する',
     );
   };
@@ -796,6 +767,52 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     return `\uFEFF${lines.join('\n')}`;
   };
 
+  const buildMenuImportTemplateCsv = (): string => {
+    const sample = ['サンプルメニュー', '500', 'フード', 'true', '50', 'true'].map(toCsvCell).join(',');
+    return `\uFEFF${MENU_CSV_HEADER}\n${sample}`;
+  };
+
+  const downloadCsvFile = async (csvContent: string, filename: string, successTitle: string, successMessage: string) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      alertNotify(successTitle, successMessage);
+      return;
+    }
+
+    const baseDir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
+    if (!baseDir) throw new Error('保存先ディレクトリを取得できませんでした');
+    const fileUri = `${baseDir}${filename}`;
+    await FileSystem.writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
+    const canShare = await Sharing.isAvailableAsync();
+    if (canShare) {
+      await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'CSVを共有' });
+    } else {
+      alertNotify(successTitle, `CSVを保存しました: ${fileUri}`);
+    }
+  };
+
+  const handleDownloadMenuImportTemplate = async () => {
+    setExporting(true);
+    try {
+      const csvContent = buildMenuImportTemplateCsv();
+      const filename = `menu_import_template_${new Date().toISOString().slice(0, 10)}.csv`;
+      await downloadCsvFile(csvContent, filename, 'CSVダウンロード', 'インポート形式CSVをダウンロードしました');
+    } catch (error: any) {
+      console.error('Menu template CSV export error:', error);
+      alertNotify('エラー', `テンプレートCSVの出力に失敗しました: ${error?.message ?? ''}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handleExportMenuCsv = async () => {
     if (menus.length === 0) {
       alertNotify('CSV出力', '出力対象のメニューがありません');
@@ -806,31 +823,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     try {
       const csvContent = buildMenuCsv();
       const filename = `menus_${branch.branch_code}_${new Date().toISOString().slice(0, 10)}.csv`;
-
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-        alertNotify('CSV出力', 'メニューCSVをダウンロードしました');
-        return;
-      }
-
-      const baseDir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
-      if (!baseDir) throw new Error('保存先ディレクトリを取得できませんでした');
-      const fileUri = `${baseDir}${filename}`;
-      await FileSystem.writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'メニューCSVを共有' });
-      } else {
-        alertNotify('CSV出力', `CSVを保存しました: ${fileUri}`);
-      }
+      await downloadCsvFile(csvContent, filename, 'CSV出力', 'メニューCSVをダウンロードしました');
     } catch (error: any) {
       console.error('Menu CSV export error:', error);
       alertNotify('エラー', `CSV出力に失敗しました: ${error?.message ?? ''}`);
@@ -852,22 +845,22 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       return { rows, newCategories: [], errors };
     }
 
-    const headerCells = parseCsvLine(lines[0]).map((h) => h.toLowerCase().trim());
+    const headerCells = parseCsvLine(lines[0]);
     const colIndex = {
-      menu_name: headerCells.indexOf('menu_name'),
-      price: headerCells.indexOf('price'),
-      category: headerCells.indexOf('category'),
-      stock_management: headerCells.indexOf('stock_management'),
-      stock_quantity: headerCells.indexOf('stock_quantity'),
-      is_show: headerCells.indexOf('is_show'),
+      menu_name: findHeaderIndex(headerCells, MENU_CSV_HEADER_ALIASES.menu_name),
+      price: findHeaderIndex(headerCells, MENU_CSV_HEADER_ALIASES.price),
+      category: findHeaderIndex(headerCells, MENU_CSV_HEADER_ALIASES.category),
+      stock_management: findHeaderIndex(headerCells, MENU_CSV_HEADER_ALIASES.stock_management),
+      stock_quantity: findHeaderIndex(headerCells, MENU_CSV_HEADER_ALIASES.stock_quantity),
+      is_show: findHeaderIndex(headerCells, MENU_CSV_HEADER_ALIASES.is_show),
     };
 
     if (colIndex.menu_name === -1) {
-      errors.push('ヘッダーに menu_name 列が必要です');
+      errors.push('ヘッダーに「メニュー名」列が必要です');
       return { rows, newCategories: [], errors };
     }
     if (colIndex.price === -1) {
-      errors.push('ヘッダーに price 列が必要です');
+      errors.push('ヘッダーに「価格」列が必要です');
       return { rows, newCategories: [], errors };
     }
 
@@ -1331,22 +1324,33 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     const menuCode = menuCodeMap.get(item.id) ?? '000';
     const isTopInSection = indexInSection === 0;
     const isBottomInSection = indexInSection === sectionLength - 1;
+    const isSelected = selectedMenuIds.has(item.id);
 
     return (
-      <View>
-        <Card
-          className={`mb-2 overflow-hidden border ${categoryVisual.cardBorderClass} ${!item.is_show ? 'opacity-50' : ''}`}
-        >
+      <Card
+        className={`mb-1.5 overflow-hidden border ${categoryVisual.cardBorderClass} ${!item.is_show ? 'opacity-50' : ''}`}
+      >
           {/* 上部: メニュー情報 */}
-          <View className={`px-3 pt-2.5 pb-2 ${categoryVisual.cardBgClass}`}>
+          <View className={`px-2.5 pt-2 pb-1.5 ${categoryVisual.cardBgClass}`}>
           {/* 1行目: コードバッジ + 非表示バッジ */}
-          <View className="flex-row items-center justify-between mb-1">
+          <View className="flex-row items-center justify-between mb-0.5">
             <View className="flex-row items-center gap-2">
-              <View className={`px-2 py-0.5 rounded-full ${categoryVisual.chipBgClass}`}>
+              {isBulkDeleteMode ? (
+                <TouchableOpacity
+                  onPress={() => toggleMenuSelection(item.id)}
+                  activeOpacity={0.8}
+                  className={`w-5 h-5 rounded border items-center justify-center ${
+                    isSelected ? 'bg-red-500 border-red-500' : 'bg-white border-gray-300'
+                  }`}
+                >
+                  {isSelected ? <Text className="text-white text-[10px] font-bold">✓</Text> : null}
+                </TouchableOpacity>
+              ) : null}
+              <View className={`px-1.5 py-0.5 rounded-full ${categoryVisual.chipBgClass}`}>
                 <Text className={`text-xs font-bold ${categoryVisual.chipTextClass}`}>{menuCode}</Text>
               </View>
               {!item.is_show && (
-                <View className="bg-orange-100 px-2 py-0.5 rounded-full">
+                <View className="bg-orange-100 px-1.5 py-0.5 rounded-full">
                   <Text className="text-orange-600 text-[10px] font-bold">非表示</Text>
                 </View>
               )}
@@ -1357,7 +1361,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                 onPress={() => moveMenuOrder(item, 'up')}
                 disabled={isTopInSection}
                 activeOpacity={0.7}
-                className={`w-8 h-8 items-center justify-center rounded-md ${
+                className={`w-7 h-7 items-center justify-center rounded-md ${
                   isTopInSection ? 'bg-gray-100 opacity-30' : 'bg-white/80 border border-gray-200'
                 }`}
               >
@@ -1367,7 +1371,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                 onPress={() => moveMenuOrder(item, 'down')}
                 disabled={isBottomInSection}
                 activeOpacity={0.7}
-                className={`w-8 h-8 items-center justify-center rounded-md ${
+                className={`w-7 h-7 items-center justify-center rounded-md ${
                   isBottomInSection ? 'bg-gray-100 opacity-30' : 'bg-white/80 border border-gray-200'
                 }`}
               >
@@ -1377,26 +1381,26 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           </View>
 
           {/* 2行目: メニュー名 */}
-          <Text className="text-lg font-bold text-gray-900 mb-1.5" numberOfLines={1}>
+          <Text className="text-base font-bold text-gray-900 mb-1" numberOfLines={1}>
             {item.menu_name}
           </Text>
 
           {/* 3行目: 価格 + 在庫 */}
           <View className="flex-row items-center justify-between">
-            <Text className="text-blue-600 font-bold text-base">
+            <Text className="text-blue-600 font-bold text-sm">
               ¥{item.price.toLocaleString()}
             </Text>
             {item.stock_management ? (
-              <View className="flex-row items-center gap-1.5">
+              <View className="flex-row items-center gap-1">
                 <Text className="text-gray-500 text-xs">在庫</Text>
                 <TouchableOpacity
                   onPress={() => handleStockChange(item, -1)}
                   activeOpacity={0.7}
-                  className="w-7 h-7 bg-white/80 border border-gray-200 rounded-l-md items-center justify-center"
+                  className="w-6 h-6 bg-white/80 border border-gray-200 rounded-l-md items-center justify-center"
                 >
                   <Text className="text-gray-700 font-bold text-sm">−</Text>
                 </TouchableOpacity>
-                <View className={`w-9 h-7 items-center justify-center border-t border-b border-gray-200 bg-white/80 ${
+                <View className={`w-8 h-6 items-center justify-center border-t border-b border-gray-200 bg-white/80 ${
                   item.stock_quantity === 0 ? 'bg-red-50' : item.stock_quantity <= 5 ? 'bg-orange-50' : ''
                 }`}>
                   <Text className={`font-bold text-xs ${
@@ -1408,13 +1412,13 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                 <TouchableOpacity
                   onPress={() => handleStockChange(item, 1)}
                   activeOpacity={0.7}
-                  className="w-7 h-7 bg-white/80 border border-gray-200 rounded-r-md items-center justify-center"
+                  className="w-6 h-6 bg-white/80 border border-gray-200 rounded-r-md items-center justify-center"
                 >
                   <Text className="text-gray-700 font-bold text-sm">＋</Text>
                 </TouchableOpacity>
               </View>
             ) : (
-              <View className="bg-green-100 px-2 py-0.5 rounded-full">
+              <View className="bg-green-100 px-1.5 py-0.5 rounded-full">
                 <Text className="text-green-700 text-[10px] font-medium">在庫無制限</Text>
               </View>
             )}
@@ -1426,7 +1430,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           <TouchableOpacity
             onPress={() => handleVisible(item)}
             activeOpacity={0.7}
-            className="flex-1 py-1.5 items-center justify-center border-r border-gray-100"
+            className={`py-1 items-center justify-center ${isBulkDeleteMode ? 'flex-1' : 'flex-1 border-r border-gray-100'}`}
           >
             <Text className={`text-xs font-semibold ${item.is_show ? 'text-green-600' : 'text-orange-500'}`}>
               {item.is_show ? '表示中' : '非表示中'}
@@ -1435,20 +1439,12 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           <TouchableOpacity
             onPress={() => withMenuRestrictionCheck('menu_edit', () => openEditModal(item))}
             activeOpacity={0.7}
-            className="flex-1 py-1.5 items-center justify-center border-r border-gray-100"
+            className={`py-1 items-center justify-center ${isBulkDeleteMode ? 'flex-1' : 'flex-1'}`}
           >
             <Text className="text-blue-600 text-xs font-semibold">編集</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => handleDeleteMenu(item)}
-            activeOpacity={0.7}
-            className="flex-1 py-1.5 items-center justify-center"
-          >
-            <Text className="text-red-500 text-xs font-semibold">削除</Text>
-          </TouchableOpacity>
         </View>
-        </Card>
-      </View>
+      </Card>
     );
   };
 
@@ -1520,7 +1516,11 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           <Button
             title="キャンセル"
             onPress={() => {
-              isEdit ? setShowEditModal(false) : setShowAddModal(false);
+              if (isEdit) {
+                setShowEditModal(false);
+              } else {
+                setShowAddModal(false);
+              }
               setEditingMenu(null);
               resetForm();
             }}
@@ -1550,7 +1550,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           viewMode === 'menus' ? (
             <View className="flex-row gap-1">
               <Button
-                title="+ メニュー追加"
+                title="追加"
                 onPress={() =>
                   withMenuRestrictionCheck('menu_add', () => {
                     resetForm();
@@ -1558,6 +1558,12 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                   })
                 }
                 size="sm"
+              />
+              <Button
+                title={isBulkDeleteMode ? '削除終了' : '削除'}
+                onPress={isBulkDeleteMode ? stopBulkDeleteMode : startBulkDeleteMode}
+                size="sm"
+                variant={isBulkDeleteMode ? 'secondary' : 'danger'}
               />
               <TouchableOpacity
                 onPress={() => setShowMenuActionsModal(true)}
@@ -1584,7 +1590,10 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => setViewMode('categories')}
+          onPress={() => {
+            setViewMode('categories');
+            stopBulkDeleteMode();
+          }}
           className={`flex-1 py-3 items-center ${viewMode === 'categories' ? 'border-b-2 border-blue-500' : ''}`}
         >
           <Text className={viewMode === 'categories' ? 'text-blue-600 font-semibold' : 'text-gray-500'}>
@@ -1603,6 +1612,21 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       {/* Menu list */}
       {!loading && viewMode === 'menus' && (
         <ScrollView className="flex-1 px-4 pt-3" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
+          {isBulkDeleteMode ? (
+            <View className="mb-3 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 flex-row items-center justify-between">
+              <Text className="text-red-700 text-xs font-semibold">
+                削除対象を選択中: {selectedMenuIds.size}件
+              </Text>
+              <Button
+                title="選択削除"
+                onPress={handleDeleteSelectedMenus}
+                size="sm"
+                variant="danger"
+                loading={bulkDeleting}
+                disabled={selectedMenuIds.size === 0 || bulkDeleting}
+              />
+            </View>
+          ) : null}
           {menuSections.length === 0 ? (
             <View className="items-center py-16 px-6">
               <Text className="text-5xl mb-4">🍽️</Text>
@@ -1886,114 +1910,6 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         </View>
       </Modal>
 
-      {/** Menu All Delete modal*/}
-      <Modal
-        visible={showDeleteMenuModal}
-        onClose={() => {
-          setShowDeleteMenuModal(false);
-          setMenuToDelete(null);
-          setDeleteMenuPasswordInput('');
-          setDeleteMenuError('');
-        }}
-        title="メニュー削除"
-      >
-        <View className="gap-3">
-          <Text className="text-gray-600 text-sm">
-            メニュー削除には管理者パスワードが必要です。
-            {"\n"}初期パスワードは「0000」です。設定タブで変更できます。
-          </Text>
-          {menuToDelete ? (
-            <View className="bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-              <Text className="text-red-700 text-sm font-semibold">削除対象: {menuToDelete.menu_name}</Text>
-            </View>
-          ) : null}
-          <TextInput
-            value={deleteMenuPasswordInput}
-            onChangeText={(text) => {
-              setDeleteMenuPasswordInput(text);
-              setDeleteMenuError('');
-            }}
-            secureTextEntry
-            placeholder="管理者パスワード"
-            className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-            placeholderTextColor="#9CA3AF"
-          />
-          {deleteMenuError ? <Text className="text-red-500 text-sm">{deleteMenuError}</Text> : null}
-          <View className="flex-row gap-3 mt-1">
-            <View className="flex-1">
-              <Button
-                title="キャンセル"
-                onPress={() => {
-                  setShowDeleteMenuModal(false);
-                  setMenuToDelete(null);
-                  setDeleteMenuPasswordInput('');
-                  setDeleteMenuError('');
-                }}
-                variant="secondary"
-              />
-            </View>
-            <View className="flex-1">
-              <Button
-                title="次へ"
-                onPress={handleDeleteMenuWithPassword}
-                loading={deletingMenu}
-                variant="danger"
-              />
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={showDeleteAllModal}
-        onClose={() => {
-          setShowDeleteAllModal(false);
-          setAdminPasswordInput('');
-          setDeleteAllError('');
-        }}
-        title="メニュー全削除"
-      >
-        <View className="gap-3">
-          <Text className="text-gray-600 text-sm">
-            メニューを全削除するには管理者パスワードが必要です。
-            {"\n"}初期パスワードは「0000」です。設定タブで変更できます。
-          </Text>
-          <TextInput
-            value={adminPasswordInput}
-            onChangeText={(text) => {
-              setAdminPasswordInput(text);
-              setDeleteAllError('');
-            }}
-            secureTextEntry
-            placeholder="管理者パスワード"
-            className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-            placeholderTextColor="#9CA3AF"
-          />
-          {deleteAllError ? <Text className="text-red-500 text-sm">{deleteAllError}</Text> : null}
-          <View className="flex-row gap-3 mt-1">
-            <View className="flex-1">
-              <Button
-                title="キャンセル"
-                onPress={() => {
-                  setShowDeleteAllModal(false);
-                  setAdminPasswordInput('');
-                  setDeleteAllError('');
-                }}
-                variant="secondary"
-              />
-            </View>
-            <View className="flex-1">
-              <Button
-                title="次へ"
-                onPress={handleDeleteAllMenus}
-                loading={deletingAll}
-                variant="danger"
-              />
-            </View>
-          </View>
-        </View>
-      </Modal>
-
       {/* CSVインポートプレビューモーダル */}
       <Modal
         visible={showImportModal}
@@ -2092,6 +2008,33 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         title="メニュー操作"
       >
         <View className="gap-3">
+          <View className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+            <Text className="text-amber-800 text-xs font-semibold mb-1">CSV一括登録の手順</Text>
+            <Text className="text-amber-700 text-xs">1. 先に「インポート形式CSVダウンロード」でひな形を取得</Text>
+            <Text className="text-amber-700 text-xs">2. ひな形にメニュー情報を入力して保存</Text>
+            <Text className="text-amber-700 text-xs">3. 「CSV一括登録」から読み込み</Text>
+          </View>
+
+          <TouchableOpacity
+            onPress={() => {
+              setShowMenuActionsModal(false);
+              handleDownloadMenuImportTemplate();
+            }}
+            disabled={exporting}
+            className={`flex-row items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 ${
+              exporting ? 'opacity-50' : ''
+            }`}
+            activeOpacity={0.7}
+          >
+            <Text className="text-lg">📄</Text>
+            <View className="flex-1">
+              <Text className="text-amber-900 font-semibold text-sm">
+                {exporting ? 'ダウンロード中...' : 'インポート形式CSVダウンロード'}
+              </Text>
+              <Text className="text-amber-700 text-xs">CSV一括登録用のひな形を取得</Text>
+            </View>
+          </TouchableOpacity>
+
           <TouchableOpacity
             onPress={() => {
               setShowMenuActionsModal(false);
@@ -2103,7 +2046,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             <Text className="text-lg">📥</Text>
             <View className="flex-1">
               <Text className="text-green-800 font-semibold text-sm">CSV一括登録</Text>
-              <Text className="text-green-600 text-xs">CSVファイルからメニューを一括登録</Text>
+              <Text className="text-green-600 text-xs">ひな形に入力したCSVを読み込んで登録</Text>
             </View>
           </TouchableOpacity>
 
@@ -2121,28 +2064,12 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             <Text className="text-lg">📤</Text>
             <View className="flex-1">
               <Text className="text-blue-800 font-semibold text-sm">
-                {exporting ? 'CSV出力中...' : 'CSV一括ダウンロード'}
+                {exporting ? 'CSV出力中...' : 'メニューCSV出力'}
               </Text>
               <Text className="text-blue-600 text-xs">全メニュー情報をCSVファイルで出力</Text>
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            onPress={() => {
-              setShowMenuActionsModal(false);
-              setAdminPasswordInput('');
-              setDeleteAllError('');
-              setShowDeleteAllModal(true);
-            }}
-            className="flex-row items-center gap-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3"
-            activeOpacity={0.7}
-          >
-            <Text className="text-lg">🗑️</Text>
-            <View className="flex-1">
-              <Text className="text-red-800 font-semibold text-sm">メニュー全削除</Text>
-              <Text className="text-red-600 text-xs">登録済みのメニューをすべて削除</Text>
-            </View>
-          </TouchableOpacity>
         </View>
       </Modal>
 

@@ -5,5 +5,4 @@ export { Register } from './main/Register';
 export { SalesHistory } from './main/SalesHistory/SalesHistory';
 export { OrderBoard } from './sub/OrderBoard';
 export { PrepInventory } from './sub/PrepInventory';
-export { CookingManual } from './sub/CookingManual';
 export { BudgetManager } from './budget/BudgetManager';

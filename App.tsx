@@ -10,7 +10,7 @@ import { SubscriptionProvider } from './contexts/SubscriptionContext';
 import { DemoProvider } from './contexts/DemoContext';
 
 import { HQDashboard, HQBranchReports } from './components/hq';
-import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, PrepInventory, CookingManual, BudgetManager } from './components/store';
+import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, PrepInventory, BudgetManager } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch, BudgetExpense, Menu, MenuCategory, PrepIngredient } from './types/database';
 import {
@@ -58,7 +58,6 @@ type Screen =
   | 'store_history'
   | 'store_order_board'
   | 'store_prep'
-  | 'store_cooking_manual'
   | 'store_budget'
   | 'store_budget_expense';
 
@@ -75,12 +74,6 @@ function AppContent() {
   const [myStoresReturnScreen, setMyStoresReturnScreen] = useState<'account_dashboard' | 'hq_home'>('account_dashboard');
   const [checkoutProcessing, setCheckoutProcessing] = useState(false);
   const [demoReturnScreen, setDemoReturnScreen] = useState<Screen | null>(null);
-  const allowFreeWebInDev = __DEV__;
-  const isWebFreeAuthenticatedPlan =
-    Platform.OS === 'web' &&
-    authState.status === 'authenticated' &&
-    authState.subscription.plan_type === 'free' &&
-    !allowFreeWebInDev;
 
   const handleNavigateToAuthEntry = useCallback(() => {
     if (authState.status === 'authenticated') {
@@ -252,28 +245,6 @@ function AppContent() {
     }
     resolveLoginCodeBranch();
   }, [authState, currentScreen, resolveBranchForStore]);
-
-  useEffect(() => {
-    if (!isWebFreeAuthenticatedPlan) return;
-
-    const webRestrictedScreens: Screen[] = [
-      'store_login',
-      'store_home',
-      'store_menus',
-      'store_register',
-      'store_history',
-      'store_order_board',
-      'store_prep',
-      'store_cooking_manual',
-      'store_budget',
-      'store_budget_expense',
-    ];
-
-    if (webRestrictedScreens.includes(currentScreen)) {
-      setCurrentBranch(null);
-      setCurrentScreen('pricing');
-    }
-  }, [currentScreen, isWebFreeAuthenticatedPlan]);
 
   // Stripe Checkout 完了後のリトライ付きサブスクリプション更新
   const handleCheckoutSuccess = useCallback(async () => {
@@ -605,7 +576,6 @@ function AppContent() {
               onNavigateToHistory={() => setCurrentScreen('store_history')}
               onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
               onNavigateToPrep={() => setCurrentScreen('store_prep')}
-              onNavigateToCookingManual={() => setCurrentScreen('store_cooking_manual')}
               onNavigateToBudget={() => setCurrentScreen('store_budget')}
               onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
               onNavigateToPricing={() => setCurrentScreen('pricing')}
@@ -696,22 +666,6 @@ function AppContent() {
             <DemoBanner />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <PrepInventory
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-            />
-          </>
-        );
-
-      case 'store_cooking_manual':
-        if (!currentBranch) {
-          navigateToStoreEntry();
-          return null;
-        }
-        return (
-          <>
-            <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <CookingManual
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
             />

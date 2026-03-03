@@ -21,7 +21,6 @@ import {
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
 import { useAuth } from '../../../contexts/AuthContext';
-import { useSubscription } from '../../../contexts/SubscriptionContext';
 import {
   DEMO_BUDGET_EXPENSES,
   DEMO_BUDGET_SETTINGS,
@@ -52,7 +51,7 @@ const TABS: { key: BudgetTab; label: string }[] = [
 ];
 
 const CATEGORY_LABELS: Record<ExpenseCategory, string> = {
-  material: '材料費',
+  material: '食材費',
   decoration: '装飾費',
   equipment: '機材・設備費',
   other: 'その他',
@@ -74,26 +73,25 @@ const CATEGORY_COLORS: Record<ExpenseCategory, { bg: string; text: string }> = {
 
 const PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
   cash: '現金',
-  online: 'クレジット',
   cashless: 'キャッシュレス',
+  bank_transfer: '振込・ネット決済',
+  advance: '立替',
 };
 
 const BREAKEVEN_HINTS: Record<string, string> = {
   product_name: '代表的な商品名の単価を入力してください（例：コーヒー、焼きそば）',
   selling_price: 'お客様に販売する1個あたりの価格です',
   variable_cost:
-    `1個作るのにかかる材料費等の原価です。\n\n例: クレープ1個の場合：変動費 約150円\n（生地40円 + クリーム35円 + 果物60円 + 包装15円）`,
+    `1個作るのにかかる食材費等の原価です。\n\n例: クレープ1個の場合：変動費 約150円\n（生地40円 + クリーム35円 + 果物60円 + 包装15円）`,
   fixed_cost: '売上に関係なくかかる費用の合計です（装飾費、機材レンタル料等）',
 };
 
 // ------- component -------
 export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManagerProps) => {
   const { authState } = useAuth();
-  const { isFreePlan } = useSubscription();
   const isDemo = authState.status === 'demo';
-  const isFreeAuthenticatedPlan = authState.status === 'authenticated' && isFreePlan;
   const demoBranchId = resolveDemoBranchId(branch);
-  const canSyncToSupabase = isSupabaseConfigured() && !isDemo && !isFreeAuthenticatedPlan;
+  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
 
   const [activeTab, setActiveTab] = useState<BudgetTab>('dashboard');
   const [loading, setLoading] = useState(true);
@@ -196,6 +194,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
             amount: expense.amount,
             recorded_by: expense.recorded_by,
             payment_method: expense.payment_method,
+            is_reimbursed: expense.is_reimbursed ?? false,
             memo: expense.memo,
             receipt_image: expense.receipt_image,
             created_at: expense.created_at,
@@ -223,11 +222,14 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
         synced: true,
         payment_method:
           expense.payment_method === 'paypay'
-            ? 'online'
+            ? 'cashless'
             : expense.payment_method === 'amazon'
-              ? 'cashless'
+              ? 'bank_transfer'
+              : expense.payment_method === 'online'
+                ? 'bank_transfer'
               : expense.payment_method,
         recorded_by: expense.recorded_by ?? '',
+        is_reimbursed: expense.is_reimbursed ?? false,
       })) as BudgetExpense[];
 
       const failedLocal = branchLocal
@@ -548,6 +550,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       amount,
       recorded_by: recorderName,
       payment_method: expPaymentMethod,
+      is_reimbursed: false,
       memo: expMemo,
       receipt_image: null,
       created_at: new Date().toISOString(),
@@ -672,7 +675,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       lines.push('');
 
       lines.push(
-        ['支出明細', '日付', 'カテゴリ', '支払い方法', '登録者', '金額', 'メモ']
+        ['支出明細', '日付', 'カテゴリ', '支払い方法', '精算状態', '登録者', '金額', 'メモ']
           .map(toCsvCell)
           .join(','),
       );
@@ -683,6 +686,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
             expense.date,
             CATEGORY_LABELS[expense.category],
             PAYMENT_METHOD_LABELS[expense.payment_method],
+            expense.payment_method === 'advance' ? (expense.is_reimbursed ? '精算済み' : '未精算') : '-',
             expense.recorded_by || '未設定',
             expense.amount,
             expense.memo || '',
@@ -1098,7 +1102,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
                 <View className="bg-white/70 rounded-lg p-3 border border-blue-100 mt-1">
                   <Text className="text-blue-800 text-xs font-semibold mb-1">使うと便利な場面（例）</Text>
                   <Text className="text-blue-700 text-xs">・価格を上げるか迷っているとき</Text>
-                  <Text className="text-blue-700 text-xs">・材料費が上がって利益が出るか確認したいとき</Text>
+                  <Text className="text-blue-700 text-xs">・食材費が上がって利益が出るか確認したいとき</Text>
                   <Text className="text-blue-700 text-xs">・目標販売数を現実的に決めたいとき</Text>
                 </View>
                 <View className="bg-white/70 rounded-lg p-3 border border-blue-100 mt-1">
@@ -1663,6 +1667,13 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
                           {PAYMENT_METHOD_LABELS[exp.payment_method]}
                         </Text>
                       </View>
+                      {exp.payment_method === 'advance' ? (
+                        <View className={`rounded px-2 py-0.5 ml-2 ${exp.is_reimbursed ? 'bg-emerald-100' : 'bg-amber-100'}`}>
+                          <Text className={`text-[10px] ${exp.is_reimbursed ? 'text-emerald-700' : 'text-amber-700'}`}>
+                            {exp.is_reimbursed ? '精算済み' : '未精算'}
+                          </Text>
+                        </View>
+                      ) : null}
                       <Text
                         className="text-gray-500 text-xs ml-2 flex-1"
                         numberOfLines={1}
@@ -1677,6 +1688,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
                     <Text className="text-gray-700 text-sm mt-1" numberOfLines={2}>
                       {exp.memo || '-'}
                     </Text>
+                    
                   </View>
                 ))}
               </View>

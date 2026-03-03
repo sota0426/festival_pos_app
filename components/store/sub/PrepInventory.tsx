@@ -9,7 +9,6 @@ import { getPrepIngredients, savePrepIngredients } from '../../../lib/storage';
 import { getSyncEnabled } from '../../../lib/syncMode';
 import type { Branch, PrepIngredient } from '../../../types/database';
 import { useAuth } from '../../../contexts/AuthContext';
-import { useSubscription } from '../../../contexts/SubscriptionContext';
 import { DEMO_PREP_INGREDIENTS, resolveDemoBranchId } from '../../../data/demoData';
 
 interface PrepInventoryProps {
@@ -19,9 +18,7 @@ interface PrepInventoryProps {
 
 export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
   const { authState } = useAuth();
-  const { isFreePlan } = useSubscription();
   const isDemo = authState.status === 'demo';
-  const isFreeAuthenticatedPlan = authState.status === 'authenticated' && isFreePlan;
   const demoBranchId = resolveDemoBranchId(branch);
   const canSyncToSupabase = isSupabaseConfigured() && getSyncEnabled() && !isDemo;
 
@@ -158,7 +155,7 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
     const unit = newUnit.trim() || '個';
     const stock = Number(newStock);
     if (!name) {
-      alertNotify('入力エラー', '材料名を入力してください');
+      alertNotify('入力エラー', '食材名を入力してください');
       return;
     }
     if (Number.isNaN(stock) || stock < 0) {
@@ -197,7 +194,7 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
     } catch (error) {
       console.error('Failed to add ingredient:', error);
       await fetchIngredients();
-      alertNotify('エラー', '材料の登録に失敗しました');
+      alertNotify('エラー', '食材の登録に失敗しました');
     } finally {
       setSaving(false);
     }
@@ -266,7 +263,7 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
       if (Platform.OS === 'web') {
         resolve(window.confirm(message));
       } else {
-        Alert.alert('材料削除', message, [
+        Alert.alert('食材削除', message, [
           { text: 'キャンセル', style: 'cancel', onPress: () => resolve(false) },
           { text: '削除', style: 'destructive', onPress: () => resolve(true) },
         ]);
@@ -288,7 +285,7 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
     } catch (error) {
       console.error('Failed to delete ingredient:', error);
       await fetchIngredients();
-      alertNotify('エラー', '材料の削除に失敗しました');
+      alertNotify('エラー', '食材の削除に失敗しました');
     }
   };
 
@@ -299,7 +296,7 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
         subtitle={`${branch.branch_code} - ${branch.branch_name}`}
         showBack
         onBack={onBack}
-        rightElement={<Button title="+ 材料登録" onPress={() => setShowAddModal(true)} size="sm" />}
+        rightElement={<Button title="+ 食材登録" onPress={() => setShowAddModal(true)} size="sm" />}
       />
 
       {loading ? (
@@ -309,23 +306,7 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
         </View>
       ) : (
         <ScrollView className="flex-1 p-4">
-          <Card className="mb-3 bg-blue-50 border border-blue-200 p-3">
-            {isFreeAuthenticatedPlan ? (
-              <>
-                <Text className="text-blue-800 font-semibold text-sm">有料プランで端末間共有が使えます</Text>
-                <Text className="text-blue-600 text-xs mt-1">
-                  有料プランにすると、材料を登録・更新した在庫を同じ店舗の別端末でも確認できます。
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text className="text-blue-800 font-semibold text-sm">材料在庫は店舗スタッフ間で共有されます</Text>
-                <Text className="text-blue-600 text-xs mt-1">
-                  材料を登録して在庫を更新すると、同じ店舗の別端末でも同じ在庫を確認できます。
-                </Text>
-              </>
-            )}
-          </Card>
+
 
           {sortedIngredients.map((item) => (
             <Card key={item.id} className="mb-2 p-3">
@@ -423,8 +404,8 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
 
           {sortedIngredients.length === 0 && (
             <Card className="p-6">
-              <Text className="text-gray-500 text-center">まだ材料が登録されていません</Text>
-              <Text className="text-gray-400 text-center text-sm mt-1">右上の「+ 材料登録」から追加してください</Text>
+              <Text className="text-gray-500 text-center">まだ食材が登録されていません</Text>
+              <Text className="text-gray-400 text-center text-sm mt-1">右上の「+ 食材登録」から追加してください</Text>
             </Card>
           )}
         </ScrollView>
@@ -436,10 +417,10 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
           setShowAddModal(false);
           resetAddForm();
         }}
-        title="材料登録"
+        title="食材登録"
       >
         <Input
-          label="材料名"
+          label="食材名"
           value={newName}
           onChangeText={setNewName}
           placeholder="例: キャベツ"

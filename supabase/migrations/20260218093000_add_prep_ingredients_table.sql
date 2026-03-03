@@ -1,4 +1,4 @@
--- prep_ingredients: 調理の下準備(材料在庫)を店舗間で共有するテーブル
+-- prep_ingredients: 調理の下準備(食材在庫)を店舗間で共有するテーブル
 
 CREATE TABLE IF NOT EXISTS public.prep_ingredients (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

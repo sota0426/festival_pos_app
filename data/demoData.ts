@@ -291,26 +291,26 @@ const yesterdayStr = yesterday.toISOString().split('T')[0];
 
 export const DEMO_BUDGET_EXPENSES: Record<string, BudgetExpense[]> = {
   'demo-1': [
-    { id: 'demo-exp-1-1', branch_id: 'demo-1', date: yesterdayStr, category: 'material', amount: 8000, recorded_by: '田中', payment_method: 'cash', memo: '麺・キャベツ・豚肉', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
-    { id: 'demo-exp-1-2', branch_id: 'demo-1', date: yesterdayStr, category: 'equipment', amount: 3000, recorded_by: '田中', payment_method: 'online', memo: '鉄板レンタル', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
-    { id: 'demo-exp-1-3', branch_id: 'demo-1', date: todayStr, category: 'material', amount: 2000, recorded_by: '鈴木', payment_method: 'cash', memo: 'ソース・青のり追加', receipt_image: null, created_at: today.toISOString(), synced: false },
+    { id: 'demo-exp-1-1', branch_id: 'demo-1', date: yesterdayStr, category: 'material', amount: 8000, recorded_by: '田中', payment_method: 'cash', is_reimbursed: false, memo: '麺・キャベツ・豚肉', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
+    { id: 'demo-exp-1-2', branch_id: 'demo-1', date: yesterdayStr, category: 'equipment', amount: 3000, recorded_by: '田中', payment_method: 'bank_transfer', is_reimbursed: false, memo: '鉄板レンタル', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
+    { id: 'demo-exp-1-3', branch_id: 'demo-1', date: todayStr, category: 'material', amount: 2000, recorded_by: '鈴木', payment_method: 'cash', is_reimbursed: false, memo: 'ソース・青のり追加', receipt_image: null, created_at: today.toISOString(), synced: false },
   ],
   'demo-2': [
-    { id: 'demo-exp-2-1', branch_id: 'demo-2', date: yesterdayStr, category: 'material', amount: 6000, recorded_by: '佐藤', payment_method: 'cash', memo: 'たこ焼き粉・タコ', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
-    { id: 'demo-exp-2-2', branch_id: 'demo-2', date: yesterdayStr, category: 'equipment', amount: 4000, recorded_by: '佐藤', payment_method: 'online', memo: 'たこ焼き器レンタル', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
+    { id: 'demo-exp-2-1', branch_id: 'demo-2', date: yesterdayStr, category: 'material', amount: 6000, recorded_by: '佐藤', payment_method: 'cash', is_reimbursed: false, memo: 'たこ焼き粉・タコ', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
+    { id: 'demo-exp-2-2', branch_id: 'demo-2', date: yesterdayStr, category: 'equipment', amount: 4000, recorded_by: '佐藤', payment_method: 'bank_transfer', is_reimbursed: false, memo: 'たこ焼き器レンタル', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
   ],
   'demo-3': [
-    { id: 'demo-exp-3-1', branch_id: 'demo-3', date: yesterdayStr, category: 'material', amount: 7000, recorded_by: '山田', payment_method: 'cash', memo: '鶏肉・ネギ', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
-    { id: 'demo-exp-3-2', branch_id: 'demo-3', date: yesterdayStr, category: 'decoration', amount: 1500, recorded_by: '山田', payment_method: 'cash', memo: '看板材料', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
+    { id: 'demo-exp-3-1', branch_id: 'demo-3', date: yesterdayStr, category: 'material', amount: 7000, recorded_by: '山田', payment_method: 'cash', is_reimbursed: false, memo: '鶏肉・ネギ', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
+    { id: 'demo-exp-3-2', branch_id: 'demo-3', date: yesterdayStr, category: 'decoration', amount: 1500, recorded_by: '山田', payment_method: 'cash', is_reimbursed: false, memo: '看板食材', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
   ],
   'demo-4': [
-    { id: 'demo-exp-4-1', branch_id: 'demo-4', date: yesterdayStr, category: 'material', amount: 5000, recorded_by: '高橋', payment_method: 'online', memo: '小麦粉・クリーム・フルーツ', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
-    { id: 'demo-exp-4-2', branch_id: 'demo-4', date: yesterdayStr, category: 'equipment', amount: 2000, recorded_by: '高橋', payment_method: 'cash', memo: 'クレープ焼き器', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
+    { id: 'demo-exp-4-1', branch_id: 'demo-4', date: yesterdayStr, category: 'material', amount: 5000, recorded_by: '高橋', payment_method: 'bank_transfer', is_reimbursed: false, memo: '小麦粉・クリーム・フルーツ', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
+    { id: 'demo-exp-4-2', branch_id: 'demo-4', date: yesterdayStr, category: 'equipment', amount: 2000, recorded_by: '高橋', payment_method: 'cash', is_reimbursed: false, memo: 'クレープ焼き器', receipt_image: null, created_at: yesterday.toISOString(), synced: false },
   ],
 };
 
 // ============================================================
-// デモ用 下準備材料データ
+// デモ用 下準備食材データ
 // ============================================================
 export const DEMO_PREP_INGREDIENTS: Record<string, PrepIngredient[]> = {
   'demo-1': [
