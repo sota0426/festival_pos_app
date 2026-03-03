@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 import type {
   Branch,
   Menu,
@@ -42,7 +41,6 @@ const BRANCH_RECORDERS_KEY_PREFIX = '@festival_pos/branch_recorders';
 const RECORDER_ACCESS_LOGS_KEY_PREFIX = '@festival_pos/recorder_access_logs';
 const RECORDER_CONFIG_KEY_PREFIX = '@festival_pos/recorder_config';
 const ORDER_COUNTER_KEY_PREFIX = '@festival_pos/order_counter';
-const KIOSK_EXIT_PIN_KEY_PREFIX = '@festival_pos/kiosk_exit_pin';
 const DEVICE_ID_KEY = '@festival_pos/device_id';
 
 export interface BreakevenDraft {
@@ -279,7 +277,6 @@ export const getStoreSettings = async (): Promise<StoreSettings> => {
       payment_mode: parsed.payment_mode ?? 'cashless',
       payment_methods: { ...DEFAULT_PAYMENT_METHODS, ...parsed.payment_methods },
       cashless_label: String(parsed.cashless_label ?? 'PayPay').trim() || 'PayPay',
-      kiosk_exit_pin: String(parsed.kiosk_exit_pin ?? '').trim(),
       order_board_enabled: parsed.order_board_enabled ?? false,
       sub_screen_mode: parsed.sub_screen_mode ?? false,
       sync_enabled: syncEnabled,
@@ -290,24 +287,10 @@ export const getStoreSettings = async (): Promise<StoreSettings> => {
     payment_mode: 'cashless',
     payment_methods: DEFAULT_PAYMENT_METHODS,
     cashless_label: 'PayPay',
-    kiosk_exit_pin: '',
     order_board_enabled: false,
     sub_screen_mode: false,
     sync_enabled: true,
   };
-};
-
-export const saveBranchKioskExitPin = async (branchId: string, pin: string): Promise<void> => {
-  await AsyncStorage.setItem(`${KIOSK_EXIT_PIN_KEY_PREFIX}/${branchId}`, String(pin).trim());
-};
-
-export const getBranchKioskExitPin = async (branchId: string): Promise<string> => {
-  const scoped = await AsyncStorage.getItem(`${KIOSK_EXIT_PIN_KEY_PREFIX}/${branchId}`);
-  if (scoped != null) return String(scoped).trim();
-
-  // 互換: 旧グローバル設定に残っている値を初回だけ読む（以後は店舗別に移行）
-  const settings = await getStoreSettings();
-  return String(settings.kiosk_exit_pin ?? '').trim();
 };
 
 // Order counter storage (sequential order numbers 01-99, resets daily, per branch)
@@ -521,79 +504,6 @@ export const saveRestrictions = async (r: RestrictionSettings): Promise<void> =>
 export const getRestrictions = async (): Promise<RestrictionSettings> => {
   const data = await AsyncStorage.getItem(STORAGE_KEYS.RESTRICTIONS);
   return data ? { ...DEFAULT_RESTRICTIONS, ...JSON.parse(data) } : DEFAULT_RESTRICTIONS;
-};
-
-// ------------------------------------------------------------------
-// Kiosk (tablet customer-order) mode
-//
-// キオスクモードが有効な間はリロードしても customer_order 画面に固定される。
-// Web では localStorage を使用 (ブラウザを閉じても維持)。
-// Native では AsyncStorage を使用。
-// ------------------------------------------------------------------
-
-const KIOSK_STORAGE_KEY = '@festival_pos/kiosk_mode';
-
-export interface KioskModeData {
-  /** キオスクモードが有効かどうか */
-  enabled: boolean;
-  /** 注文画面に渡す branch_code */
-  branchCode: string;
-  /** 端末名 (タブレットモード時のみ) */
-  deviceName: string;
-  /** デモ導線から開始したキオスクかどうか（リロード後の戻る導線復元用） */
-  demoMode?: boolean;
-}
-
-/** キオスクモードを有効にして保存する */
-export const saveKioskMode = async (data: KioskModeData): Promise<void> => {
-  const json = JSON.stringify(data);
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    localStorage.setItem(KIOSK_STORAGE_KEY, json);
-  } else {
-    await AsyncStorage.setItem(KIOSK_STORAGE_KEY, json);
-  }
-};
-
-/** キオスクモードを解除する */
-export const clearKioskMode = async (): Promise<void> => {
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    localStorage.removeItem(KIOSK_STORAGE_KEY);
-  } else {
-    await AsyncStorage.removeItem(KIOSK_STORAGE_KEY);
-  }
-};
-
-/**
- * キオスクモード設定を同期的に読み取る (Web の localStorage のみ)。
- * App.tsx の useState イニシャライザから呼ばれる。
- */
-export const getKioskModeSync = (): KioskModeData | null => {
-  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
-  try {
-    const json = localStorage.getItem(KIOSK_STORAGE_KEY);
-    if (!json) return null;
-    const data = JSON.parse(json) as KioskModeData;
-    return data.enabled ? data : null;
-  } catch {
-    return null;
-  }
-};
-
-/** キオスクモード設定を非同期で読み取る (Native 用) */
-export const getKioskMode = async (): Promise<KioskModeData | null> => {
-  try {
-    let json: string | null = null;
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      json = localStorage.getItem(KIOSK_STORAGE_KEY);
-    } else {
-      json = await AsyncStorage.getItem(KIOSK_STORAGE_KEY);
-    }
-    if (!json) return null;
-    const data = JSON.parse(json) as KioskModeData;
-    return data.enabled ? data : null;
-  } catch {
-    return null;
-  }
 };
 
 // Get all local storage data

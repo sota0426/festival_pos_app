@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
   Platform,
   Pressable,
   RefreshControl,
@@ -16,8 +15,7 @@ import * as Sharing from 'expo-sharing';
 import { Button, Card, Header, Modal } from '../common';
 import { alertNotify } from '../../lib/alertUtils';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { createZipFromTextFiles, uint8ArrayToBase64 } from '../../lib/zip';
-import type { Branch, BranchSales, BranchVisitors, SalesAggregation } from '../../types/database';
+import type { Branch, BranchSales, SalesAggregation } from '../../types/database';
 
 interface HQDashboardProps {
   onNavigateToBranchInfo: (branchId?: string) => void;
@@ -25,7 +23,6 @@ interface HQDashboardProps {
 }
 
 type DashboardTab = 'dashboard' | 'results';
-type DashboardViewTab = 'sales' | 'visitors';
 
 type BranchFinance = BranchSales & {
   total_expense: number;
@@ -74,13 +71,6 @@ type ExpenseRow = {
   created_at: string;
 };
 
-type VisitorRow = {
-  branch_id: string;
-  count: number;
-  timestamp: string;
-  group_type: string | null;
-};
-
 const BRANCH_STACK_COLORS = [
   '#2563EB',
   '#16A34A',
@@ -100,6 +90,30 @@ const toDateLabel = (iso: string): string => {
   return `${y}-${m}-${d}`;
 };
 
+const toDateTimeLabel = (iso: string): string => {
+  const date = new Date(iso);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${y}年${m}月${d}日 ${hh}:${mm}`;
+};
+
+const toPaymentMethodLabel = (paymentMethod: string): string => {
+  if (paymentMethod === 'paypay') return 'キャッシュレス';
+  if (paymentMethod === 'cash') return '現金';
+  if (paymentMethod === 'voucher') return '金券';
+  return paymentMethod;
+};
+
+const toStatusLabel = (status: string): string => {
+  if (status === 'completed') return '完了';
+  if (status === 'cancelled') return '取消';
+  if (status === 'pending') return '保留';
+  return status;
+};
+
 const toCsvCell = (value: string | number): string => {
   const text = String(value ?? '');
   return `"${text.replace(/"/g, '""')}"`;
@@ -107,12 +121,10 @@ const toCsvCell = (value: string | number): string => {
 
 export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps) => {
   const [activeTab, setActiveTab] = useState<DashboardTab>('dashboard');
-  const [dashboardViewTab, setDashboardViewTab] = useState<DashboardViewTab>('sales');
   const [resultPanelIndex, setResultPanelIndex] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [exportingCsv, setExportingCsv] = useState(false);
-  const [exportingJson, setExportingJson] = useState(false);
+  const [exportingType, setExportingType] = useState<'all_sales' | 'branch_summary' | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
 
   const [totalSales, setTotalSales] = useState<SalesAggregation>({
@@ -125,25 +137,15 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
   const [branchSales, setBranchSales] = useState<BranchFinance[]>([]);
   const [branchLegend, setBranchLegend] = useState<BranchLegend[]>([]);
   const [overallTarget, setOverallTarget] = useState(0);
-  const [totalVisitors, setTotalVisitors] = useState(0);
-  const [branchVisitors, setBranchVisitors] = useState<BranchVisitors[]>([]);
   const [hourlySalesStack, setHourlySalesStack] = useState<SlotStack[]>([]);
-  const [quarterHourlyVisitors, setQuarterHourlyVisitors] = useState<SlotStack[]>([]);
 
   const [branchRows, setBranchRows] = useState<Branch[]>([]);
   const [transactionRows, setTransactionRows] = useState<TransactionRow[]>([]);
   const [transactionItemRows, setTransactionItemRows] = useState<TransactionItemRow[]>([]);
   const [expenseRows, setExpenseRows] = useState<ExpenseRow[]>([]);
-  const [visitorRows, setVisitorRows] = useState<VisitorRow[]>([]);
 
   const [hoveredSalesSlot, setHoveredSalesSlot] = useState<string | null>(null);
   const [pinnedSalesSlot, setPinnedSalesSlot] = useState<string | null>(null);
-  const [hoveredVisitorSlot, setHoveredVisitorSlot] = useState<string | null>(null);
-  const [pinnedVisitorSlot, setPinnedVisitorSlot] = useState<string | null>(null);
-
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-
 
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
@@ -183,16 +185,11 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
         { id: 'e1', branch_id: '1', date: toDateLabel(new Date().toISOString()), category: 'material', amount: 22000, recorded_by: '担当A', payment_method: 'cash', memo: '', created_at: new Date().toISOString() },
         { id: 'e2', branch_id: '2', date: toDateLabel(new Date().toISOString()), category: 'material', amount: 18000, recorded_by: '担当B', payment_method: 'online', memo: '', created_at: new Date().toISOString() },
       ];
-      const demoVisitors: VisitorRow[] = [
-        { branch_id: '1', count: 12, timestamp: new Date().toISOString(), group_type: 'unassigned' },
-        { branch_id: '2', count: 10, timestamp: new Date().toISOString(), group_type: 'unassigned' },
-      ];
 
       setBranchRows(demoBranches);
       setTransactionRows(demoTransactions);
       setTransactionItemRows(demoItems);
       setExpenseRows(demoExpenses);
-      setVisitorRows(demoVisitors);
     } else {
       try {
         const [
@@ -200,26 +197,22 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
           { data: transactions, error: txError },
           { data: items, error: itemError },
           { data: expenses, error: expenseError },
-          { data: visitors, error: visitorError },
         ] = await Promise.all([
           supabase.from('branches').select('*').order('branch_code', { ascending: true }),
           supabase.from('transactions').select('id,branch_id,total_amount,payment_method,status,created_at').eq('status', 'completed'),
           supabase.from('transaction_items').select('transaction_id,menu_name,quantity,unit_price,subtotal'),
           supabase.from('budget_expenses').select('id,branch_id,date,category,amount,recorded_by,payment_method,memo,created_at'),
-          supabase.from('visitor_counts').select('branch_id,count,timestamp,group_type'),
         ]);
 
         if (branchError) throw branchError;
         if (txError) throw txError;
         if (itemError) throw itemError;
         if (expenseError) throw expenseError;
-        if (visitorError) throw visitorError;
 
         setBranchRows((branches ?? []) as Branch[]);
         setTransactionRows((transactions ?? []) as TransactionRow[]);
         setTransactionItemRows((items ?? []) as TransactionItemRow[]);
         setExpenseRows((expenses ?? []) as ExpenseRow[]);
-        setVisitorRows((visitors ?? []) as VisitorRow[]);
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
       }
@@ -309,313 +302,185 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
       }))
       .sort((a, b) => a.time_slot.localeCompare(b.time_slot));
     setHourlySalesStack(hourlyData);
-
-    const quarterMap = new Map<string, Record<string, number>>();
-    visitorRows.forEach((v) => {
-      const d = new Date(v.timestamp);
-      const floored = Math.floor(d.getMinutes() / 15) * 15;
-      const key = `${String(d.getHours()).padStart(2, '0')}:${String(floored).padStart(2, '0')}`;
-      const current = quarterMap.get(key) ?? {};
-      current[v.branch_id] = (current[v.branch_id] ?? 0) + v.count;
-      quarterMap.set(key, current);
-    });
-    const quarterData: SlotStack[] = Array.from(quarterMap.entries())
-      .map(([time_slot, by_branch]) => ({
-        time_slot,
-        total: Object.values(by_branch).reduce((sum, value) => sum + value, 0),
-        by_branch,
-      }))
-      .sort((a, b) => a.time_slot.localeCompare(b.time_slot));
-    setQuarterHourlyVisitors(quarterData);
-    setTotalVisitors(visitorRows.reduce((sum, v) => sum + v.count, 0));
-
-    const branchVisitorData: BranchVisitors[] = branches.map((branch) => ({
-      branch_id: branch.id,
-      branch_code: branch.branch_code,
-      branch_name: branch.branch_name,
-      total_visitors: visitorRows
-        .filter((v) => v.branch_id === branch.id)
-        .reduce((sum, v) => sum + v.count, 0),
-      half_hourly: [],
-    }));
-    setBranchVisitors(branchVisitorData);
-  }, [branchRows, expenseRows, transactionRows, visitorRows]);
-
-  const maxVisitors = quarterHourlyVisitors.length > 0 ? Math.max(...quarterHourlyVisitors.map((h) => h.total)) : 1;
+  }, [branchRows, expenseRows, transactionRows]);
   const maxHourlySales = hourlySalesStack.length > 0 ? Math.max(...hourlySalesStack.map((h) => h.total)) : 1;
   const achievementRate = overallTarget > 0 ? Math.round((totalSales.total_sales / overallTarget) * 100) : 0;
   const activeSalesSlot = pinnedSalesSlot ?? hoveredSalesSlot;
-  const activeVisitorSlot = pinnedVisitorSlot ?? hoveredVisitorSlot;
-  const visitorCounterUnused = visitorRows.length === 0 || totalVisitors <= 0;
 
-  const transactionToBranch = useMemo(() => {
-    const map = new Map<string, string>();
-    transactionRows.forEach((tx) => map.set(tx.id, tx.branch_id));
-    return map;
-  }, [transactionRows]);
+  const downloadCsvFile = async (filename: string, csvContent: string, successLabel: string) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      alertNotify(successLabel, 'CSVをダウンロードしました');
+      return;
+    }
 
-  const menuSummaryByBranch = useMemo(() => {
-    const summary = new Map<string, Map<string, { quantity: number; subtotal: number }>>();
-    transactionItemRows.forEach((item) => {
-      const branchId = transactionToBranch.get(item.transaction_id);
-      if (!branchId) return;
-      const branchMap = summary.get(branchId) ?? new Map<string, { quantity: number; subtotal: number }>();
-      const current = branchMap.get(item.menu_name) ?? { quantity: 0, subtotal: 0 };
-      current.quantity += item.quantity ?? 0;
-      current.subtotal += item.subtotal ?? 0;
-      branchMap.set(item.menu_name, current);
-      summary.set(branchId, branchMap);
-    });
-    return summary;
-  }, [transactionItemRows, transactionToBranch]);
-
-  const buildBranchCsv = (branch: BranchFinance): string => {
-    const lines: string[] = [];
-    const dateLabel = toDateLabel(new Date().toISOString());
-    const branchTx = transactionRows.filter((tx) => tx.branch_id === branch.branch_id);
-    const branchExpenses = expenseRows.filter((expense) => expense.branch_id === branch.branch_id);
-    const branchVisitorsRaw = visitorRows.filter((visitor) => visitor.branch_id === branch.branch_id);
-    const branchMenuSummary = Array.from(menuSummaryByBranch.get(branch.branch_id)?.entries() ?? [])
-      .map(([menu_name, row]) => ({ menu_name, ...row }))
-      .sort((a, b) => b.subtotal - a.subtotal);
-    const branchItemRows = transactionItemRows.filter((item) => transactionToBranch.get(item.transaction_id) === branch.branch_id);
-
-    lines.push(['区分', '項目', '値'].map(toCsvCell).join(','));
-    lines.push(['店舗', '店舗ID', branch.branch_code].map(toCsvCell).join(','));
-    lines.push(['店舗', '店舗名', branch.branch_name].map(toCsvCell).join(','));
-    lines.push(['店舗', '出力日', dateLabel].map(toCsvCell).join(','));
-    lines.push(['サマリー', '総売上', branch.total_sales].map(toCsvCell).join(','));
-    lines.push(['サマリー', '総支出', branch.total_expense].map(toCsvCell).join(','));
-    lines.push(['サマリー', '利益', branch.profit].map(toCsvCell).join(','));
-    lines.push(['サマリー', '取引件数', branch.transaction_count].map(toCsvCell).join(','));
-    lines.push(['サマリー', '平均客単価', branch.average_order].map(toCsvCell).join(','));
-    lines.push(['サマリー', '目標達成率', `${branch.achievement_rate}%`].map(toCsvCell).join(','));
-    lines.push('');
-
-    lines.push(['支払い集計', 'PayPay', branch.paypay_sales].map(toCsvCell).join(','));
-    lines.push(['支払い集計', '金券', branch.voucher_sales].map(toCsvCell).join(','));
-    lines.push(['支払い集計', '現金', branch.total_sales - branch.paypay_sales - branch.voucher_sales].map(toCsvCell).join(','));
-    lines.push('');
-
-    lines.push(['取引明細', 'transaction_id', 'created_at', 'payment_method', 'total_amount'].map(toCsvCell).join(','));
-    branchTx.forEach((tx) => {
-      lines.push(['取引明細', tx.id, tx.created_at, tx.payment_method, tx.total_amount].map(toCsvCell).join(','));
-    });
-    lines.push('');
-
-    lines.push(['メニュー売上集計', 'menu_name', 'quantity', 'subtotal'].map(toCsvCell).join(','));
-    branchMenuSummary.forEach((row) => {
-      lines.push(['メニュー売上集計', row.menu_name, row.quantity, row.subtotal].map(toCsvCell).join(','));
-    });
-    lines.push('');
-
-    lines.push(['メニュー売上明細', 'transaction_id', 'menu_name', 'quantity', 'unit_price', 'subtotal'].map(toCsvCell).join(','));
-    branchItemRows.forEach((row) => {
-      lines.push(['メニュー売上明細', row.transaction_id, row.menu_name, row.quantity, row.unit_price, row.subtotal].map(toCsvCell).join(','));
-    });
-    lines.push('');
-
-    lines.push(['支出明細', 'id', 'date', 'category', 'payment_method', 'recorded_by', 'amount', 'memo', 'created_at'].map(toCsvCell).join(','));
-    branchExpenses.forEach((expense) => {
-      lines.push(['支出明細', expense.id, expense.date, expense.category, expense.payment_method, expense.recorded_by || '', expense.amount, expense.memo || '', expense.created_at].map(toCsvCell).join(','));
-    });
-    lines.push('');
-
-    lines.push(['来場者(15分集計)', 'time_slot', 'count'].map(toCsvCell).join(','));
-    quarterHourlyVisitors.forEach((slot) => {
-      lines.push(['来場者(15分集計)', slot.time_slot, slot.by_branch[branch.branch_id] ?? 0].map(toCsvCell).join(','));
-    });
-    lines.push('');
-
-    lines.push(['来場者明細', 'timestamp', 'group_type', 'count'].map(toCsvCell).join(','));
-    branchVisitorsRaw.forEach((visitor) => {
-      lines.push(['来場者明細', visitor.timestamp, visitor.group_type ?? 'unassigned', visitor.count].map(toCsvCell).join(','));
-    });
-
-    return `\uFEFF${lines.join('\n')}`;
-  };
-
-  const handleExportDashboardCsv = async () => {
-    try {
-      setExportingCsv(true);
-      if (branchSales.length === 0) {
-        alertNotify('CSV出力', '出力対象のデータがありません');
-        return;
-      }
-
-      const dateLabel = toDateLabel(new Date().toISOString());
-      const files = branchSales.map((branch) => ({
-        name: `${branch.branch_id}_${dateLabel}.csv`,
-        content: buildBranchCsv(branch),
-      }));
-
-      if (files.length === 1) {
-        const csvContent = files[0].content;
-        const filename = files[0].name;
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          window.URL.revokeObjectURL(url);
-          alertNotify('CSV出力', 'CSVをダウンロードしました');
-          return;
-        }
-
-        const baseDir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
-        if (!baseDir) throw new Error('保存先ディレクトリを取得できませんでした');
-        const fileUri = `${baseDir}${filename}`;
-        await FileSystem.writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
-        const canShare = await Sharing.isAvailableAsync();
-        if (canShare) {
-          await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'ダッシュボードCSVを共有' });
-        } else {
-          alertNotify('CSV出力', `CSVを保存しました: ${fileUri}`);
-        }
-        return;
-      }
-
-      const zipBytes = createZipFromTextFiles(files);
-      const zipFilename = `all_branches_${dateLabel}.zip`;
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        const forBlob = new Uint8Array(zipBytes.length);
-        forBlob.set(zipBytes);
-        const blob = new Blob([forBlob], { type: 'application/zip' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = zipFilename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-        alertNotify('CSV出力', 'ZIPをダウンロードしました');
-        return;
-      }
-
-      const baseDir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
-      if (!baseDir) throw new Error('保存先ディレクトリを取得できませんでした');
-      const zipUri = `${baseDir}${zipFilename}`;
-      await FileSystem.writeAsStringAsync(zipUri, uint8ArrayToBase64(zipBytes), { encoding: 'base64' });
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(zipUri, { mimeType: 'application/zip', dialogTitle: 'ダッシュボードZIPを共有' });
-      } else {
-        alertNotify('CSV出力', `ZIPを保存しました: ${zipUri}`);
-      }
-    } catch (error: any) {
-      console.error('Dashboard export error:', error);
-      alertNotify('エラー', `エクスポートに失敗しました: ${error?.message ?? 'unknown error'}`);
-    } finally {
-      setExportingCsv(false);
+    const baseDir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
+    if (!baseDir) throw new Error('保存先ディレクトリを取得できませんでした');
+    const fileUri = `${baseDir}${filename}`;
+    await FileSystem.writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
+    const canShare = await Sharing.isAvailableAsync();
+    if (canShare) {
+      await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: `${successLabel}を共有` });
+    } else {
+      alertNotify(successLabel, `CSVを保存しました: ${fileUri}`);
     }
   };
 
-  const handleExportDashboardJson = async () => {
+  const handleExportAllSalesCsv = async () => {
     try {
-      setExportingJson(true);
-      if (branchSales.length === 0) {
-        alertNotify('JSON出力', '出力対象のデータがありません');
+      setExportingType('all_sales');
+      if (transactionRows.length === 0) {
+        alertNotify('全販売データCSV', '出力対象の販売データがありません');
         return;
       }
+
+      const branchMap = new Map(branchRows.map((branch) => [branch.id, branch]));
+      const lines: string[] = [];
+      lines.push(
+        [
+          '日時',
+          '店舗コード',
+          '店舗名',
+          '支払方法',
+          'ステータス',
+          '合計金額',
+          'メニュー名',
+          '数量',
+          '単価',
+          '小計',
+        ]
+          .map(toCsvCell)
+          .join(','),
+      );
+
+      transactionItemRows.forEach((item) => {
+        const tx = transactionRows.find((row) => row.id === item.transaction_id);
+        if (!tx) return;
+        const branch = branchMap.get(tx.branch_id);
+        lines.push(
+          [
+            toDateTimeLabel(tx.created_at),
+            branch?.branch_code ?? '',
+            branch?.branch_name ?? '',
+            toPaymentMethodLabel(tx.payment_method),
+            toStatusLabel(tx.status),
+            tx.total_amount,
+            item.menu_name,
+            item.quantity,
+            item.unit_price,
+            item.subtotal,
+          ]
+            .map(toCsvCell)
+            .join(','),
+        );
+      });
 
       const dateLabel = toDateLabel(new Date().toISOString());
-      const payload = {
-        exported_at: new Date().toISOString(),
-        summary: {
-          total_sales: totalSales.total_sales,
-          total_expense: branchSales.reduce((sum, b) => sum + b.total_expense, 0),
-          total_profit: branchSales.reduce((sum, b) => sum + b.profit, 0),
-          total_transactions: totalSales.transaction_count,
-          total_visitors: totalVisitors,
-          achievement_rate: achievementRate,
-        },
-        branches: branchSales.map((branch) => {
-          const branchTx = transactionRows.filter((tx) => tx.branch_id === branch.branch_id);
-          const branchExpenses = expenseRows.filter((expense) => expense.branch_id === branch.branch_id);
-          const branchVisitorsRaw = visitorRows.filter((visitor) => visitor.branch_id === branch.branch_id);
-          const branchMenuSummary = Array.from(menuSummaryByBranch.get(branch.branch_id)?.entries() ?? [])
-            .map(([menu_name, row]) => ({ menu_name, ...row }))
-            .sort((a, b) => b.subtotal - a.subtotal);
-          const branchItemRows = transactionItemRows.filter((item) => transactionToBranch.get(item.transaction_id) === branch.branch_id);
+      await downloadCsvFile(`all_sales_${dateLabel}.csv`, `\uFEFF${lines.join('\n')}`, '全販売データCSV');
+    } catch (error: any) {
+      console.error('All sales CSV export error:', error);
+      alertNotify('エラー', `全販売データCSVの出力に失敗しました: ${error?.message ?? 'unknown error'}`);
+    } finally {
+      setExportingType(null);
+    }
+  };
 
-          return {
-            branch_id: branch.branch_id,
-            branch_code: branch.branch_code,
-            branch_name: branch.branch_name,
-            summary: {
-              total_sales: branch.total_sales,
-              total_expense: branch.total_expense,
-              profit: branch.profit,
-              transaction_count: branch.transaction_count,
-              average_order: branch.average_order,
-              achievement_rate: branch.achievement_rate,
-              paypay_sales: branch.paypay_sales,
-              voucher_sales: branch.voucher_sales,
-              cash_sales: branch.total_sales - branch.paypay_sales - branch.voucher_sales,
-            },
-            transactions: branchTx,
-            menu_sales_summary: branchMenuSummary,
-            menu_sales_rows: branchItemRows,
-            expenses: branchExpenses,
-            visitors_quarter_hourly: quarterHourlyVisitors.map((slot) => ({
-              time_slot: slot.time_slot,
-              count: slot.by_branch[branch.branch_id] ?? 0,
-            })),
-            visitors_raw: branchVisitorsRaw,
-          };
-        }),
-      };
-
-      const jsonContent = JSON.stringify(payload, null, 2);
-      const filename = `hq_dashboard_${dateLabel}.json`;
-
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-        alertNotify('JSON出力', 'JSONをダウンロードしました');
+  const handleExportBranchSummaryCsv = async () => {
+    try {
+      setExportingType('branch_summary');
+      if (branchSales.length === 0) {
+        alertNotify('店舗別集計CSV', '出力対象の店舗データがありません');
         return;
       }
 
-      const baseDir = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
-      if (!baseDir) throw new Error('保存先ディレクトリを取得できませんでした');
-      const fileUri = `${baseDir}${filename}`;
-      await FileSystem.writeAsStringAsync(fileUri, jsonContent, { encoding: 'utf8' });
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(fileUri, { mimeType: 'application/json', dialogTitle: 'ダッシュボードJSONを共有' });
-      } else {
-        alertNotify('JSON出力', `JSONを保存しました: ${fileUri}`);
-      }
+      const lines: string[] = [];
+      lines.push(
+        [
+          '店舗コード',
+          '店舗名',
+          '売上合計',
+          '支出合計',
+          '利益',
+          '取引件数',
+          '平均客単価',
+          'PayPay売上',
+          '金券売上',
+          '現金売上',
+          '売上目標',
+          '達成率',
+        ]
+          .map(toCsvCell)
+          .join(','),
+      );
+
+      branchSales.forEach((branch) => {
+        lines.push(
+          [
+            branch.branch_code,
+            branch.branch_name,
+            branch.total_sales,
+            branch.total_expense,
+            branch.profit,
+            branch.transaction_count,
+            branch.average_order,
+            branch.paypay_sales,
+            branch.voucher_sales,
+            branch.total_sales - branch.paypay_sales - branch.voucher_sales,
+            branch.sales_target,
+            `${branch.achievement_rate}%`,
+          ]
+            .map(toCsvCell)
+            .join(','),
+        );
+      });
+
+      const totalExpense = branchSales.reduce((sum, branch) => sum + branch.total_expense, 0);
+      const totalProfit = totalSales.total_sales - totalExpense;
+      const totalCashSales = totalSales.total_sales - totalSales.paypay_sales - totalSales.voucher_sales;
+      lines.push(
+        [
+          '全体',
+          '全店舗合計',
+          totalSales.total_sales,
+          totalExpense,
+          totalProfit,
+          totalSales.transaction_count,
+          totalSales.average_order,
+          totalSales.paypay_sales,
+          totalSales.voucher_sales,
+          totalCashSales,
+          overallTarget,
+          `${achievementRate}%`,
+        ]
+          .map(toCsvCell)
+          .join(','),
+      );
+
+      const dateLabel = toDateLabel(new Date().toISOString());
+      await downloadCsvFile(`branch_summary_${dateLabel}.csv`, `\uFEFF${lines.join('\n')}`, '店舗別集計CSV');
     } catch (error: any) {
-      console.error('Dashboard JSON export error:', error);
-      alertNotify('エラー', `JSON出力に失敗しました: ${error?.message ?? 'unknown error'}`);
+      console.error('Branch summary CSV export error:', error);
+      alertNotify('エラー', `店舗別集計CSVの出力に失敗しました: ${error?.message ?? 'unknown error'}`);
     } finally {
-      setExportingJson(false);
+      setExportingType(null);
     }
   };
 
   const salesRanking = useMemo(() => [...branchSales].sort((a, b) => b.total_sales - a.total_sales), [branchSales]);
   const profitRanking = useMemo(() => [...branchSales].sort((a, b) => b.profit - a.profit), [branchSales]);
   const avgOrderRanking = useMemo(() => [...branchSales].sort((a, b) => b.average_order - a.average_order), [branchSales]);
-  const visitorRanking = useMemo(() => {
-    const map = new Map<string, number>(branchVisitors.map((v) => [v.branch_id, v.total_visitors]));
-    return [...branchSales]
-      .map((branch) => ({ ...branch, total_visitors: map.get(branch.branch_id) ?? 0 }))
-      .sort((a, b) => b.total_visitors - a.total_visitors);
-  }, [branchSales, branchVisitors]);
-
+  const orderCountRanking = useMemo(
+    () => [...branchSales].sort((a, b) => b.transaction_count - a.transaction_count),
+    [branchSales],
+  );
   const resultPanels = useMemo(
     () => [
       {
@@ -637,13 +502,13 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
         accentBg: 'bg-orange-600',
       },
       {
-        title: '来場者ランキング',
-        rows: visitorRanking.map((b) => ({ branch_code: b.branch_code, branch_name: b.branch_name, value: b.total_visitors })),
-        valueFormatter: (value: number) => `${value.toLocaleString()}人`,
-        accentBg: 'bg-purple-600',
+        title: '注文件数ランキング',
+        rows: orderCountRanking.map((b) => ({ branch_code: b.branch_code, branch_name: b.branch_name, value: b.transaction_count })),
+        valueFormatter: (value: number) => `${value.toLocaleString()}件`,
+        accentBg: 'bg-cyan-600',
       },
     ],
-    [avgOrderRanking, profitRanking, salesRanking, visitorRanking],
+    [avgOrderRanking, orderCountRanking, profitRanking, salesRanking],
   );
 
   const activeResultPanel = resultPanels[resultPanelIndex] ?? resultPanels[0];
@@ -692,11 +557,11 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
         onBack={onBack}
         rightElement={
           <Button
-            title={exportingCsv || exportingJson ? '出力中...' : '一括出力'}
+            title={exportingType ? '出力中...' : '一括出力'}
             onPress={() => setShowExportModal(true)}
             size="sm"
-            disabled={exportingCsv || exportingJson}
-            loading={exportingCsv || exportingJson}
+            disabled={!!exportingType}
+            loading={!!exportingType}
           />
         }
       />
@@ -709,36 +574,36 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
           <TouchableOpacity
             onPress={() => {
               setShowExportModal(false);
-              handleExportDashboardCsv();
+              handleExportAllSalesCsv();
             }}
-            disabled={exportingCsv || exportingJson}
+            disabled={!!exportingType}
             className={`flex-row items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 ${
-              exportingCsv || exportingJson ? 'opacity-50' : ''
+              exportingType ? 'opacity-50' : ''
             }`}
             activeOpacity={0.8}
           >
             <Text className="text-xl">📄</Text>
             <View className="flex-1">
-              <Text className="text-blue-800 font-semibold">CSV出力</Text>
-              <Text className="text-blue-600 text-xs">店舗ごとにCSVを作成（複数店舗時はZIP）</Text>
+              <Text className="text-blue-800 font-semibold">全販売データCSV</Text>
+              <Text className="text-blue-600 text-xs">すべての販売明細を1ファイルで出力</Text>
             </View>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={() => {
               setShowExportModal(false);
-              handleExportDashboardJson();
+              handleExportBranchSummaryCsv();
             }}
-            disabled={exportingCsv || exportingJson}
+            disabled={!!exportingType}
             className={`flex-row items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 ${
-              exportingCsv || exportingJson ? 'opacity-50' : ''
+              exportingType ? 'opacity-50' : ''
             }`}
             activeOpacity={0.8}
           >
-            <Text className="text-xl">{'{ }'}</Text>
+            <Text className="text-xl">📊</Text>
             <View className="flex-1">
-              <Text className="text-emerald-800 font-semibold">JSON出力</Text>
-              <Text className="text-emerald-600 text-xs">全店舗データを1ファイルでまとめて出力</Text>
+              <Text className="text-emerald-800 font-semibold">店舗別集計CSV</Text>
+              <Text className="text-emerald-600 text-xs">売上・支出・利益などの表データを出力</Text>
             </View>
           </TouchableOpacity>
 
@@ -763,24 +628,6 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
           <Text className={`font-bold ${activeTab === 'results' ? 'text-white' : 'text-gray-500'}`}>総合結果</Text>
         </TouchableOpacity>
       </View>
-      {activeTab === 'dashboard' && (
-        <View className="mx-4 mt-4 mb-1 rounded-xl border border-gray-200 bg-white p-1 flex-row">
-          <TouchableOpacity
-            className={`flex-1 py-2.5 items-center rounded-lg ${dashboardViewTab === 'sales' ? 'bg-blue-600' : 'bg-white'}`}
-            onPress={() => setDashboardViewTab('sales')}
-            activeOpacity={0.85}
-          >
-            <Text className={`font-semibold ${dashboardViewTab === 'sales' ? 'text-white' : 'text-gray-600'}`}>売上</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            className={`flex-1 py-2.5 items-center rounded-lg ${dashboardViewTab === 'visitors' ? 'bg-purple-600' : 'bg-white'}`}
-            onPress={() => setDashboardViewTab('visitors')}
-            activeOpacity={0.85}
-          >
-            <Text className={`font-semibold ${dashboardViewTab === 'visitors' ? 'text-white' : 'text-gray-600'}`}>来客</Text>
-          </TouchableOpacity>
-        </View>
-      )}
 
       {loading ? (
         <View className="flex-1 items-center justify-center">
@@ -803,8 +650,6 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
         >
           {activeTab === 'dashboard' && (
             <>
-              {dashboardViewTab === 'sales' && (
-                <>
               <Card className="mb-4">
                 <Text className="text-lg font-bold text-gray-900 mb-3">全体売上</Text>
                 <View className="flex-row flex-wrap">
@@ -820,109 +665,8 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
                     <Text className="text-gray-500 text-sm">平均客単価</Text>
                     <Text className="text-xl font-semibold text-gray-700">{totalSales.average_order.toLocaleString()}円</Text>
                   </View>
-                  <View className="w-1/2 mb-3">
-                    <Text className="text-gray-500 text-sm">目標達成率</Text>
-                    <Text className={`text-xl font-semibold ${achievementRate >= 100 ? 'text-green-600' : 'text-orange-500'}`}>{achievementRate}%</Text>
-                  </View>
                 </View>
               </Card>
-                </>
-              )}
-
-              {dashboardViewTab === 'visitors' && (
-                <>
-              <Card className="mb-4 bg-purple-50">
-                <Text className="text-lg font-bold text-purple-900 mb-3">来場者数</Text>
-                <View className="flex-row flex-wrap">
-                  <View className="w-1/2 mb-3">
-                    <Text className="text-purple-600 text-sm">本日の総来場者</Text>
-                    <Text className="text-3xl font-bold text-purple-700">{totalVisitors.toLocaleString()}人</Text>
-                  </View>
-                  <View className="w-1/2 mb-3">
-                    <Text className="text-purple-600 text-sm">支店別</Text>
-                    {branchVisitors.map((bv) => (
-                      <View key={bv.branch_id} className="flex-row justify-between">
-                        <Text className="text-purple-700">{bv.branch_code}</Text>
-                        <Text className="text-purple-900 font-semibold">{bv.total_visitors}人</Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              </Card>
-
-              {visitorCounterUnused && (
-                <Card className="mb-4 border border-amber-200 bg-amber-50">
-                  <Text className="text-amber-900 font-bold mb-1">来客カウンターがまだ使われていません</Text>
-                  <Text className="text-amber-800 text-sm leading-5">
-                    各店舗で「来客カウンター」を使うと、来場者数の合計や時間帯ごとの混雑状況を本部ダッシュボードで確認できます。
-                  </Text>
-                </Card>
-              )}
-
-              <Card className="mb-4">
-                <Text className="text-lg font-bold text-gray-900 mb-3">15分毎の来場者数（店舗別積み上げ）</Text>
-                <View className="flex-row flex-wrap mb-2">
-                  {branchLegend.map((item) => (
-                    <View key={item.branch_id} className="flex-row items-center mr-3 mb-1">
-                      <View className="w-3 h-3 rounded mr-1" style={{ backgroundColor: item.color }} />
-                      <Text className="text-gray-500 text-xs">{item.branch_code}</Text>
-                    </View>
-                  ))}
-                </View>
-                <Text className="text-gray-400 text-xs mb-2">PCはホバー、スマホはタップで内訳を表示</Text>
-                {quarterHourlyVisitors.map((slot) => (
-                  <Pressable
-                    key={slot.time_slot}
-                    onHoverIn={() => setHoveredVisitorSlot(slot.time_slot)}
-                    onHoverOut={() => setHoveredVisitorSlot(null)}
-                    onPress={() => setPinnedVisitorSlot((current) => (current === slot.time_slot ? null : slot.time_slot))}
-                    className="py-1.5 border-b border-gray-100 last:border-b-0"
-                  >
-                    <View className="flex-row items-center">
-                      <Text className="w-14 text-gray-600 text-sm font-medium">{slot.time_slot}</Text>
-                      <View className="flex-1 mx-2 h-5 bg-gray-100 rounded overflow-hidden">
-                        <View className="h-full rounded flex-row overflow-hidden" style={{ width: `${Math.min((slot.total / maxVisitors) * 100, 100)}%` }}>
-                          {branchLegend.map((item) => {
-                            const value = slot.by_branch[item.branch_id] || 0;
-                            if (value <= 0 || slot.total <= 0) return null;
-                            return (
-                              <View
-                                key={`${slot.time_slot}-${item.branch_id}`}
-                                style={{ width: `${(value / slot.total) * 100}%`, backgroundColor: item.color }}
-                              />
-                            );
-                          })}
-                        </View>
-                      </View>
-                      <Text className="w-12 text-right text-gray-900 font-semibold">{slot.total}人</Text>
-                    </View>
-                    {activeVisitorSlot === slot.time_slot && (
-                      <View className="mt-2 ml-14 bg-purple-50 border border-purple-100 rounded-lg p-2">
-                        <Text className="text-purple-900 text-xs font-semibold mb-1">内訳</Text>
-                        {branchLegend.map((item) => {
-                          const count = slot.by_branch[item.branch_id] ?? 0;
-                          if (count <= 0) return null;
-                          return (
-                            <View key={`${slot.time_slot}-detail-${item.branch_id}`} className="flex-row items-center justify-between mb-1">
-                              <View className="flex-row items-center">
-                                <View className="w-2.5 h-2.5 rounded mr-1.5" style={{ backgroundColor: item.color }} />
-                                <Text className="text-gray-700 text-xs">{item.branch_code}</Text>
-                              </View>
-                              <Text className="text-gray-900 text-xs font-semibold">{count}人</Text>
-                            </View>
-                          );
-                        })}
-                      </View>
-                    )}
-                  </Pressable>
-                ))}
-                {quarterHourlyVisitors.length === 0 && <Text className="text-gray-500 text-center py-4">データがありません</Text>}
-              </Card>
-                </>
-              )}
-
-              {dashboardViewTab === 'sales' && (
-                <>
               <Card className="mb-4">
                 <Text className="text-lg font-bold text-gray-900 mb-3">支払い方法別</Text>
                 <View className="flex-row">
@@ -940,9 +684,6 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
               <Card className="mb-4">
                 <View className="flex-row items-center justify-between mb-3">
                   <Text className="text-lg font-bold text-gray-900">支店別売上</Text>
-                  <View className="flex-row gap-2">
-                    <Button title="各店舗情報" onPress={() => onNavigateToBranchInfo()} size="sm" variant="primary" />
-                  </View>
                 </View>
                 {branchSales.map((branch) => (
                   <TouchableOpacity
@@ -981,7 +722,6 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
                     </View>
                   ))}
                 </View>
-                <Text className="text-gray-400 text-xs mb-2">PCはホバー、スマホはタップで内訳を表示</Text>
                 {hourlySalesStack.map((slot) => (
                   <Pressable
                     key={slot.time_slot}
@@ -1030,8 +770,6 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
                 ))}
                 {hourlySalesStack.length === 0 && <Text className="text-gray-500 text-center py-4">データがありません</Text>}
               </Card>
-                </>
-              )}
             </>
           )}
 

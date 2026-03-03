@@ -9,20 +9,6 @@ import type {
   PrepIngredient,
 } from '../types/database';
 
-export interface DemoTaskChecklistItem {
-  id: string;
-  branch_id: string;
-  title: string;
-  is_done: boolean;
-  done_by: string | null;
-  assigned_to?: string | null;
-  note: string;
-  category: string;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface DemoShiftEntry {
   id: string;
   branch_id: string;
@@ -347,32 +333,6 @@ export const DEMO_PREP_INGREDIENTS: Record<string, PrepIngredient[]> = {
     { id: 'prep-4-1', branch_id: 'demo-4', ingredient_name: 'クレープ生地', unit: '枚', current_stock: 52, note: '常に20枚以上キープ', created_at: now, updated_at: now },
     { id: 'prep-4-2', branch_id: 'demo-4', ingredient_name: '生クリーム', unit: '本', current_stock: 7, note: '冷蔵庫右側', created_at: now, updated_at: now },
     { id: 'prep-4-3', branch_id: 'demo-4', ingredient_name: 'いちご', unit: 'パック', current_stock: 4, note: '傷みやすいので先出し', created_at: now, updated_at: now },
-  ],
-};
-
-// ============================================================
-// デモ用 仕事チェックリスト
-// ============================================================
-export const DEMO_TASK_CHECKLISTS: Record<string, DemoTaskChecklistItem[]> = {
-  'demo-1': [
-    { id: 'demo-task-1-1', branch_id: 'demo-1', title: '開店前に鉄板の温度確認', is_done: true, done_by: '加藤', note: '中火で安定', category: '準備', sort_order: 1, created_at: now, updated_at: now },
-    { id: 'demo-task-1-2', branch_id: 'demo-1', title: 'ソース・青のり補充', is_done: false, done_by: null, note: '12:30までに', category: '調理', sort_order: 2, created_at: now, updated_at: now },
-    { id: 'demo-task-1-3', branch_id: 'demo-1', title: '券売列の整列案内', is_done: false, done_by: null, note: '混雑時のみ', category: '接客', sort_order: 3, created_at: now, updated_at: now },
-    { id: 'demo-task-1-4', branch_id: 'demo-1', title: '閉店後の売上回収確認', is_done: false, done_by: null, note: '本部提出前にダブルチェック', category: '片付け', sort_order: 4, created_at: now, updated_at: now },
-  ],
-  'demo-2': [
-    { id: 'demo-task-2-1', branch_id: 'demo-2', title: 'たこ焼き器の通電確認', is_done: true, done_by: '田中', note: '', category: '準備', sort_order: 1, created_at: now, updated_at: now },
-    { id: 'demo-task-2-2', branch_id: 'demo-2', title: 'ねぎマヨ容器の補充', is_done: false, done_by: null, note: '残り2本で追加', category: '調理', sort_order: 2, created_at: now, updated_at: now },
-    { id: 'demo-task-2-3', branch_id: 'demo-2', title: '声かけ当番の交代', is_done: false, done_by: null, note: '30分ごと', category: '接客', sort_order: 3, created_at: now, updated_at: now },
-  ],
-  'demo-3': [
-    { id: 'demo-task-3-1', branch_id: 'demo-3', title: '串の本数チェック', is_done: true, done_by: '山田', note: 'もも串残り70本', category: '準備', sort_order: 1, created_at: now, updated_at: now },
-    { id: 'demo-task-3-2', branch_id: 'demo-3', title: '焼き台まわりの清掃', is_done: false, done_by: null, note: '油はね注意', category: '片付け', sort_order: 2, created_at: now, updated_at: now },
-  ],
-  'demo-4': [
-    { id: 'demo-task-4-1', branch_id: 'demo-4', title: '生クリーム残量確認', is_done: true, done_by: '飯森', note: 'あと7本', category: '準備', sort_order: 1, created_at: now, updated_at: now },
-    { id: 'demo-task-4-2', branch_id: 'demo-4', title: 'いちごの先出し', is_done: false, done_by: null, note: '傷みやすいものから', category: '調理', sort_order: 2, created_at: now, updated_at: now },
-    { id: 'demo-task-4-3', branch_id: 'demo-4', title: '呼び出し番号案内の声量確認', is_done: false, done_by: null, note: '', category: '接客', sort_order: 3, created_at: now, updated_at: now },
   ],
 };
 

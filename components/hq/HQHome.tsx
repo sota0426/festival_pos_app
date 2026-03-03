@@ -5,15 +5,12 @@ import { Card, Header, Button } from '../common';
 interface HQHomeProps {
   onNavigateSales: () => void;
   onNavigateBranchInfo: () => void;
-  onNavigateMyStores: () => void;
-  onNavigatePresentation: () => void;
   onLogout: () => void;
 }
 
 export const HQHome = ({
   onNavigateSales,
   onNavigateBranchInfo,
-  onNavigatePresentation,
   onLogout,
 }: HQHomeProps) => {
   return (
@@ -40,15 +37,6 @@ export const HQHome = ({
             <Text className="text-white text-xl font-bold text-center">各店舗情報</Text>
             <Text className="text-cyan-100 text-center mt-1 text-sm">
               各店舗の報告書を一覧表示
-            </Text>
-          </Card>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={onNavigatePresentation}>
-          <Card className="bg-rose-500 p-6">
-            <Text className="text-white text-xl font-bold text-center">プレゼンテーション</Text>
-            <Text className="text-rose-100 text-center mt-1 text-sm">
-              総合結果を発表モードで表示
             </Text>
           </Card>
         </TouchableOpacity>

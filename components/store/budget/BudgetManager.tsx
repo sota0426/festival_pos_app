@@ -1500,34 +1500,6 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
             </View>
           </Card>
 
-          <Card>
-            <Text className="text-gray-900 text-lg font-bold mb-3">売上状況</Text>
-            <View className="flex-row items-center justify-between">
-              <View>
-                <Text className="text-gray-500 text-sm">売上目標</Text>
-                <Text className="text-lg font-bold text-gray-900">
-                  {branch.sales_target > 0 ? `${branch.sales_target.toLocaleString()}円` : '未設定'}
-                </Text>
-                <Text className="text-sm text-gray-600 mt-1">現在売上：{totalSales.toLocaleString()}円</Text>
-                {branch.sales_target > 0 && (
-                  <Text className="text-sm text-blue-600 font-medium">達成率：{salesAchievementRate}%</Text>
-                )}
-              </View>
-              <View
-                className={`px-3 py-1 rounded-full ${
-                  branch.status === 'active' ? 'bg-green-100' : 'bg-gray-100'
-                }`}
-              >
-                <Text
-                  className={`font-medium ${
-                    branch.status === 'active' ? 'text-green-600' : 'text-gray-500'
-                  }`}
-                >
-                  {branch.status === 'active' ? '稼働中' : '停止中'}
-                </Text>
-              </View>
-            </View>
-          </Card>
 
         </ScrollView>
       )}

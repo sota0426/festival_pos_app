@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppState, Platform, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getPendingTransactions, getPendingVisitorCounts } from '../../lib/storage';
+import { getPendingTransactions } from '../../lib/storage';
 import { getSyncEnabled } from '../../lib/syncMode';
 import { hasSupabaseEnvConfigured } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -17,7 +17,6 @@ export const SyncStatusBanner = ({ branchId, onSyncNow }: SyncStatusBannerProps)
   const { isFreePlan } = useSubscription();
   const insets = useSafeAreaInsets();
   const [pendingTx, setPendingTx] = useState(0);
-  const [pendingVisitors, setPendingVisitors] = useState(0);
   const [online, setOnline] = useState(true);
   const [syncingNow, setSyncingNow] = useState(false);
 
@@ -25,16 +24,12 @@ export const SyncStatusBanner = ({ branchId, onSyncNow }: SyncStatusBannerProps)
   const hasSupabase = hasSupabaseEnvConfigured();
   const isLocalMode = !syncEnabled || !hasSupabase;
 
-  const pendingTotal = pendingTx + pendingVisitors;
+  const pendingTotal = pendingTx;
 
   const refreshPending = useCallback(async () => {
     if (!branchId) return;
-    const [transactions, visitors] = await Promise.all([
-      getPendingTransactions(),
-      getPendingVisitorCounts(),
-    ]);
+    const transactions = await getPendingTransactions();
     setPendingTx(transactions.filter((t) => t.branch_id === branchId && !t.synced).length);
-    setPendingVisitors(visitors.filter((v) => v.branch_id === branchId && !v.synced).length);
   }, [branchId]);
 
   const probeNetwork = useCallback(async () => {
@@ -139,9 +134,6 @@ export const SyncStatusBanner = ({ branchId, onSyncNow }: SyncStatusBannerProps)
           {pendingTotal > 0 && (
             <Text className={`${style.text} text-xs`}>
               未同期 {pendingTotal}件
-              { pendingVisitors > 0  && (
-              <Text>（売上{pendingTx} 件/ 来客{pendingVisitors}人）</Text>
-              )}
             </Text>
           )}
           {!!onSyncNow && pendingTotal > 0 && online && !isLocalMode && (

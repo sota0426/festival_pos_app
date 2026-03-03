@@ -48,7 +48,6 @@ const plans: {
       'ローカル保存（端末内のみ）',
       'レジ操作・メニュー管理',
       '売上履歴・CSV出力',
-      '来客カウンター',
       '会計管理',
     ],
     useCases: [
@@ -85,7 +84,6 @@ const plans: {
     useCases: [
       'レジ担当と受け渡し担当で端末を分けたい時',
       '端末故障時にデータを守りたい時',
-      '来客数を計りたい時',
       'PC上で操作したい時'
     ],
     limitations: [
@@ -112,7 +110,6 @@ const plans: {
       '全POS機能',
       '本部ダッシュボード',
       '全店舗の売上集計・CSV一括出力',
-      'プレゼンテーションモード',
     ],
     useCases: [
       '模擬店を2〜3店舗まとめて管理したい時',
@@ -140,7 +137,6 @@ const plans: {
       '全POS機能',
       '本部ダッシュボード',
       '全店舗の売上集計・CSV一括出力',
-      'プレゼンテーションモード',
     ],
     useCases: [
       '複数クラス・部活の模擬店をまとめて管理したい時',
@@ -168,7 +164,6 @@ const plans: {
       '全POS機能',
       '本部ダッシュボード',
       '全店舗の売上集計・CSV一括出力',
-      'プレゼンテーションモード',
     ],
     useCases: [
       '大規模学園祭で多数店舗を横断管理したい時',
@@ -342,11 +337,8 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
 
         <Card className="bg-sky-50 border border-sky-200 p-4">
           <Text className="text-sky-900 font-bold mb-1">DB連携の有料プランで使える機能（店舗/団体共通）</Text>
-          <Text className="text-sky-800 text-xs leading-5">・モバイルオーダー機能</Text>
-          <Text className="text-sky-800 text-xs leading-5">・来客カウンター機能</Text>
           <Text className="text-sky-800 text-xs leading-5">・オーダーボード（提供ステータス管理）</Text>
           <Text className="text-sky-800 text-xs leading-5">・在庫確認（仕込み在庫）</Text>
-          <Text className="text-sky-800 text-xs leading-5">・仕事チェックリスト</Text>
         </Card>
 
         {basePlans.map((p) => renderPlanCard(p))}

@@ -9,15 +9,13 @@ import { Card, Header, Button, Input, Modal } from '../common';
 import {
   getStoreSettings, saveStoreSettings, saveAdminPassword, verifyAdminPassword,
   clearAllPendingTransactions, saveBranch, getRestrictions, saveRestrictions,
-  saveMenus, saveMenuCategories, clearPendingVisitorCountsByBranch,
+  saveMenus, saveMenuCategories,
   saveBudgetSettings, saveBudgetExpenses, savePrepIngredients,
   getMenus, getMenuCategories, getPendingTransactions, savePendingTransaction,
-  getPendingVisitorCounts, savePendingVisitorCount, getVisitorGroups, saveVisitorGroups, getOrCreateDeviceId,
-  getBudgetSettings, getBudgetExpenses, getPrepIngredients, saveDefaultExpenseRecorder,
-  getDefaultExpenseRecorder,
-  getBranchRecorders, getRecorderAccessLogs, getBranchRecorderConfig,
+  getOrCreateDeviceId,
+  getBudgetSettings, getBudgetExpenses, saveDefaultExpenseRecorder,
+  getRecorderAccessLogs,
   saveBranchRecorders, saveRecorderAccessLogs, saveBranchRecorderConfig,
-  getBranchKioskExitPin, saveBranchKioskExitPin,
 } from '../../lib/storage';
 import {
   createBranchRecorder,
@@ -40,14 +38,10 @@ import type {
   MenuCategory,
   PaymentMethodSettings,
   PendingTransaction,
-  PendingVisitorCount,
-  PrepIngredient,
   RestrictionSettings,
   RecorderAccessLog,
-  BranchRecorderConfig,
   Transaction,
   TransactionItem,
-  VisitorCounterGroup,
 } from '../../types/database';
 import { isSupabaseConfigured, supabase } from 'lib/supabase';
 import { base64ToBytes, bytesToBase64, bytesToText, createZip, extractStoredZipEntries, textToBytes } from '../../lib/zipUtils';
@@ -55,9 +49,9 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useSubscription } from '../../contexts/SubscriptionContext';
 
 /** 削除カテゴリのキー */
-type DeleteCategory = 'sales' | 'menu' | 'visitor' | 'budget' | 'prep' | 'recorder';
+type DeleteCategory = 'sales' | 'menu' | 'budget' | 'prep' | 'recorder';
 
-type ExportableCategory = DeleteCategory;
+type ExportableCategory = 'sales' | 'menu' | 'budget';
 
 type StoreBackupPayload = {
   version: 1;
@@ -66,35 +60,27 @@ type StoreBackupPayload = {
   data: Partial<Record<ExportableCategory, unknown>>;
 };
 
-type TabKey = 'main' | 'sub' | 'share' | 'budget' | 'settings';
-type SettingsView = 'top' | 'payment' | 'admin' | 'recorder';
+type TabKey = 'main' | 'share' | 'budget' | 'settings';
+type SettingsView = 'admin' | 'recorder';
 
 interface StoreHomeProps {
   branch: Branch;
   onNavigateToRegister: () => void;
   onNavigateToMenus: () => void;
   onNavigateToHistory: () => void;
-  onNavigateToCounter: () => void;
   onNavigateToOrderBoard: () => void;
   onNavigateToPrep: () => void;
-  onNavigateToChecklist: () => void;
   onNavigateToCookingManual: () => void;
   onNavigateToBudget: () => void;
   onNavigateToBudgetExpense: () => void;
-  onNavigateToBudgetBreakeven: () => void;
-  /** タブレットモードで客向けオーダー画面を開く */
-  onNavigateToCustomerOrder: () => void;
   onNavigateToPricing?: () => void;
   onNavigateToDemoHome?: () => void;
-  autoOpenKioskPinSettings?: boolean;
-  onHandledAutoOpenKioskPinSettings?: () => void;
   onBranchUpdated?: (branch: Branch) => void;
   onLogout: () => void;
 }
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'main', label: 'メイン' },
-  { key: 'sub', label: 'サブ' },
   { key: 'share', label: '共有' },
   { key: 'budget', label: '会計' },
   { key: 'settings', label: '設定' },
@@ -113,11 +99,6 @@ const TAB_COLOR_STYLES: Record<
     activeText: 'text-sky-600',
     activeBg: 'bg-sky-50',
   },
-  sub: {
-    activeBorder: 'border-orange-400',
-    activeText: 'text-orange-500',
-    activeBg: 'bg-orange-50',
-  },
   share: {
     activeBorder: 'border-indigo-500',
     activeText: 'text-indigo-600',
@@ -135,20 +116,22 @@ const TAB_COLOR_STYLES: Record<
   },
 };
 
-const DATA_CATEGORY_DEFS: { key: ExportableCategory; label: string; desc: string }[] = [
+const EXPORT_DATA_CATEGORY_DEFS: { key: ExportableCategory; label: string; desc: string }[] = [
   { key: 'sales', label: '売上データ', desc: '取引履歴・会計データ' },
   { key: 'menu', label: 'メニューデータ', desc: 'メニュー・カテゴリ一覧' },
-  { key: 'visitor', label: '来客データ', desc: '来客カウンター記録' },
+  { key: 'budget', label: '会計データ', desc: '予算設定・支出記録' },
+];
+const DELETE_DATA_CATEGORY_DEFS: { key: DeleteCategory; label: string; desc: string }[] = [
+  { key: 'sales', label: '売上データ', desc: '取引履歴・会計データ' },
+  { key: 'menu', label: 'メニューデータ', desc: 'メニュー・カテゴリ一覧' },
   { key: 'budget', label: '会計データ', desc: '予算設定・支出記録' },
   { key: 'prep', label: '下準備データ', desc: '材料・在庫管理記録' },
   { key: 'recorder', label: '登録者データ', desc: '登録者一覧・端末アクセス履歴・登録設定' },
 ];
-const DELETE_DATA_CATEGORY_DEFS: { key: DeleteCategory; label: string; desc: string }[] = DATA_CATEGORY_DEFS;
 
 const DATA_CATEGORY_LABELS: Record<DeleteCategory, string> = {
   sales: '売上データ',
   menu: 'メニューデータ',
-  visitor: '来客データ',
   budget: '会計データ',
   prep: '下準備データ',
   recorder: '登録者データ',
@@ -276,26 +259,21 @@ export const StoreHome = ({
   onNavigateToRegister,
   onNavigateToMenus,
   onNavigateToHistory,
-  onNavigateToCounter,
   onNavigateToOrderBoard,
   onNavigateToPrep,
-  onNavigateToChecklist,
   onNavigateToCookingManual,
   onNavigateToBudget,
   onNavigateToBudgetExpense,
-  onNavigateToBudgetBreakeven,
-  onNavigateToCustomerOrder,
   onNavigateToPricing,
   onNavigateToDemoHome,
-  autoOpenKioskPinSettings = false,
-  onHandledAutoOpenKioskPinSettings,
   onBranchUpdated,
   onLogout,
 }: StoreHomeProps) => {
+  const recorderFeatureEnabled = false;
   const { authState, exitLoginCode, hasDemoReturnTarget } = useAuth();
   const { isOrgPlan, isFreePlan } = useSubscription();
   const [activeTab, setActiveTab] = useState<TabKey>('main');
-  const [settingsView, setSettingsView] = useState<SettingsView>('top');
+  const [settingsView, setSettingsView] = useState<SettingsView>('admin');
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodSettings>({
     cash: false,
     cashless: true,
@@ -304,17 +282,13 @@ export const StoreHome = ({
   const [cashlessLabel, setCashlessLabel] = useState('PayPay');
   const [showCashlessLabelEditor, setShowCashlessLabelEditor] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [showKioskPinModal, setShowKioskPinModal] = useState(false);
   const [showBranchNameModal, setShowBranchNameModal] = useState(false);
+  const [showPaymentSettingsModal, setShowPaymentSettingsModal] = useState(false);
   const [branchNameInput, setBranchNameInput] = useState(branch.branch_name);
   const [branchNameError, setBranchNameError] = useState('');
   const [savingBranchName, setSavingBranchName] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [kioskExitPin, setKioskExitPin] = useState('');
-  const [kioskExitPinConfirm, setKioskExitPinConfirm] = useState('');
-  const [kioskExitPinError, setKioskExitPinError] = useState('');
-  const [savingKioskExitPin, setSavingKioskExitPin] = useState(false);
   const [passwordError, setPasswordError] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
   const [showDataDeleteModal, setShowDataDeleteModal] = useState(false);
@@ -373,7 +347,7 @@ export const StoreHome = ({
     if (isFreeAuthenticatedPlan) {
       alertNotify(
         '無料プランではサブ画面は利用できません',
-        '注文受付・来客カウンター・モバイルオーダーは有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
+        '注文受付は有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
       );
       return;
     }
@@ -421,48 +395,25 @@ export const StoreHome = ({
           setPaymentMethods(settings.payment_methods);
         }
         setCashlessLabel(settings.cashless_label || 'PayPay');
-        const branchKioskPin = String(branch.kiosk_exit_pin ?? '').trim();
-        const localKioskPin = await getBranchKioskExitPin(branch.id);
-        const resolvedKioskPin = canSyncToSupabase ? (branchKioskPin || localKioskPin) : localKioskPin;
-        setKioskExitPin(resolvedKioskPin);
-        if (resolvedKioskPin !== localKioskPin) {
-          await saveBranchKioskExitPin(branch.id, resolvedKioskPin);
-        }
-        // 互換: 旧グローバルkiosk_exit_pinは使わないので空に戻す
-        if (String(settings.kiosk_exit_pin ?? '').trim()) {
-          await saveStoreSettings({ ...settings, kiosk_exit_pin: '' });
-        }
       }
       const r = await getRestrictions();
       setRestrictions(r);
     };
     loadSettings();
-  }, [authState.status, branch.id, branch.kiosk_exit_pin, canSyncToSupabase]);
+  }, [authState.status, canSyncToSupabase]);
 
   useEffect(() => {
     if (authState.status === 'login_code') {
       setActiveTab('main');
-      setSettingsView('top');
+      setSettingsView('admin');
     }
   }, [authState.status]);
 
   useEffect(() => {
     if (isFreeAuthenticatedPlan && settingsView === 'recorder') {
-      setSettingsView('top');
+      setSettingsView('admin');
     }
   }, [isFreeAuthenticatedPlan, settingsView]);
-
-  useEffect(() => {
-    if (!autoOpenKioskPinSettings) return;
-    setActiveTab('settings');
-    setSettingsView('admin');
-    const currentPin = String(kioskExitPin ?? '').trim();
-    setKioskExitPin(currentPin);
-    setKioskExitPinConfirm(currentPin);
-    setKioskExitPinError('');
-    setShowKioskPinModal(true);
-    onHandledAutoOpenKioskPinSettings?.();
-  }, [autoOpenKioskPinSettings, kioskExitPin, onHandledAutoOpenKioskPinSettings]);
 
   useEffect(() => {
     const refreshBranchName = async () => {
@@ -476,15 +427,14 @@ export const StoreHome = ({
       if (
         data.branch_name !== branch.branch_name ||
         data.password !== branch.password ||
-        data.status !== branch.status ||
-        (data.kiosk_exit_pin ?? '') !== (branch.kiosk_exit_pin ?? '')
+        data.status !== branch.status
       ) {
         await saveBranch(data);
         onBranchUpdated?.(data);
       }
     };
     refreshBranchName();
-  }, [branch.id, branch.branch_name, branch.password, branch.status, branch.kiosk_exit_pin, canSyncToSupabase, onBranchUpdated]);
+  }, [branch.id, branch.branch_name, branch.password, branch.status, canSyncToSupabase, onBranchUpdated]);
 
   useEffect(() => {
     setBranchNameInput(branch.branch_name);
@@ -548,6 +498,10 @@ export const StoreHome = ({
   }, [authState, branch.id, canSyncToSupabase]);
 
   useEffect(() => {
+    if (!recorderFeatureEnabled) {
+      setRecorders([]);
+      return;
+    }
     let cancelled = false;
 
     const loadRecorders = async () => {
@@ -591,15 +545,19 @@ export const StoreHome = ({
     return () => {
       cancelled = true;
     };
-  }, [authState.status, branch.id, canSyncToSupabase, managerRecorderDefaultName]);
+  }, [authState.status, branch.id, canSyncToSupabase, managerRecorderDefaultName, recorderFeatureEnabled]);
 
   useEffect(() => {
+    if (!recorderFeatureEnabled) {
+      setRecorderRegistrationMode('restricted');
+      return;
+    }
     const loadRecorderConfig = async () => {
       const config = await fetchBranchRecorderConfig(branch.id, canSyncToSupabase);
       setRecorderRegistrationMode(config.registration_mode);
     };
     loadRecorderConfig();
-  }, [branch.id, canSyncToSupabase]);
+  }, [branch.id, canSyncToSupabase, recorderFeatureEnabled]);
 
   useEffect(() => {
     if (!sessionRecorderId) return;
@@ -615,22 +573,32 @@ export const StoreHome = ({
   }, [isAuthenticatedManager, managerRecorder, sessionRecorderId]);
 
   useEffect(() => {
+    if (!recorderFeatureEnabled) return;
     const loadDeviceId = async () => {
       const id = await getOrCreateDeviceId();
       setCurrentDeviceId(id);
     };
     loadDeviceId();
-  }, []);
+  }, [recorderFeatureEnabled]);
 
   useEffect(() => {
+    if (!recorderFeatureEnabled) {
+      setAllRecorderLogs([]);
+      return;
+    }
     const loadRecorderLogs = async () => {
       const logs = await fetchRecorderAccessLogs(branch.id, canSyncToSupabase);
       setAllRecorderLogs(logs);
     };
     loadRecorderLogs();
-  }, [branch.id, canSyncToSupabase]);
+  }, [branch.id, canSyncToSupabase, recorderFeatureEnabled]);
 
   useEffect(() => {
+    if (!recorderFeatureEnabled) {
+      setRecorderSessionRegistered(false);
+      setRecorderSessionChecked(true);
+      return;
+    }
     let cancelled = false;
 
     const checkRecorderSessionFromLocal = async () => {
@@ -662,9 +630,10 @@ export const StoreHome = ({
     return () => {
       cancelled = true;
     };
-  }, [branch.id, currentDeviceId, recorders, sessionDeviceName]);
+  }, [branch.id, currentDeviceId, recorders, sessionDeviceName, recorderFeatureEnabled]);
 
   useEffect(() => {
+    if (!recorderFeatureEnabled) return;
     if (!currentDeviceId) return;
 
     const existing = allRecorderLogs.find((log) => log.device_id === currentDeviceId);
@@ -683,22 +652,29 @@ export const StoreHome = ({
     } else {
       setRecorderSessionRegistered(false);
     }
-  }, [allRecorderLogs, currentDeviceId, recorders, sessionDeviceName]);
+  }, [allRecorderLogs, currentDeviceId, recorders, sessionDeviceName, recorderFeatureEnabled]);
 
   useEffect(() => {
+    if (!recorderFeatureEnabled) {
+      setShowRecorderSessionModal(false);
+      return;
+    }
     if (!recorderSessionRegistered) return;
     if (!showRecorderSessionModal) return;
     setShowRecorderSessionModal(false);
-  }, [recorderSessionRegistered, showRecorderSessionModal]);
+  }, [recorderSessionRegistered, showRecorderSessionModal, recorderFeatureEnabled]);
 
   useEffect(() => {
+    if (!recorderFeatureEnabled) {
+      setShowRecorderSessionModal(false);
+      return;
+    }
     if (authState.status !== 'authenticated') return;
     if (activeTab !== 'main') return;
     if (!recorderSessionChecked) return;
     if (recorderSessionRegistered) return;
-    if (recorders.length === 0) return;
-    setShowRecorderSessionModal(true);
-  }, [authState.status, activeTab, branch.id, recorderSessionRegistered, recorders.length, recorderSessionChecked]);
+    setShowRecorderSessionModal(false);
+  }, [authState.status, activeTab, branch.id, recorderSessionRegistered, recorders.length, recorderSessionChecked, recorderFeatureEnabled]);
 
   useEffect(() => {
     setRecorderSessionRegistered(false);
@@ -954,16 +930,6 @@ export const StoreHome = ({
     return latestByDevice?.recorder_name ?? null;
   }, [allRecorderLogs, currentDeviceId, recorders, sessionRecorderId]);
 
-  const currentSessionRecorder = useMemo(() => {
-    if (isAuthenticatedManager) return managerRecorder;
-    return recorders.find((item) => item.id === sessionRecorderId) ?? null;
-  }, [isAuthenticatedManager, managerRecorder, recorders, sessionRecorderId]);
-
-  const canOpenAdminSettings = useMemo(() => {
-    if (!currentSessionRecorder) return false;
-    return isAdminGroupRecorder(currentSessionRecorder);
-  }, [currentSessionRecorder]);
-
   const selectedRecorderDevices = useMemo(() => {
     const latestByDevice = new Map<string, RecorderAccessLog>();
     selectedRecorderLogs.forEach((log) => {
@@ -1033,14 +999,14 @@ export const StoreHome = ({
     if (tab === 'settings' && restrictions.settings_access && activeTab !== 'settings') {
       openAdminGuard(async () => {
         setActiveTab('settings');
-        setSettingsView('top');
+        setSettingsView('admin');
         const currentSettings = await getStoreSettings();
         await saveStoreSettings({ ...currentSettings, sub_screen_mode: false });
       });
       return;
     }
     setActiveTab(tab);
-    if (tab === 'settings') setSettingsView('top');
+    if (tab === 'settings') setSettingsView('admin');
     const currentSettings = await getStoreSettings();
     await saveStoreSettings({ ...currentSettings, sub_screen_mode: tab === 'share' });
   };
@@ -1079,13 +1045,6 @@ export const StoreHome = ({
     setNewPassword('');
     setConfirmPassword('');
     setPasswordError('');
-  };
-
-  const resetKioskPinForm = () => {
-    const currentPin = String(kioskExitPin ?? '').trim();
-    setKioskExitPin(currentPin);
-    setKioskExitPinConfirm(currentPin);
-    setKioskExitPinError('');
   };
 
   const resetBranchNameForm = () => {
@@ -1163,54 +1122,6 @@ export const StoreHome = ({
     }
   };
 
-  const handleSaveKioskExitPin = async () => {
-    const nextPin = kioskExitPin.trim();
-    if (!nextPin) {
-      setKioskExitPinError('解除PINを入力してください');
-      return;
-    }
-    if (!/^\d{4,6}$/.test(nextPin)) {
-      setKioskExitPinError('解除PINは4〜6桁の数字で入力してください');
-      return;
-    }
-    if (nextPin !== kioskExitPinConfirm.trim()) {
-      setKioskExitPinError('解除PIN（確認）が一致しません');
-      return;
-    }
-    setSavingKioskExitPin(true);
-    setKioskExitPinError('');
-    try {
-      await saveBranchKioskExitPin(branch.id, nextPin);
-
-      if (canSyncToSupabase) {
-        const { data, error } = await supabase
-          .from('branches')
-          .update({ kiosk_exit_pin: nextPin })
-          .eq('id', branch.id)
-          .select('*')
-          .single();
-        if (error) throw error;
-        if (data) {
-          await saveBranch(data);
-          onBranchUpdated?.(data);
-        }
-      } else {
-        const updatedBranch: Branch = { ...branch, kiosk_exit_pin: nextPin };
-        await saveBranch(updatedBranch);
-        onBranchUpdated?.(updatedBranch);
-      }
-
-      setShowKioskPinModal(false);
-      setKioskExitPinConfirm(nextPin);
-      alertNotify('完了', 'キオスク解除PINを保存しました');
-    } catch (error) {
-      console.error('Error saving kiosk exit pin:', error);
-      setKioskExitPinError('キオスク解除PINの保存に失敗しました');
-    } finally {
-      setSavingKioskExitPin(false);
-    }
-  };
-
   const executeDataDeletion = async (categories: Set<DeleteCategory>) => {
     setResetting(true);
     const errors: string[] = [];
@@ -1264,23 +1175,6 @@ export const StoreHome = ({
         } catch (e) {
           console.error('menu delete error:', e);
           errors.push('メニューデータ');
-        }
-      }
-
-      // ── 来客データ ────────────────────────────────────────────────
-      if (categories.has('visitor')) {
-        try {
-          if (canSyncToSupabase) {
-            const { error: visitorErr } = await supabase
-              .from('visitor_counts')
-              .delete()
-              .eq('branch_id', branch.id);
-            if (visitorErr) console.error('Error deleting visitor_counts:', visitorErr);
-          }
-          await clearPendingVisitorCountsByBranch(branch.id);
-        } catch (e) {
-          console.error('visitor delete error:', e);
-          errors.push('来客データ');
         }
       }
 
@@ -1488,28 +1382,6 @@ export const StoreHome = ({
       };
     }
 
-    if (categories.has('visitor')) {
-      const pendingVisitorCounts = (await getPendingVisitorCounts()).filter((row) => row.branch_id === branch.id);
-      const visitorGroups = await getVisitorGroups(branch.id);
-      let visitorCounts: PendingVisitorCount[] = [];
-      if (canSyncToSupabase) {
-        try {
-          const { data: remoteVisitor } = await supabase
-            .from('visitor_counts')
-            .select('*')
-            .eq('branch_id', branch.id);
-          visitorCounts = (remoteVisitor ?? []) as PendingVisitorCount[];
-        } catch (error) {
-          console.error('visitor export fetch error:', error);
-        }
-      }
-      data.visitor = {
-        visitor_counts: visitorCounts,
-        pending_visitor_counts: pendingVisitorCounts,
-        visitor_groups: visitorGroups,
-      };
-    }
-
     if (categories.has('budget')) {
       const budgetSettings = await getBudgetSettings(branch.id);
       const budgetExpenses = (await getBudgetExpenses()).filter((expense) => expense.branch_id === branch.id);
@@ -1530,67 +1402,6 @@ export const StoreHome = ({
       data.budget = {
         budget_settings: remoteSettings ?? budgetSettings,
         budget_expenses: remoteExpenses.length > 0 ? remoteExpenses : budgetExpenses,
-      };
-    }
-
-    if (categories.has('prep')) {
-      const localPrepIngredients = await getPrepIngredients(branch.id);
-      let prepIngredients = localPrepIngredients;
-      if (canSyncToSupabase) {
-        try {
-          const { data: prepData } = await supabase
-            .from('prep_ingredients')
-            .select('*')
-            .eq('branch_id', branch.id);
-          prepIngredients = (prepData ?? []) as PrepIngredient[];
-        } catch (error) {
-          console.error('prep export fetch error:', error);
-        }
-      }
-      data.prep = {
-        prep_ingredients: prepIngredients,
-      };
-    }
-
-    if (categories.has('recorder')) {
-      const localRecorders = await getBranchRecorders(branch.id);
-      const localAccessLogs = await getRecorderAccessLogs(branch.id);
-      const localConfig = await getBranchRecorderConfig(branch.id);
-      const defaultExpenseRecorder = await getDefaultExpenseRecorder(branch.id);
-      let branchRecorders = localRecorders;
-      let recorderAccessLogs = localAccessLogs;
-      let recorderConfig = localConfig;
-
-      if (canSyncToSupabase) {
-        try {
-          const [{ data: recordersData }, { data: logsData }, { data: configData }] = await Promise.all([
-            supabase
-              .from('branch_recorders')
-              .select('*')
-              .eq('branch_id', branch.id),
-            supabase
-              .from('branch_recorder_access_logs')
-              .select('*')
-              .eq('branch_id', branch.id),
-            supabase
-              .from('branch_recorder_configs')
-              .select('*')
-              .eq('branch_id', branch.id)
-              .maybeSingle(),
-          ]);
-          branchRecorders = (recordersData ?? []) as BranchRecorder[];
-          recorderAccessLogs = (logsData ?? []) as RecorderAccessLog[];
-          recorderConfig = (configData ?? localConfig) as BranchRecorderConfig;
-        } catch (error) {
-          console.error('recorder export fetch error:', error);
-        }
-      }
-
-      data.recorder = {
-        branch_recorders: branchRecorders,
-        branch_recorder_access_logs: recorderAccessLogs,
-        branch_recorder_configs: recorderConfig,
-        default_expense_recorder: defaultExpenseRecorder,
       };
     }
 
@@ -1698,15 +1509,6 @@ export const StoreHome = ({
           csvFiles.push({ name: 'menu_categories.csv', content: csvFromObjects(categoriesData) });
         }
 
-        if (key === 'visitor') {
-          const counts = (data.visitor_counts as Record<string, unknown>[] | undefined) ?? [];
-          const pending = (data.pending_visitor_counts as Record<string, unknown>[] | undefined) ?? [];
-          const groups = (data.visitor_groups as Record<string, unknown>[] | undefined) ?? [];
-          csvFiles.push({ name: 'visitor_counts.csv', content: csvFromObjects(counts) });
-          csvFiles.push({ name: 'visitor_pending_counts.csv', content: csvFromObjects(pending) });
-          csvFiles.push({ name: 'visitor_groups.csv', content: csvFromObjects(groups) });
-        }
-
         if (key === 'budget') {
           const settings = (data.budget_settings as Record<string, unknown> | undefined) ?? {};
           const expenses = (data.budget_expenses as Record<string, unknown>[] | undefined) ?? [];
@@ -1714,24 +1516,6 @@ export const StoreHome = ({
           csvFiles.push({ name: 'budget_expenses.csv', content: csvFromObjects(expenses) });
         }
 
-        if (key === 'prep') {
-          const prep = (data.prep_ingredients as Record<string, unknown>[] | undefined) ?? [];
-          csvFiles.push({ name: 'prep_ingredients.csv', content: csvFromObjects(prep) });
-        }
-
-        if (key === 'recorder') {
-          const recorders = (data.branch_recorders as Record<string, unknown>[] | undefined) ?? [];
-          const logs = (data.branch_recorder_access_logs as Record<string, unknown>[] | undefined) ?? [];
-          const config = (data.branch_recorder_configs as Record<string, unknown> | undefined) ?? {};
-          const defaultRecorder = (data.default_expense_recorder as string | null | undefined) ?? '';
-          csvFiles.push({ name: 'recorder_branch_recorders.csv', content: csvFromObjects(recorders) });
-          csvFiles.push({ name: 'recorder_access_logs.csv', content: csvFromObjects(logs) });
-          csvFiles.push({ name: 'recorder_config.csv', content: csvFromObjects([config]) });
-          csvFiles.push({
-            name: 'recorder_default_expense_recorder.csv',
-            content: csvFromObjects([{ branch_id: branch.id, recorder_name: defaultRecorder }]),
-          });
-        }
       });
 
       const nonEmptyCsvFiles = csvFiles.filter((file) => file.content.trim().length > 0);
@@ -1833,32 +1617,6 @@ export const StoreHome = ({
         data.menu = menu;
       }
 
-      if (name.endsWith('visitor_counts.csv')) {
-        const visitor = (data.visitor as { visitor_counts?: PendingVisitorCount[]; pending_visitor_counts?: PendingVisitorCount[]; visitor_groups?: VisitorCounterGroup[] } | undefined) ?? {};
-        visitor.visitor_counts = rows.map((row) => ({
-          ...(row as unknown as PendingVisitorCount),
-          count: toNumberOr(row.count),
-          synced: row.synced === '' ? true : toBoolean(row.synced),
-        }));
-        data.visitor = visitor;
-      }
-
-      if (name.endsWith('visitor_pending_counts.csv')) {
-        const visitor = (data.visitor as { visitor_counts?: PendingVisitorCount[]; pending_visitor_counts?: PendingVisitorCount[]; visitor_groups?: VisitorCounterGroup[] } | undefined) ?? {};
-        visitor.pending_visitor_counts = rows.map((row) => ({
-          ...(row as unknown as PendingVisitorCount),
-          count: toNumberOr(row.count),
-          synced: toBoolean(row.synced),
-        }));
-        data.visitor = visitor;
-      }
-
-      if (name.endsWith('visitor_groups.csv')) {
-        const visitor = (data.visitor as { visitor_counts?: PendingVisitorCount[]; pending_visitor_counts?: PendingVisitorCount[]; visitor_groups?: VisitorCounterGroup[] } | undefined) ?? {};
-        visitor.visitor_groups = rows as unknown as VisitorCounterGroup[];
-        data.visitor = visitor;
-      }
-
       if (name.endsWith('budget_settings.csv')) {
         const budget = (data.budget as { budget_settings?: BudgetSettings; budget_expenses?: BudgetExpense[] } | undefined) ?? {};
         const row = rows[0] ?? {};
@@ -1882,71 +1640,6 @@ export const StoreHome = ({
         data.budget = budget;
       }
 
-      if (name.endsWith('prep_ingredients.csv')) {
-        const prep = (data.prep as { prep_ingredients?: PrepIngredient[] } | undefined) ?? {};
-        prep.prep_ingredients = rows.map((row) => ({
-          ...(row as unknown as PrepIngredient),
-          current_stock: toNumberOr(row.current_stock),
-          minimum_stock: row.minimum_stock === '' ? null : toNumberOr(row.minimum_stock),
-        }));
-        data.prep = prep;
-      }
-
-      if (name.endsWith('recorder_branch_recorders.csv')) {
-        const recorder = (data.recorder as {
-          branch_recorders?: BranchRecorder[];
-          branch_recorder_access_logs?: RecorderAccessLog[];
-          branch_recorder_configs?: BranchRecorderConfig;
-          default_expense_recorder?: string | null;
-        } | undefined) ?? {};
-        recorder.branch_recorders = rows.map((row) => ({
-          ...(row as unknown as BranchRecorder),
-          group_id: toNumberOr(row.group_id || '1'),
-          is_active: row.is_active === '' ? true : toBoolean(row.is_active),
-        }));
-        data.recorder = recorder;
-      }
-
-      if (name.endsWith('recorder_access_logs.csv')) {
-        const recorder = (data.recorder as {
-          branch_recorders?: BranchRecorder[];
-          branch_recorder_access_logs?: RecorderAccessLog[];
-          branch_recorder_configs?: BranchRecorderConfig;
-          default_expense_recorder?: string | null;
-        } | undefined) ?? {};
-        recorder.branch_recorder_access_logs = rows.map((row) => ({
-          ...(row as unknown as RecorderAccessLog),
-        }));
-        data.recorder = recorder;
-      }
-
-      if (name.endsWith('recorder_config.csv')) {
-        const recorder = (data.recorder as {
-          branch_recorders?: BranchRecorder[];
-          branch_recorder_access_logs?: RecorderAccessLog[];
-          branch_recorder_configs?: BranchRecorderConfig;
-          default_expense_recorder?: string | null;
-        } | undefined) ?? {};
-        const row = rows[0] ?? {};
-        recorder.branch_recorder_configs = {
-          branch_id: row.branch_id ?? branch.id,
-          registration_mode: row.registration_mode === 'open' ? 'open' : 'restricted',
-          updated_at: row.updated_at ?? new Date().toISOString(),
-        };
-        data.recorder = recorder;
-      }
-
-      if (name.endsWith('recorder_default_expense_recorder.csv')) {
-        const recorder = (data.recorder as {
-          branch_recorders?: BranchRecorder[];
-          branch_recorder_access_logs?: RecorderAccessLog[];
-          branch_recorder_configs?: BranchRecorderConfig;
-          default_expense_recorder?: string | null;
-        } | undefined) ?? {};
-        const row = rows[0] ?? {};
-        recorder.default_expense_recorder = row.recorder_name ?? '';
-        data.recorder = recorder;
-      }
     });
 
     if (Object.keys(data).length === 0) return null;
@@ -2101,30 +1794,6 @@ export const StoreHome = ({
         }
       }
 
-      if (selectedImportCategories.has('visitor')) {
-        const visitorData = (importPayload.data.visitor ?? {}) as {
-          visitor_counts?: PendingVisitorCount[];
-          pending_visitor_counts?: PendingVisitorCount[];
-          visitor_groups?: VisitorCounterGroup[];
-        };
-        const incomingVisitorCounts = (visitorData.visitor_counts ?? []).map((v) => ({ ...v, branch_id: branch.id }));
-        const incomingPending = (visitorData.pending_visitor_counts ?? []).map((v) => ({ ...v, branch_id: branch.id }));
-        const incomingGroups = visitorData.visitor_groups ?? [];
-
-        if (canSyncToSupabase) {
-          await supabase.from('visitor_counts').delete().eq('branch_id', branch.id);
-          if (incomingVisitorCounts.length > 0) {
-            await supabase.from('visitor_counts').insert(incomingVisitorCounts);
-          }
-        }
-
-        await clearPendingVisitorCountsByBranch(branch.id);
-        for (const row of incomingPending) {
-          await savePendingVisitorCount(row);
-        }
-        await saveVisitorGroups(branch.id, incomingGroups);
-      }
-
       if (selectedImportCategories.has('budget')) {
         const budgetData = (importPayload.data.budget ?? {}) as {
           budget_settings?: BudgetSettings;
@@ -2152,61 +1821,6 @@ export const StoreHome = ({
         await saveBudgetExpenses([...allExpenses.filter((expense) => expense.branch_id !== branch.id), ...incomingExpenses]);
       }
 
-      if (selectedImportCategories.has('prep')) {
-        const prepData = (importPayload.data.prep ?? {}) as { prep_ingredients?: PrepIngredient[] };
-        const incomingPrep = (prepData.prep_ingredients ?? []).map((ingredient) => ({
-          ...ingredient,
-          branch_id: branch.id,
-        }));
-
-        if (canSyncToSupabase) {
-          await supabase.from('prep_ingredients').delete().eq('branch_id', branch.id);
-          if (incomingPrep.length > 0) await supabase.from('prep_ingredients').insert(incomingPrep);
-        }
-        await savePrepIngredients(branch.id, incomingPrep);
-      }
-
-      if (selectedImportCategories.has('recorder')) {
-        const recorderData = (importPayload.data.recorder ?? {}) as {
-          branch_recorders?: BranchRecorder[];
-          branch_recorder_access_logs?: RecorderAccessLog[];
-          branch_recorder_configs?: BranchRecorderConfig;
-          default_expense_recorder?: string | null;
-        };
-        const incomingRecorders = (recorderData.branch_recorders ?? []).map((r) => ({
-          ...r,
-          branch_id: branch.id,
-        }));
-        const incomingAccessLogs = (recorderData.branch_recorder_access_logs ?? []).map((log) => ({
-          ...log,
-          branch_id: branch.id,
-        }));
-        const incomingConfig: BranchRecorderConfig = {
-          branch_id: branch.id,
-          registration_mode: recorderData.branch_recorder_configs?.registration_mode === 'open' ? 'open' : 'restricted',
-          updated_at: recorderData.branch_recorder_configs?.updated_at ?? new Date().toISOString(),
-        };
-        const incomingDefaultRecorder = (recorderData.default_expense_recorder ?? '').trim();
-
-        if (canSyncToSupabase) {
-          await supabase.from('branch_recorder_access_logs').delete().eq('branch_id', branch.id);
-          await supabase.from('branch_recorders').delete().eq('branch_id', branch.id);
-          await supabase.from('branch_recorder_configs').delete().eq('branch_id', branch.id);
-          if (incomingRecorders.length > 0) {
-            await supabase.from('branch_recorders').insert(incomingRecorders);
-          }
-          if (incomingAccessLogs.length > 0) {
-            await supabase.from('branch_recorder_access_logs').insert(incomingAccessLogs);
-          }
-          await supabase.from('branch_recorder_configs').insert(incomingConfig);
-        }
-
-        await saveBranchRecorders(branch.id, incomingRecorders);
-        await saveRecorderAccessLogs(branch.id, incomingAccessLogs);
-        await saveBranchRecorderConfig(branch.id, incomingConfig);
-        await saveDefaultExpenseRecorder(branch.id, incomingDefaultRecorder);
-      }
-
       alertNotify('完了', 'データのインポートが完了しました');
       setShowDataImportModal(false);
       setImportPayload(null);
@@ -2230,12 +1844,27 @@ export const StoreHome = ({
 
   const handlePreDeleteWithExport = async () => {
     const snapshot = new Set(pendingDeleteCategories);
-    const exported = await exportData(snapshot, { silentSuccess: true });
+    const exportSnapshot = new Set<ExportableCategory>();
+    if (snapshot.has('sales')) exportSnapshot.add('sales');
+    if (snapshot.has('menu')) exportSnapshot.add('menu');
+    if (snapshot.has('budget')) exportSnapshot.add('budget');
+    if (exportSnapshot.size === 0) {
+      setShowPreDeleteExportModal(false);
+      setPendingDeleteCategories(new Set());
+      await executeDataDeletion(snapshot);
+      return;
+    }
+    const exported = await exportData(exportSnapshot, { silentSuccess: true });
     if (!exported) return;
     setShowPreDeleteExportModal(false);
     setPendingDeleteCategories(new Set());
     await executeDataDeletion(snapshot);
   };
+
+  const backupEligibleDeleteCategories = useMemo(
+    () => Array.from(pendingDeleteCategories).filter((key): key is ExportableCategory => key === 'sales' || key === 'menu' || key === 'budget'),
+    [pendingDeleteCategories],
+  );
 
   const handleBackToTop = () => {
       onLogout();
@@ -2377,13 +2006,13 @@ export const StoreHome = ({
           </View>
         )}
 
-        {activeTab === 'sub' && (
+        {activeTab === 'share' && (
           <View className="flex-1 gap-4">
             {isFreeAuthenticatedPlan && (
               <Card className="bg-amber-50 border border-amber-200 p-4">
-                <Text className="text-amber-900 font-bold text-base text-center">無料プランではサブ画面は利用できません</Text>
+                <Text className="text-amber-900 font-bold text-base text-center">無料プランでは共有機能は利用できません</Text>
                 <Text className="text-amber-700 text-center mt-1 text-xs">
-                  注文受付・来客カウンター・モバイルオーダーは有料プランでご利用いただけます。
+                  注文受付・在庫共有・調理マニュアルは有料プランでご利用いただけます。
                 </Text>
                 {(onNavigateToPricing || onNavigateToDemoHome) && (
                   <View className="flex-row justify-center gap-2 mt-3">
@@ -2418,58 +2047,6 @@ export const StoreHome = ({
               </Card>
             </TouchableOpacity>
 
-            {/* 来客カウンター */}
-            <TouchableOpacity onPress={() => handleSubFeatureNavigation(onNavigateToCounter)} activeOpacity={0.8}>
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-amber-300 opacity-70' : 'bg-amber-500'} p-4`}>
-                <Text className="text-white text-2xl font-bold text-center">来客カウンター</Text>
-                <Text className="text-amber-100 text-center mt-2">ボタンをタップして来場者数を記録</Text>
-              </Card>
-            </TouchableOpacity>
-
-            {/* モバイルオーダー */}
-            <TouchableOpacity onPress={() => handleSubFeatureNavigation(onNavigateToCustomerOrder)} activeOpacity={0.8}>
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-rose-300 opacity-70' : 'bg-rose-500'} p-4`}>
-                <Text className="text-white text-2xl font-bold text-center">モバイルオーダー</Text>
-                <Text className="text-rose-100 text-center mt-2">この端末を客用注文画面として使用</Text>
-              </Card>
-            </TouchableOpacity>
-
-          </View>
-        )}
-
-        {activeTab === 'share' && (
-          <View className="flex-1 gap-4">
-            {isFreeAuthenticatedPlan && (
-              <Card className="bg-amber-50 border border-amber-200 p-4">
-                <Text className="text-amber-900 font-bold text-base text-center">無料プランでは共有機能は利用できません</Text>
-                <Text className="text-amber-700 text-center mt-1 text-xs">
-                  在庫共有・チェックリスト・調理マニュアルは有料プランでご利用いただけます。
-                </Text>
-                {(onNavigateToPricing || onNavigateToDemoHome) && (
-                  <View className="flex-row justify-center gap-2 mt-3">
-                    {onNavigateToPricing && (
-                      <TouchableOpacity
-                        onPress={onNavigateToPricing}
-                        activeOpacity={0.8}
-                        className="px-3 py-2 rounded-lg bg-white border border-amber-300"
-                      >
-                        <Text className="text-amber-800 text-xs font-semibold">有料プランを見る</Text>
-                      </TouchableOpacity>
-                    )}
-                    {onNavigateToDemoHome && (
-                      <TouchableOpacity
-                        onPress={onNavigateToDemoHome}
-                        activeOpacity={0.8}
-                        className="px-3 py-2 rounded-lg bg-white border border-amber-300"
-                      >
-                        <Text className="text-amber-800 text-xs font-semibold">デモ画面を見る</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
-              </Card>
-            )}
-
             {/* 在庫確認（旧: 調理の下準備） */}
             <TouchableOpacity
               onPress={() => {
@@ -2487,25 +2064,6 @@ export const StoreHome = ({
               <Card className={`${isFreeAuthenticatedPlan ? 'bg-indigo-300 opacity-70' : 'bg-indigo-500'} p-4`}>
                 <Text className="text-white text-2xl font-bold text-center">在庫確認</Text>
                 <Text className="text-indigo-100 text-center mt-2">材料・在庫をみんなで共有</Text>
-              </Card>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => {
-                if (isFreeAuthenticatedPlan) {
-                  alertNotify(
-                    '無料プランでは共有機能は利用できません',
-                    '仕事チェックリストは有料プランでご利用いただけます。必要になったタイミングでプラン変更をご検討ください。'
-                  );
-                  return;
-                }
-                onNavigateToChecklist();
-              }}
-              activeOpacity={0.8}
-            >
-              <Card className={`${isFreeAuthenticatedPlan ? 'bg-blue-300 opacity-70' : 'bg-blue-500'} p-4`}>
-                <Text className="text-white text-2xl font-bold text-center">仕事チェックリスト</Text>
-                <Text className="text-blue-100 text-center mt-2">やることをみんなで確認・管理</Text>
               </Card>
             </TouchableOpacity>
 
@@ -2540,13 +2098,6 @@ export const StoreHome = ({
               </Card>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={onNavigateToBudgetBreakeven} activeOpacity={0.8}>
-              <Card className="bg-teal-500 p-4">
-                <Text className="text-white text-2xl  font-bold text-center">損益分岐点の計算</Text>
-                <Text className="text-teal-100 text-center mt-2">価格・原価から必要販売数を試算</Text>
-              </Card>
-            </TouchableOpacity>
-
             <TouchableOpacity onPress={onNavigateToBudget} activeOpacity={0.8}>
               <Card className="bg-cyan-600 p-4">
                 <Text className="text-white text-2xl  font-bold text-center">会計処理</Text>
@@ -2560,192 +2111,9 @@ export const StoreHome = ({
 
         {activeTab === 'settings' && (
           <View className="flex-1 gap-4">
-
-            {/* ===== トップ: カード選択 ===== */}
-            {settingsView === 'top' && (
-              <>
-                <TouchableOpacity onPress={() => setSettingsView('payment')} activeOpacity={0.8}>
-                  <Card className="bg-slate-600 p-4">
-                    <Text className="text-white text-2xl font-bold text-center">支払い設定</Text>
-                    <Text className="text-slate-200 text-center mt-2">レジで使用する支払い方法を選択</Text>
-                  </Card>
-                </TouchableOpacity>
-
-                {!isFreeAuthenticatedPlan ? (
-                  <TouchableOpacity onPress={() => setSettingsView('recorder')} activeOpacity={0.8}>
-                    <Card className="bg-indigo-600 p-4">
-                      <Text className="text-white text-2xl font-bold text-center">登録者設定</Text>
-                      <Text className="text-indigo-100 text-center mt-2">登録者の追加とアクセス端末の確認</Text>
-                    </Card>
-                  </TouchableOpacity>
-                ) : null}
-
-                <TouchableOpacity
-                  onPress={() => {
-                    if (!canOpenAdminSettings) {
-                      alertNotify('案内', '管理者設定は「管理者グループ」の登録者のみアクセスできます。');
-                      return;
-                    }
-                    setSettingsView('admin');
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Card className="bg-slate-800 p-4">
-                    <Text className="text-white text-2xl font-bold text-center">管理者設定</Text>
-                    <Text className="text-slate-300 text-center mt-2">パスワード・制限・データ管理（管理者グループ）</Text>
-                  </Card>
-                </TouchableOpacity>
-
-                {authState.status === 'login_code' ? (
-                  <TouchableOpacity
-                    onPress={async () => {
-                      await exitLoginCode();
-                      onLogout();
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Card className="bg-white border border-red-200 p-4">
-                      <Text className="text-red-700 text-xl font-bold text-center">ログアウト</Text>
-                      <Text className="text-red-500 text-center mt-1 text-xs">
-                        ログインコード利用を終了してトップへ戻る
-                      </Text>
-                    </Card>
-                  </TouchableOpacity>
-                ) : null}
-              </>
-            )}
-
-            {/* ===== 支払い設定 ===== */}
-            {settingsView === 'payment' && (
-              <>
-                <TouchableOpacity onPress={() => setSettingsView('top')} activeOpacity={0.7} className="flex-row items-center mb-2">
-                  <Text className="text-blue-600 text-base">← 戻る</Text>
-                </TouchableOpacity>
-
-                <Text className="text-gray-500 text-sm mb-1">
-                  レジ画面に表示する支払い方法を選択してください
-                </Text>
-
-                {/* Cash */}
-                <TouchableOpacity
-                  onPress={() => togglePaymentMethod('cash')}
-                  activeOpacity={0.7}
-                  className={`flex-row items-center p-4 rounded-xl border-2 bg-white ${
-                    paymentMethods.cash ? 'border-green-500 bg-green-50' : 'border-gray-200'
-                  }`}
-                >
-                  <View className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
-                    paymentMethods.cash ? 'border-green-500 bg-green-500' : 'border-gray-300'
-                  }`}>
-                    {paymentMethods.cash && <Text className="text-white text-xs font-bold">✓</Text>}
-                  </View>
-                  <View className="flex-1">
-                    <Text className="text-gray-900 font-semibold">現金</Text>
-                    <Text className="text-gray-500 text-xs mt-0.5">テンキーで金額入力・お釣り計算</Text>
-                  </View>
-                </TouchableOpacity>
-
-                {/* Cashless */}
-                <View
-                  className={`p-4 rounded-xl border-2 bg-white ${
-                    paymentMethods.cashless ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
-                  }`}
-                >
-                  <View className="flex-row items-start">
-                    <TouchableOpacity
-                      onPress={() => togglePaymentMethod('cashless')}
-                      activeOpacity={0.7}
-                      className="flex-1 flex-row items-center pr-2"
-                    >
-                      <View className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
-                        paymentMethods.cashless ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
-                      }`}>
-                        {paymentMethods.cashless && <Text className="text-white text-xs font-bold">✓</Text>}
-                      </View>
-                      <View className="flex-1">
-                        <Text className="text-gray-900 font-semibold">{cashlessLabel || 'PayPay'}</Text>
-                        <Text className="text-gray-500 text-xs mt-0.5">キャッシュレス決済ボタン</Text>
-                      </View>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => setShowCashlessLabelEditor((prev) => !prev)}
-                      activeOpacity={0.8}
-                      className="px-2.5 py-1 rounded-full border border-gray-300 bg-white"
-                    >
-                      <Text className="text-[11px] text-gray-700 font-semibold">表示名変更</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                <View >
-                  {showCashlessLabelEditor ? (
-                    <Card>
-                      <Text className="text-gray-700 font-semibold mb-2">キャッシュレス表示名</Text>
-                      <Text className="text-gray-500 text-xs mb-2">テンプレートを選ぶか、自由入力できます</Text>
-                      <View className="flex-row flex-wrap gap-2 mb-2">
-                        {CASHLESS_LABEL_TEMPLATES.map((label) => (
-                          <TouchableOpacity
-                            key={`cashless-template-${label}`}
-                            onPress={() => saveCashlessLabel(label)}
-                            activeOpacity={0.8}
-                            className={`px-3 py-1.5 rounded-full border ${
-                              (cashlessLabel || 'PayPay') === label
-                                ? 'bg-blue-500 border-blue-500'
-                                : 'bg-white border-gray-300'
-                            }`}
-                          >
-                            <Text
-                              className={`text-xs font-semibold ${
-                                (cashlessLabel || 'PayPay') === label ? 'text-white' : 'text-gray-700'
-                              }`}
-                            >
-                              {label}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                      <Input
-                        label="カスタム表示名"
-                        value={cashlessLabel}
-                        onChangeText={setCashlessLabel}
-                        placeholder="例: au PAY / d払い / QR決済"
-                      />
-                      <Button
-                        title="表示名を保存"
-                        onPress={() => {
-                          saveCashlessLabel(cashlessLabel)
-                          setShowCashlessLabelEditor((prev) => !prev)
-                        }}
-                        size="sm"
-                      />
-                    </Card>
-                  ) : null}
-                </View>
-
-                {/* Voucher */}
-                <TouchableOpacity
-                  onPress={() => togglePaymentMethod('voucher')}
-                  activeOpacity={0.7}
-                  className={`flex-row items-center p-4 rounded-xl border-2 bg-white ${
-                    paymentMethods.voucher ? 'border-amber-500 bg-amber-50' : 'border-gray-200'
-                  }`}
-                >
-                  <View className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
-                    paymentMethods.voucher ? 'border-amber-500 bg-amber-500' : 'border-gray-300'
-                  }`}>
-                    {paymentMethods.voucher && <Text className="text-white text-xs font-bold">✓</Text>}
-                  </View>
-                  <View className="flex-1">
-                    <Text className="text-gray-900 font-semibold">金券</Text>
-                    <Text className="text-gray-500 text-xs mt-0.5">金券・チケットでの支払い</Text>
-                  </View>
-                </TouchableOpacity>
-              </>
-            )}
-
             {settingsView === 'recorder' && (
               <>
-                <TouchableOpacity onPress={() => setSettingsView('top')} activeOpacity={0.7} className="flex-row items-center mb-2">
+                <TouchableOpacity onPress={() => setSettingsView('admin')} activeOpacity={0.7} className="flex-row items-center mb-2">
                   <Text className="text-blue-600 text-base">← 戻る</Text>
                 </TouchableOpacity>
 
@@ -2991,19 +2359,15 @@ export const StoreHome = ({
             {/* ===== 管理者設定 ===== */}
             {settingsView === 'admin' && (
               <>
-                <TouchableOpacity onPress={() => setSettingsView('top')} activeOpacity={0.7} className="flex-row items-center mb-2">
-                  <Text className="text-blue-600 text-base">← 戻る</Text>
-                </TouchableOpacity>
-
                 <Card className="bg-slate-900 border border-slate-700 p-4">
                   <Text className="text-slate-100 text-lg font-bold">管理者コンソール</Text>
                   <Text className="text-slate-300 text-xs mt-1">
-                    セキュリティ設定とデータ管理をこの画面でまとめて実行できます。
+                    店舗設定・セキュリティ設定・データ管理をこの画面で実行できます。
                   </Text>
                 </Card>
 
                 <View className="bg-white rounded-2xl border border-gray-200 p-3">
-                  <Text className="text-gray-900 font-bold mb-2">セキュリティ</Text>
+                  <Text className="text-gray-900 font-bold mb-2">店舗設定</Text>
 
                   <TouchableOpacity
                     onPress={() => withRestrictionCheck('settings_access', () => { resetBranchNameForm(); setShowBranchNameModal(true); })}
@@ -3020,6 +2384,29 @@ export const StoreHome = ({
                   </TouchableOpacity>
 
                   <TouchableOpacity
+                    onPress={() =>
+                      withRestrictionCheck('settings_access', () => {
+                        setShowCashlessLabelEditor(false);
+                        setShowPaymentSettingsModal(true);
+                      })
+                    }
+                    activeOpacity={0.8}
+                    className="flex-row items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3"
+                  >
+                    <View className="w-9 h-9 rounded-full bg-emerald-200 items-center justify-center">
+                      <Text className="text-emerald-700 font-bold">決済</Text>
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-emerald-900 font-semibold">支払い設定</Text>
+                      <Text className="text-emerald-700 text-xs">支払い方法とキャッシュレス表示名を設定</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+
+                <View className="bg-white rounded-2xl border border-gray-200 p-3">
+                  <Text className="text-gray-900 font-bold mb-2">セキュリティ設定</Text>
+
+                  <TouchableOpacity
                     onPress={() => withRestrictionCheck('settings_access', () => { resetPasswordForm(); setShowPasswordModal(true); })}
                     activeOpacity={0.8}
                     className="flex-row items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 mb-2"
@@ -3030,37 +2417,6 @@ export const StoreHome = ({
                     <View className="flex-1">
                       <Text className="text-slate-900 font-semibold">パスワード設定</Text>
                       <Text className="text-slate-500 text-xs">管理者パスワードの変更</Text>
-                    </View>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() =>
-                      withRestrictionCheck('settings_access', () => {
-                        resetKioskPinForm();
-                        setShowKioskPinModal(true);
-                      })
-                    }
-                    activeOpacity={0.8}
-                    className="flex-row items-center gap-3 rounded-xl border border-teal-200 bg-teal-50 px-3 py-3 mb-2"
-                  >
-                    <View className="w-9 h-9 rounded-full bg-teal-200 items-center justify-center">
-                      <Text className="text-teal-700 font-bold">MO</Text>
-                    </View>
-                    <View className="flex-1">
-                      <Text className="text-teal-900 font-semibold">モバイルオーダー設定</Text>
-                      <Text className="text-teal-700 text-xs">
-                        キオスク解除PIN（店舗共通）を設定
-                      </Text>
-                    </View>
-                    <View className="items-end">
-                      <Text className="text-teal-900 text-xs font-semibold">
-                        {kioskExitPin ? '設定済み' : '未設定'}
-                      </Text>
-                      {kioskExitPin ? (
-                        <Text className="text-teal-700 text-[10px]">
-                          {'*'.repeat(Math.max(0, kioskExitPin.length - 2)) + kioskExitPin.slice(-2)}
-                        </Text>
-                      ) : null}
                     </View>
                   </TouchableOpacity>
 
@@ -3078,6 +2434,23 @@ export const StoreHome = ({
                     </View>
                   </TouchableOpacity>
                 </View>
+
+                {authState.status === 'login_code' ? (
+                  <TouchableOpacity
+                    onPress={async () => {
+                      await exitLoginCode();
+                      onLogout();
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Card className="bg-white border border-red-200 p-4">
+                      <Text className="text-red-700 text-xl font-bold text-center">ログアウト</Text>
+                      <Text className="text-red-500 text-center mt-1 text-xs">
+                        ログインコード利用を終了してトップへ戻る
+                      </Text>
+                    </Card>
+                  </TouchableOpacity>
+                ) : null}
 
                 <View className="bg-white rounded-2xl border border-red-200 p-3">
                   <View className="bg-red-50 rounded-xl px-3 py-2 mb-2">
@@ -3189,6 +2562,138 @@ export const StoreHome = ({
         </View>
       </Modal>
 
+      <Modal
+        visible={showPaymentSettingsModal}
+        onClose={() => {
+          setShowPaymentSettingsModal(false);
+          setShowCashlessLabelEditor(false);
+        }}
+        title="支払い設定"
+      >
+        <Text className="text-gray-500 text-sm mb-2">
+          レジ画面に表示する支払い方法を選択してください
+        </Text>
+
+        <TouchableOpacity
+          onPress={() => togglePaymentMethod('cash')}
+          activeOpacity={0.7}
+          className={`flex-row items-center p-4 rounded-xl border-2 bg-white mb-2 ${
+            paymentMethods.cash ? 'border-green-500 bg-green-50' : 'border-gray-200'
+          }`}
+        >
+          <View className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+            paymentMethods.cash ? 'border-green-500 bg-green-500' : 'border-gray-300'
+          }`}>
+            {paymentMethods.cash && <Text className="text-white text-xs font-bold">✓</Text>}
+          </View>
+          <View className="flex-1">
+            <Text className="text-gray-900 font-semibold">現金</Text>
+            <Text className="text-gray-500 text-xs mt-0.5">テンキーで金額入力・お釣り計算</Text>
+          </View>
+        </TouchableOpacity>
+
+        <View
+          className={`p-4 rounded-xl border-2 bg-white mb-2 ${
+            paymentMethods.cashless ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+          }`}
+        >
+          <View className="flex-row items-start">
+            <TouchableOpacity
+              onPress={() => togglePaymentMethod('cashless')}
+              activeOpacity={0.7}
+              className="flex-1 flex-row items-center pr-2"
+            >
+              <View className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+                paymentMethods.cashless ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
+              }`}>
+                {paymentMethods.cashless && <Text className="text-white text-xs font-bold">✓</Text>}
+              </View>
+              <View className="flex-1">
+                <Text className="text-gray-900 font-semibold">{cashlessLabel || 'PayPay'}</Text>
+                <Text className="text-gray-500 text-xs mt-0.5">キャッシュレス決済ボタン</Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setShowCashlessLabelEditor((prev) => !prev)}
+              activeOpacity={0.8}
+              className="px-2.5 py-1 rounded-full border border-gray-300 bg-white"
+            >
+              <Text className="text-[11px] text-gray-700 font-semibold">表示名変更</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {showCashlessLabelEditor ? (
+          <Card className="mb-2">
+            <Text className="text-gray-700 font-semibold mb-2">キャッシュレス表示名</Text>
+            <Text className="text-gray-500 text-xs mb-2">テンプレートを選ぶか、自由入力できます</Text>
+            <View className="flex-row flex-wrap gap-2 mb-2">
+              {CASHLESS_LABEL_TEMPLATES.map((label) => (
+                <TouchableOpacity
+                  key={`cashless-template-${label}`}
+                  onPress={() => saveCashlessLabel(label)}
+                  activeOpacity={0.8}
+                  className={`px-3 py-1.5 rounded-full border ${
+                    (cashlessLabel || 'PayPay') === label
+                      ? 'bg-blue-500 border-blue-500'
+                      : 'bg-white border-gray-300'
+                  }`}
+                >
+                  <Text
+                    className={`text-xs font-semibold ${
+                      (cashlessLabel || 'PayPay') === label ? 'text-white' : 'text-gray-700'
+                    }`}
+                  >
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Input
+              label="カスタム表示名"
+              value={cashlessLabel}
+              onChangeText={setCashlessLabel}
+              placeholder="例: au PAY / d払い / QR決済"
+            />
+            <Button
+              title="表示名を保存"
+              onPress={() => {
+                saveCashlessLabel(cashlessLabel);
+                setShowCashlessLabelEditor(false);
+              }}
+              size="sm"
+            />
+          </Card>
+        ) : null}
+
+        <TouchableOpacity
+          onPress={() => togglePaymentMethod('voucher')}
+          activeOpacity={0.7}
+          className={`flex-row items-center p-4 rounded-xl border-2 bg-white mb-3 ${
+            paymentMethods.voucher ? 'border-amber-500 bg-amber-50' : 'border-gray-200'
+          }`}
+        >
+          <View className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
+            paymentMethods.voucher ? 'border-amber-500 bg-amber-500' : 'border-gray-300'
+          }`}>
+            {paymentMethods.voucher && <Text className="text-white text-xs font-bold">✓</Text>}
+          </View>
+          <View className="flex-1">
+            <Text className="text-gray-900 font-semibold">金券</Text>
+            <Text className="text-gray-500 text-xs mt-0.5">金券・チケットでの支払い</Text>
+          </View>
+        </TouchableOpacity>
+
+        <Button
+          title="閉じる"
+          variant="secondary"
+          onPress={() => {
+            setShowPaymentSettingsModal(false);
+            setShowCashlessLabelEditor(false);
+          }}
+        />
+      </Modal>
+
       {/* Password Change Modal */}
       <Modal
         visible={showPasswordModal}
@@ -3200,9 +2705,6 @@ export const StoreHome = ({
       >
         <Text className="text-slate-500 text-xs mb-2">
           デフォルトの管理者パスワードは「0000」です
-        </Text>
-        <Text className="text-slate-500 text-xs mb-2">
-          このパスワードは店舗ログイン用ではなく、設定・削除などの管理者確認に使います（この端末に保存）。
         </Text>
         <Input
           label="新しいパスワード"
@@ -3240,65 +2742,6 @@ export const StoreHome = ({
               onPress={handleChangePassword}
               loading={savingPassword}
               disabled={!newPassword.trim() || !confirmPassword.trim()}
-            />
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={showKioskPinModal}
-        onClose={() => {
-          setShowKioskPinModal(false);
-          resetKioskPinForm();
-        }}
-        title="モバイルオーダー設定"
-      >
-        <Text className="text-slate-500 text-xs mb-2">
-          キオスク解除時に使う店舗共通PINです。すべてのタブレットで同じPINを使用します。
-        </Text>
-        <Input
-          label="キオスク解除PIN（4〜6桁の数字）"
-          value={kioskExitPin}
-          onChangeText={(text) => {
-            setKioskExitPin(text.replace(/[^\d]/g, '').slice(0, 6));
-            setKioskExitPinError('');
-          }}
-          placeholder="例：2468"
-          keyboardType="numeric"
-        />
-        <Input
-          label="キオスク解除PIN（確認）"
-          value={kioskExitPinConfirm}
-          onChangeText={(text) => {
-            setKioskExitPinConfirm(text.replace(/[^\d]/g, '').slice(0, 6));
-            setKioskExitPinError('');
-          }}
-          placeholder="もう一度入力"
-          keyboardType="numeric"
-          error={kioskExitPinError}
-        />
-        <View className="bg-teal-50 rounded-lg px-3 py-2 mt-1">
-          <Text className="text-teal-800 text-xs">
-            モバイルオーダーのキオスク解除時は、管理者パスワードではなくこのPINを使用します。
-          </Text>
-        </View>
-        <View className="flex-row gap-3 mt-2">
-          <View className="flex-1">
-            <Button
-              title="キャンセル"
-              onPress={() => {
-                setShowKioskPinModal(false);
-                resetKioskPinForm();
-              }}
-              variant="secondary"
-            />
-          </View>
-          <View className="flex-1">
-            <Button
-              title="保存"
-              onPress={handleSaveKioskExitPin}
-              loading={savingKioskExitPin}
-              disabled={!kioskExitPin.trim() || !kioskExitPinConfirm.trim()}
             />
           </View>
         </View>
@@ -3618,14 +3061,17 @@ export const StoreHome = ({
         </Text>
         {pendingDeleteCategories.size > 0 && (
           <View className="bg-gray-50 p-3 rounded-lg mb-3">
+            <Text className="text-gray-600 text-xs mb-1">
+              削除対象: {Array.from(pendingDeleteCategories).map((key) => DATA_CATEGORY_LABELS[key]).join('、')}
+            </Text>
             <Text className="text-gray-600 text-xs">
-              対象: {Array.from(pendingDeleteCategories).map((key) => DATA_CATEGORY_LABELS[key]).join('、')}
+              バックアップ対象: {backupEligibleDeleteCategories.length > 0 ? backupEligibleDeleteCategories.map((key) => DATA_CATEGORY_LABELS[key]).join('、') : 'なし'}
             </Text>
           </View>
         )}
         <View className="bg-amber-50 p-3 rounded-lg mb-4">
           <Text className="text-amber-800 text-xs">
-            複数カテゴリを選択している場合は ZIP でダウンロードします。
+            エクスポートできるのは「売上データ」「メニューデータ」「会計データ」です。複数の場合はZIPでダウンロードします。
           </Text>
         </View>
         <View className="gap-2">
@@ -3664,7 +3110,7 @@ export const StoreHome = ({
       >
         <ScrollView style={{ maxHeight: 520 }} showsVerticalScrollIndicator={false}>
           <Text className="text-gray-700 text-sm font-semibold mb-2">出力するデータを選択</Text>
-          {DATA_CATEGORY_DEFS.map((item) => (
+          {EXPORT_DATA_CATEGORY_DEFS.map((item) => (
             <TouchableOpacity
               key={item.key}
               onPress={() => toggleExportCategory(item.key)}
@@ -3749,7 +3195,7 @@ export const StoreHome = ({
           {importPayload && (
             <>
               <Text className="text-gray-700 text-sm font-semibold mt-4 mb-2">取り込むデータを選択</Text>
-              {DATA_CATEGORY_DEFS.filter((item) => importPayload.data[item.key] != null).map((item) => (
+              {EXPORT_DATA_CATEGORY_DEFS.filter((item) => importPayload.data[item.key] != null).map((item) => (
                 <TouchableOpacity
                   key={item.key}
                   onPress={() => toggleImportCategory(item.key)}
@@ -3880,65 +3326,12 @@ export const StoreHome = ({
             </TouchableOpacity>
           ))}
 
-          {/* Recorder Section */}
-          <Text className="font-bold text-gray-700 mb-2 mt-3">登録者・端末</Text>
-          {([
-            { key: 'recorder_manage' as const, label: '登録者設定の変更', desc: '登録方式・登録者追加/編集/削除・履歴確認' },
-          ]).map((item) => (
-            <TouchableOpacity
-              key={item.key}
-              onPress={() => toggleRestriction(item.key)}
-              activeOpacity={0.7}
-              className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
-                restrictions[item.key] ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-white'
-              }`}
-            >
-              <View
-                className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
-                  restrictions[item.key] ? 'border-red-500 bg-red-500' : 'border-gray-300'
-                }`}
-              >
-                {restrictions[item.key] && <Text className="text-white text-xs font-bold">✓</Text>}
-              </View>
-              <View className="flex-1">
-                <Text className="text-gray-900 font-semibold">{item.label}</Text>
-                <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
-              </View>
-            </TouchableOpacity>
-          ))}
-
-          {/* Data Section */}
-          <Text className="font-bold text-gray-700 mb-2 mt-3">データ管理</Text>
-          {([
-            { key: 'data_manage' as const, label: 'データ管理操作', desc: 'データ削除・エクスポート・インポート' },
-          ]).map((item) => (
-            <TouchableOpacity
-              key={item.key}
-              onPress={() => toggleRestriction(item.key)}
-              activeOpacity={0.7}
-              className={`flex-row items-center p-3 rounded-xl border-2 mb-2 ${
-                restrictions[item.key] ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-white'
-              }`}
-            >
-              <View
-                className={`w-6 h-6 rounded border-2 mr-3 items-center justify-center ${
-                  restrictions[item.key] ? 'border-red-500 bg-red-500' : 'border-gray-300'
-                }`}
-              >
-                {restrictions[item.key] && <Text className="text-white text-xs font-bold">✓</Text>}
-              </View>
-              <View className="flex-1">
-                <Text className="text-gray-900 font-semibold">{item.label}</Text>
-                <Text className="text-gray-500 text-xs mt-0.5">{item.desc}</Text>
-              </View>
-            </TouchableOpacity>
-          ))}
-
           {/* Settings Section */}
           <Text className="font-bold text-gray-700 mb-2 mt-3">設定</Text>
           {([
             { key: 'payment_change' as const, label: '支払い方法の変更', desc: '現金/キャッシュレス/金券のON/OFF' },
             { key: 'settings_access' as const, label: '設定タブへのアクセス', desc: '設定タブ自体へのアクセス' },
+            { key: 'data_manage' as const, label: 'データ管理操作', desc: 'データ削除・エクスポート・インポート' },
           ]).map((item) => (
             <TouchableOpacity
               key={item.key}

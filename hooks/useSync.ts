@@ -3,9 +3,7 @@ import { AppState, AppStateStatus, Platform } from 'react-native';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {
   getPendingTransactions,
-  getPendingVisitorCounts,
   markTransactionSynced,
-  markVisitorCountsSynced,
   clearSyncedTransactions,
   saveLastSyncTime,
   getLastSyncTime,
@@ -15,22 +13,8 @@ import * as Crypto from 'expo-crypto';
 import { useAuth } from '../contexts/AuthContext';
 
 const SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
-const VISITOR_SYNC_INTERVAL = 15 * 60 * 1000; // 15 minutes
 // 未同期データがある場合のリトライ間隔（短め）
 const RETRY_INTERVAL = 60 * 1000; // 60 seconds
-const ALLOWED_VISITOR_GROUP_TYPES = new Set(['group1', 'group2', 'group3', 'group4']);
-
-const normalizeVisitorGroupType = (value?: string | null): string => {
-  if (value && ALLOWED_VISITOR_GROUP_TYPES.has(value)) {
-    return value;
-  }
-  // DB constraint visitor_counts_group_check allows only group1..group4.
-  // Legacy values like "unassigned" are folded into group1 on sync.
-  return 'group1';
-};
-
-const isUuid = (value: string): boolean =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
 /** 同期ダイアログの表示種別 */
 export type SyncDialogType =
@@ -51,10 +35,8 @@ export interface SyncDialogState {
 export const useSync = () => {
   const { authState } = useAuth();
   const syncInProgress = useRef(false);
-  const visitorSyncInProgress = useRef(false);
   const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const visitorSyncTimerRef = useRef<NodeJS.Timeout | null>(null);
   // 前回のオンライン状態を記録（復帰検知用）
   const wasOfflineRef = useRef(false);
   // 起動時の確認ダイアログを一度だけ表示するフラグ
@@ -206,88 +188,6 @@ export const useSync = () => {
     }
   }, [isFreeAuthenticatedPlan]);
 
-  const syncPendingVisitorCounts = useCallback(async () => {
-    if (!isSupabaseConfigured() || isFreeAuthenticatedPlan || visitorSyncInProgress.current) {
-      return;
-    }
-
-    visitorSyncInProgress.current = true;
-
-    try {
-      const pendingVisitorCounts = await getPendingVisitorCounts();
-      const unsynced = pendingVisitorCounts.filter((count) => !count.synced);
-
-      if (unsynced.length === 0) {
-        return;
-      }
-
-      const grouped = new Map<
-        string,
-        { branch_id: string; group_type: string; timestamp: string; count: number; sourceIds: string[] }
-      >();
-
-      unsynced.forEach((item) => {
-        const time = new Date(item.timestamp).getTime();
-        const floored = Math.floor(time / VISITOR_SYNC_INTERVAL) * VISITOR_SYNC_INTERVAL;
-        const slotTimestamp = new Date(floored).toISOString();
-        const groupType = normalizeVisitorGroupType(item.group);
-        const key = `${item.branch_id}|${groupType}|${slotTimestamp}`;
-        const current = grouped.get(key);
-
-        if (current) {
-          current.count += item.count;
-          current.sourceIds.push(item.id);
-          return;
-        }
-
-        grouped.set(key, {
-          branch_id: item.branch_id,
-          group_type: groupType,
-          timestamp: slotTimestamp,
-          count: item.count,
-          sourceIds: [item.id],
-        });
-      });
-
-      // 非UUID branch_id の古いローカルデータは DB FK 制約で失敗するため同期対象から除外
-      const invalidRows = Array.from(grouped.values()).filter((row) => !isUuid(row.branch_id));
-      if (invalidRows.length > 0) {
-        const invalidIds = invalidRows.flatMap((row) => row.sourceIds);
-        await markVisitorCountsSynced(invalidIds);
-        invalidRows.forEach((row) => {
-          const key = `${row.branch_id}|${row.group_type}|${row.timestamp}`;
-          grouped.delete(key);
-        });
-      }
-
-      const payload = Array.from(grouped.values()).map((row) => ({
-        id: Crypto.randomUUID(),
-        branch_id: row.branch_id,
-        group_type: row.group_type,
-        count: row.count,
-        timestamp: row.timestamp,
-      }));
-
-      if (payload.length === 0) {
-        return;
-      }
-
-      const { error } = await supabase.from('visitor_counts').insert(payload);
-      if (error) {
-        // 開発画面の赤エラーを避ける: 同期失敗時はログのみ
-        console.warn('Skip syncing visitor counts:', error);
-        return;
-      }
-
-      const syncedSourceIds = Array.from(grouped.values()).flatMap((row) => row.sourceIds);
-      await markVisitorCountsSynced(syncedSourceIds);
-    } catch (error) {
-      console.warn('Visitor sync skipped:', error);
-    } finally {
-      visitorSyncInProgress.current = false;
-    }
-  }, [isFreeAuthenticatedPlan]);
-
   /**
    * 未同期件数を確認し、1件以上あれば「同期しますか？」ダイアログを表示。
    * ダイアログの確認後に呼ばれる onConfirm で実際に同期する。
@@ -368,22 +268,10 @@ export const useSync = () => {
       void checkAndSync().then(() => scheduleRetryIfNeeded());
     }, SYNC_INTERVAL);
 
-    // 来客カウント: 15分ごと（15分境界に合わせる）
-    void syncPendingVisitorCounts();
-    const now = Date.now();
-    const nextBoundaryDelay = VISITOR_SYNC_INTERVAL - (now % VISITOR_SYNC_INTERVAL);
-    const boundaryTimeout = setTimeout(() => {
-      void syncPendingVisitorCounts();
-      visitorSyncTimerRef.current = setInterval(() => {
-        void syncPendingVisitorCounts();
-      }, VISITOR_SYNC_INTERVAL);
-    }, nextBoundaryDelay);
-
     // アプリフォアグラウンド復帰時に同期確認
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
         void promptSyncIfNeeded();
-        void syncPendingVisitorCounts();
       }
     };
     const subscription = AppState.addEventListener('change', handleAppStateChange);
@@ -393,7 +281,6 @@ export const useSync = () => {
       if (wasOfflineRef.current) {
         wasOfflineRef.current = false;
         void promptSyncIfNeeded();
-        void syncPendingVisitorCounts();
       }
     };
     const handleOffline = () => {
@@ -407,15 +294,13 @@ export const useSync = () => {
     return () => {
       if (syncTimerRef.current) clearInterval(syncTimerRef.current);
       if (retryTimerRef.current) clearInterval(retryTimerRef.current);
-      if (visitorSyncTimerRef.current) clearInterval(visitorSyncTimerRef.current);
-      clearTimeout(boundaryTimeout);
       subscription.remove();
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.removeEventListener('online', handleOnline);
         window.removeEventListener('offline', handleOffline);
       }
     };
-  }, [checkAndSync, scheduleRetryIfNeeded, syncPendingVisitorCounts, promptSyncIfNeeded, isFreeAuthenticatedPlan]);
+  }, [checkAndSync, scheduleRetryIfNeeded, promptSyncIfNeeded, isFreeAuthenticatedPlan]);
 
   /** 「同期しますか？」→「はい」を押したとき */
   const handleConfirmSync = useCallback(async () => {
@@ -433,7 +318,6 @@ export const useSync = () => {
 
   return {
     syncNow: syncPendingTransactions,
-    syncVisitorNow: syncPendingVisitorCounts,
     checkAndSync,
     scheduleRetryIfNeeded,
     promptSyncIfNeeded,

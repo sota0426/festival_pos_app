@@ -9,26 +9,20 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SubscriptionProvider } from './contexts/SubscriptionContext';
 import { DemoProvider } from './contexts/DemoContext';
 
-import { HQLogin, HQDashboard, HQBranchReports, HQPresentation } from './components/hq';
+import { HQDashboard, HQBranchReports } from './components/hq';
 import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, PrepInventory, CookingManual, BudgetManager } from './components/store';
-import { CustomerOrderScreen } from './components/store/main/CustomerOrderScreen';
 import { useSync } from './hooks/useSync';
 import type { Branch, BudgetExpense, Menu, MenuCategory, PrepIngredient } from './types/database';
 import {
-  clearKioskMode,
   getBranch as getLocalBranch,
   getBudgetExpenses,
-  getKioskModeSync,
   getMenuCategories,
   getMenus,
   getPrepIngredients,
   replaceLocalBranchIdReferences,
-  saveKioskMode,
 } from './lib/storage';
 import { HQHome } from 'components/hq/HQHome';
 
-import { ManualCounterScreen } from 'components/store/sub/VisitorCounter/ManualCounter+Screen';
-import { TaskChecklist } from 'components/store/sub/TaskChecklist';
 import { Home } from 'components/Home';
 import { BudgetExpenseRecorder } from 'components/store/budget/BudgetExpenseRecorder';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
@@ -41,6 +35,7 @@ import { AccountDashboard } from './components/account/AccountDashboard';
 import { PricingScreen } from './components/account/PricingScreen';
 import { MyStores } from './components/account/MyStores';
 import { DemoBanner, SyncStatusBanner } from './components/common';
+import { DEMO_BRANCHES } from './data/demoData';
 
 type Screen =
   // 新画面
@@ -51,82 +46,27 @@ type Screen =
   | 'account_dashboard'
   | 'pricing'
   | 'my_stores'
-  // 客向けモバイルオーダー (認証不要・公開)
-  | 'customer_order'
   // 既存画面
   | 'home'
-  | 'hq_login'
   | 'hq_home'
   | 'hq_dashboard'
   | 'hq_branch_info'
-  | 'hq_presentation'
   | 'store_login'
   | 'store_home'
   | 'store_menus'
   | 'store_register'
   | 'store_history'
-  | 'store_counter'
   | 'store_order_board'
   | 'store_prep'
-  | 'store_checklist'
   | 'store_cooking_manual'
   | 'store_budget'
-  | 'store_budget_expense'
-  | 'store_budget_breakeven';
-
-/** 客向けオーダー画面のパラメータ */
-interface CustomerOrderParams {
-  branchCode: string;
-  tableNumber: string | null;
-  deviceName: string | null;
-  fromDemoKiosk?: boolean;
-}
+  | 'store_budget_expense';
 
 function AppContent() {
   const { authState, enterDemo, exitDemo, hasDemoReturnTarget, refreshSubscription } = useAuth();
 
-  // 客向けオーダーURL (?branch=S001&table=3) またはキオスクモード復元を
-  // 初期レンダリング前に検出する。useState のイニシャライザで行うことで画面フラッシュを防ぐ。
-  const [customerOrderParams, setCustomerOrderParams] = useState<CustomerOrderParams | null>(() => {
-    if (Platform.OS !== 'web') return null;
-    try {
-      // 優先1: キオスクモード (タブレット固定モード) の復元
-      const kiosk = getKioskModeSync();
-      if (kiosk) {
-        return {
-          branchCode: kiosk.branchCode,
-          tableNumber: null,
-          deviceName: kiosk.deviceName,
-          fromDemoKiosk: !!kiosk.demoMode,
-        };
-      }
-      // 優先2: QRコードURLパラメータ
-      const params = new URLSearchParams(window.location.search);
-      const branchCode = params.get('branch');
-      if (!branchCode) return null;
-      return {
-        branchCode,
-        tableNumber: params.get('table'),
-        deviceName: null,
-        fromDemoKiosk: false,
-      };
-    } catch {
-      return null;
-    }
-  });
-
   const [currentScreen, setCurrentScreen] = useState<Screen>(() => {
     if (Platform.OS !== 'web') return 'landing';
-    try {
-      // キオスクモード復元: リロード後も customer_order 固定
-      const kiosk = getKioskModeSync();
-      if (kiosk) return 'customer_order';
-      // QRコードURLパラメータ
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('branch')) return 'customer_order';
-    } catch {
-      // ignore
-    }
     return 'landing';
   });
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
@@ -135,7 +75,6 @@ function AppContent() {
   const [myStoresReturnScreen, setMyStoresReturnScreen] = useState<'account_dashboard' | 'hq_home'>('account_dashboard');
   const [checkoutProcessing, setCheckoutProcessing] = useState(false);
   const [demoReturnScreen, setDemoReturnScreen] = useState<Screen | null>(null);
-  const [autoOpenKioskPinSettingsOnStoreHome, setAutoOpenKioskPinSettingsOnStoreHome] = useState(false);
   const allowFreeWebInDev = __DEV__;
   const isWebFreeAuthenticatedPlan =
     Platform.OS === 'web' &&
@@ -154,7 +93,6 @@ function AppContent() {
   // Initialize sync
   const {
     syncNow,
-    syncVisitorNow,
     syncDialog,
     closeSyncDialog,
     handleConfirmSync,
@@ -224,6 +162,16 @@ function AppContent() {
       setCurrentScreen('my_stores');
       return;
     }
+
+    if (authState.status === 'demo') {
+      const demoBranch = DEMO_BRANCHES[0] ?? null;
+      if (demoBranch) {
+        setCurrentBranch(demoBranch);
+        setCurrentScreen('store_home');
+        return;
+      }
+    }
+
     setCurrentScreen('store_login');
   }, [authState]);
 
@@ -240,8 +188,7 @@ function AppContent() {
 
   const handleManualSyncFromBanner = useCallback(async () => {
     await syncNow();
-    await syncVisitorNow();
-  }, [syncNow, syncVisitorNow]);
+  }, [syncNow]);
 
   const handleBranchLogout = useCallback(() => {
     if (authState.status === 'authenticated') {
@@ -315,14 +262,11 @@ function AppContent() {
       'store_menus',
       'store_register',
       'store_history',
-      'store_counter',
       'store_order_board',
       'store_prep',
-      'store_checklist',
       'store_cooking_manual',
       'store_budget',
       'store_budget_expense',
-      'store_budget_breakeven',
     ];
 
     if (webRestrictedScreens.includes(currentScreen)) {
@@ -445,9 +389,8 @@ function AppContent() {
                 }
               }
 
-              // 未同期売上・来客データは既存同期ロジックへ渡す
+              // 未同期売上データは既存同期ロジックへ渡す
               await syncNow();
-              await syncVisitorNow();
             }
           }
         } catch (migrationError) {
@@ -460,7 +403,7 @@ function AppContent() {
     } finally {
       setCheckoutProcessing(false);
     }
-  }, [authState, refreshSubscription, syncNow, syncVisitorNow]);
+  }, [authState, refreshSubscription, syncNow]);
 
   // ?checkout=success URL パラメータ検出
   useEffect(() => {
@@ -497,92 +440,6 @@ function AppContent() {
 
   const renderScreen = () => {
     switch (currentScreen) {
-      // ===== 客向けモバイルオーダー (認証不要・公開) =====
-      case 'customer_order':
-        if (!customerOrderParams) {
-          // パラメータがない場合は Landing へ
-          return (
-            <Landing
-              onNavigateToDemo={() => { enterDemo(); setCurrentScreen('home'); }}
-              onNavigateToAuth={handleNavigateToAuthEntry}
-              onNavigateToLoginCode={() => setCurrentScreen('login_code_entry')}
-            />
-          );
-        }
-        {
-          // キオスクモード (タブレット固定) かどうかを判定:
-          //   - deviceName がある → タブレットモード → キオスクモード → onBack を渡さない
-          //   - tableNumber がある → QRモード → onBack を渡さない (そもそも戻り先がない)
-          //   - 両方 null → 念のため onBack なし
-          const isKioskMode = !!customerOrderParams.deviceName || !customerOrderParams.tableNumber;
-          const handleExitKioskToAdmin = async () => {
-            await clearKioskMode();
-            setCustomerOrderParams(null);
-
-            if (currentBranch) {
-              setCurrentScreen('store_home');
-              return;
-            }
-
-            if (authState.status === 'authenticated') {
-              setCurrentScreen('account_dashboard');
-              return;
-            }
-
-            if (authState.status === 'login_code') {
-              setCurrentScreen('login_code_loading');
-              return;
-            }
-
-            if (authState.status === 'demo') {
-              setCurrentScreen('home');
-              return;
-            }
-
-            setCurrentScreen('landing');
-          };
-          return (
-            <CustomerOrderScreen
-              branchCode={customerOrderParams.branchCode}
-              tableNumber={customerOrderParams.tableNumber}
-              deviceName={customerOrderParams.deviceName}
-              isKioskMode={isKioskMode}
-              onBackBeforeKiosk={() => {
-                void clearKioskMode();
-                setCustomerOrderParams(null);
-                setCurrentScreen('store_home');
-              }}
-              onOpenKioskPinSettings={() => {
-                void clearKioskMode();
-                setCustomerOrderParams(null);
-                setAutoOpenKioskPinSettingsOnStoreHome(true);
-                setCurrentScreen('store_home');
-              }}
-              onReturnToLoggedInFromDemo={
-                (authState.status === 'demo' && hasDemoReturnTarget) ||
-                (!!customerOrderParams?.fromDemoKiosk && authState.status === 'authenticated')
-                  ? () => {
-                      void clearKioskMode();
-                      setCustomerOrderParams(null);
-                      if (authState.status === 'demo') {
-                        exitDemo();
-                      }
-                      setCurrentScreen('account_dashboard');
-                    }
-                  : undefined
-              }
-              isDemoMode={
-                authState.status === 'demo' ||
-                !!customerOrderParams?.fromDemoKiosk
-              }
-              onExitKiosk={async () => {
-                // キオスクモード解除後、状態に応じて安全な画面へ戻す
-                await handleExitKioskToAdmin();
-              }}
-            />
-          );
-        }
-
       // ===== 新画面 =====
       case 'landing':
         return (
@@ -651,7 +508,7 @@ function AppContent() {
             <DemoBanner />
             <Home
               onNavigateToStore={navigateToStoreEntry}
-              onNavigateToHQ={() => setCurrentScreen('hq_login')}
+              onNavigateToHQ={() => setCurrentScreen('hq_home')}
               onReturnToLoggedIn={
                 authState.status === 'demo' && hasDemoReturnTarget && demoReturnScreen
                   ? () => {
@@ -665,25 +522,6 @@ function AppContent() {
         );
 
       // ===== 既存: HQ画面 =====
-      case 'hq_login':
-        return (
-          <>
-            <DemoBanner />
-            <HQLogin
-              onLoginSuccess={() => setCurrentScreen('hq_home')}
-              onBackToHome={() => {
-                if (authState.status === 'authenticated') {
-                  setCurrentScreen('account_dashboard');
-                } else if (authState.status === 'demo') {
-                  setCurrentScreen('home');
-                } else {
-                  setCurrentScreen('landing');
-                }
-              }}
-            />
-          </>
-        );
-
       case 'hq_home':
         return(
           <>
@@ -695,11 +533,6 @@ function AppContent() {
                 setHqBranchInfoFocusBranchId(null);
                 setCurrentScreen('hq_branch_info');
               }}
-              onNavigateMyStores={() => {
-                setMyStoresReturnScreen('hq_home');
-                setCurrentScreen('my_stores');
-              }}
-              onNavigatePresentation={() => setCurrentScreen('hq_presentation')}
               onLogout={() => {
                 if (authState.status === 'authenticated') {
                   setCurrentScreen('account_dashboard');
@@ -737,16 +570,6 @@ function AppContent() {
           </>
         );
 
-      case 'hq_presentation':
-        return (
-          <>
-            <DemoBanner />
-            <HQPresentation
-              onBack={() => setCurrentScreen('hq_home')}
-            />
-          </>
-        );
-
       // ===== 既存: Store画面 =====
       case 'store_login':
         return (
@@ -780,36 +603,17 @@ function AppContent() {
               onNavigateToRegister={() => setCurrentScreen('store_register')}
               onNavigateToMenus={() => setCurrentScreen('store_menus')}
               onNavigateToHistory={() => setCurrentScreen('store_history')}
-              onNavigateToCounter={() => setCurrentScreen('store_counter')}
               onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
               onNavigateToPrep={() => setCurrentScreen('store_prep')}
-              onNavigateToChecklist={() => setCurrentScreen('store_checklist')}
               onNavigateToCookingManual={() => setCurrentScreen('store_cooking_manual')}
               onNavigateToBudget={() => setCurrentScreen('store_budget')}
               onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
-              onNavigateToBudgetBreakeven={() => setCurrentScreen('store_budget_breakeven')}
-              onNavigateToCustomerOrder={async () => {
-                // タブレットモード: キオスクモードを localStorage に保存してから遷移。
-                // 端末名は CustomerOrderScreen 内で入力・確定後に上書き保存される。
-                const params: CustomerOrderParams = {
-                  branchCode: currentBranch.branch_code,
-                  tableNumber: null,
-                  deviceName: null, // CustomerOrderScreen 内で端末名入力後に確定
-                  fromDemoKiosk: authState.status === 'demo',
-                };
-                setCustomerOrderParams(params);
-                setCurrentScreen('customer_order');
-                // ※ キオスクモードの localStorage 保存は CustomerOrderScreen 側で
-                //   端末名確定後に行う (deviceName が確定してから保存したいため)
-              }}
               onNavigateToPricing={() => setCurrentScreen('pricing')}
               onNavigateToDemoHome={() => {
                 setDemoReturnScreen('store_home');
                 enterDemo();
                 setCurrentScreen('home');
               }}
-              autoOpenKioskPinSettings={autoOpenKioskPinSettingsOnStoreHome}
-              onHandledAutoOpenKioskPinSettings={() => setAutoOpenKioskPinSettingsOnStoreHome(false)}
               onBranchUpdated={(updatedBranch) => setCurrentBranch(updatedBranch)}
               onLogout={handleBranchLogout}
             />
@@ -866,22 +670,6 @@ function AppContent() {
           </>
         );
 
-      case 'store_counter':
-        if (!currentBranch) {
-          navigateToStoreEntry();
-          return null;
-        }
-        return (
-          <>
-            <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <ManualCounterScreen
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-            />
-          </>
-        );
-
       case 'store_order_board':
         if (!currentBranch) {
           navigateToStoreEntry();
@@ -908,22 +696,6 @@ function AppContent() {
             <DemoBanner />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <PrepInventory
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-            />
-          </>
-        );
-
-      case 'store_checklist':
-        if (!currentBranch) {
-          navigateToStoreEntry();
-          return null;
-        }
-        return (
-          <>
-            <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <TaskChecklist
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
             />
@@ -974,23 +746,6 @@ function AppContent() {
             <BudgetExpenseRecorder
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
-            />
-          </>
-        );
-
-      case 'store_budget_breakeven':
-        if (!currentBranch) {
-          navigateToStoreEntry();
-          return null;
-        }
-        return (
-          <>
-            <DemoBanner />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <BudgetManager
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-              mode="breakeven"
             />
           </>
         );

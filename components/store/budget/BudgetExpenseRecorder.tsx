@@ -12,9 +12,8 @@ import {
   saveDefaultExpenseRecorder,
   saveBudgetExpense,
 } from "lib/storage";
-import { fetchBranchRecorders } from "lib/recorderRegistry";
 import { isSupabaseConfigured, supabase } from "lib/supabase";
-import type { Branch, BranchRecorder, BudgetExpense, ExpenseCategory, ExpensePaymentMethod } from "types/database";
+import type { Branch, BudgetExpense, ExpenseCategory, ExpensePaymentMethod } from "types/database";
 import { useAuth } from "contexts/AuthContext";
 import { useSubscription } from "contexts/SubscriptionContext";
 import { DEMO_BUDGET_EXPENSES, resolveDemoBranchId } from "data/demoData";
@@ -47,7 +46,7 @@ const CATEGORY_COLORS: Record<ExpenseCategory, { bg: string; text: string }> = {
 
 const PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
   cash: "現金",
-  online: "クレジット",
+  online: "オンライン支払い",
   cashless: "キャッシュレス",
 };
 
@@ -89,8 +88,6 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
   const [showCategoryHint, setShowCategoryHint] = useState(false);
   const [hintCategory, setHintCategory] = useState<ExpenseCategory>("material");
   const [syncing, setSyncing] = useState(false);
-  const [recorderOptions, setRecorderOptions] = useState<BranchRecorder[]>([]);
-  const [showRecorderModal, setShowRecorderModal] = useState(false);
   const [activeTab, setActiveTab] = useState<ExpenseTab>("entry");
   const [historyCategoryFilter, setHistoryCategoryFilter] = useState<"all" | ExpenseCategory>("all");
   const [historyRecorderFilter, setHistoryRecorderFilter] = useState<string>("all");
@@ -224,34 +221,9 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
     await syncExpenses();
   }, [syncExpenses]);
 
-  const loadRecorderOptions = useCallback(async () => {
-    if (isDemo) {
-      const now = new Date().toISOString();
-      setRecorderOptions([
-        {
-          id: `demo-recorder-${branch.id}`,
-          branch_id: branch.id,
-          recorder_name: "デモ担当",
-          note: "デモ用登録者",
-          group_id: 1,
-          is_active: true,
-          created_at: now,
-          updated_at: now,
-        },
-      ]);
-      return;
-    }
-    const options = await fetchBranchRecorders(branch.id, canSyncToSupabase);
-    setRecorderOptions(options);
-  }, [branch.id, canSyncToSupabase, isDemo]);
-
   useEffect(() => {
     loadExpenses();
   }, [loadExpenses]);
-
-  useEffect(() => {
-    loadRecorderOptions();
-  }, [loadRecorderOptions]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -267,18 +239,6 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
     };
     loadDefaultRecorder();
   }, [branch.id]);
-
-  useEffect(() => {
-    if (expRecorder.trim()) return;
-    if (recorderOptions.length === 0) return;
-    setExpRecorder(recorderOptions[0].recorder_name);
-  }, [expRecorder, recorderOptions]);
-
-  useEffect(() => {
-    if (!expRecorder.trim()) return;
-    if (recorderOptions.some((item) => item.recorder_name === expRecorder.trim())) return;
-    setExpRecorder(recorderOptions[0]?.recorder_name ?? "");
-  }, [expRecorder, recorderOptions]);
 
   const expenseWithNumbers = useMemo(() => {
     const sorted = [...expenses].sort(
@@ -331,7 +291,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
       return;
     }
     if (!expRecorder.trim()) {
-      alertNotify("エラー", "登録者を選択してください");
+      alertNotify("エラー", "登録者名を入力してください");
       return;
     }
     const recorderName = expRecorder.trim();
@@ -386,8 +346,6 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
       "削除",
     );
   };
-
-  const selectedRecorderLabel = expRecorder.trim() || "登録者を選択してください";
 
   const CategoryBadge = ({ category }: { category: ExpenseCategory }) => (
     <View className={`px-2 py-1 rounded-full ${CATEGORY_COLORS[category].bg}`}>
@@ -466,34 +424,6 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
         </View>
       </Modal>
 
-      <Modal visible={showRecorderModal} onClose={() => setShowRecorderModal(false)} title="登録者を選択">
-        {recorderOptions.length === 0 ? (
-          <Text className="text-gray-500 text-sm">
-            登録者が設定されていません。設定画面の「登録者設定」で追加してください。
-          </Text>
-        ) : (
-          <View className="gap-2">
-            {recorderOptions.map((item) => (
-              <TouchableOpacity
-                key={item.id}
-                onPress={() => {
-                  setExpRecorder(item.recorder_name);
-                  setShowRecorderModal(false);
-                }}
-                activeOpacity={0.8}
-                className={`rounded-lg border px-3 py-3 ${
-                  expRecorder === item.recorder_name ? "border-blue-500 bg-blue-50" : "border-gray-200 bg-white"
-                }`}
-              >
-                <Text className={`font-semibold ${expRecorder === item.recorder_name ? "text-blue-700" : "text-gray-800"}`}>
-                  {item.recorder_name}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-      </Modal>
-
       <View className="flex-row bg-white border-b border-gray-200">
         {EXPENSE_TABS.map((tab) => (
           <TouchableOpacity
@@ -551,21 +481,14 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
 
               <View className="mb-3">
                 <Text className="text-gray-600 text-sm mb-1">登録者</Text>
-                <TouchableOpacity
-                  onPress={() => setShowRecorderModal(true)}
-                  activeOpacity={0.8}
-                  className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
-                >
-                  <Text className={`${expRecorder ? "text-gray-900" : "text-gray-400"} text-base`}>
-                    {selectedRecorderLabel}
-                  </Text>
-                  <Text className="text-gray-400 text-xs mt-1">プルダウンから選択</Text>
-                </TouchableOpacity>
-                {recorderOptions.length === 0 ? (
-                  <Text className="text-amber-600 text-xs mt-1">
-                    登録者がありません。設定画面の「登録者設定」で先に登録してください。
-                  </Text>
-                ) : null}
+                <TextInput
+                  value={expRecorder}
+                  onChangeText={setExpRecorder}
+                  placeholder="例：山田 太郎"
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+                  placeholderTextColor="#9CA3AF"
+                />
+                <Text className="text-gray-400 text-xs mt-1">前回記録した登録者名が自動入力されます</Text>
               </View>
 
               <View className="mb-3">
@@ -618,7 +541,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
                 title="支出を記録"
                 onPress={handleAddExpense}
                 variant="success"
-                disabled={recorderOptions.length === 0 || !expRecorder.trim()}
+                disabled={!expRecorder.trim()}
               />
             </Card>
 
