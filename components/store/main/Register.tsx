@@ -12,15 +12,31 @@ import {
   getStoreSettings,
   getMenuCategories,
   saveMenuCategories,
-  getPendingTransactions,
   markTransactionSynced,
   clearSyncedTransactions,
 } from '../../../lib/storage';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
-import type { Branch, Menu, MenuCategory, CartItem, PendingTransaction, PaymentMethodSettings } from '../../../types/database';
+import type {
+  Branch,
+  Menu,
+  MenuCategory,
+  CartItem,
+  PendingTransaction,
+  PaymentMethodSettings,
+  MobileOrderRequest,
+  MobileOrderRequestItem,
+} from '../../../types/database';
 import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
 import { useAuth } from '../../../contexts/AuthContext';
-import { DEMO_MENU_CATEGORIES, DEMO_MENUS, DEMO_TRANSACTIONS, resolveDemoBranchId } from '../../../data/demoData';
+import { useSubscription } from '../../../contexts/SubscriptionContext';
+import { DEMO_MENU_CATEGORIES, DEMO_MENUS, resolveDemoBranchId } from '../../../data/demoData';
+
+const formatOrderNumber2Digits = (value: string | number): string => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return '00';
+  const normalized = ((parsed - 1) % 99) + 1;
+  return String(normalized).padStart(2, '0');
+};
 
 interface RegisterProps {
   branch: Branch;
@@ -36,9 +52,11 @@ export const Register = ({
   onNavigateToMenus
  }: RegisterProps) => {
   const { authState } = useAuth();
+  const { canSync } = useSubscription();
   const isDemo = authState.status === 'demo';
   const demoBranchId = useMemo(() => resolveDemoBranchId(branch), [branch]);
-  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+  const canSyncToSupabase =
+    isSupabaseConfigured() && !isDemo && (authState.status === 'login_code' || canSync);
 
   const [menus, setMenus] = useState<Menu[]>([]);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
@@ -63,14 +81,13 @@ export const Register = ({
   const [quickOrderInput, setQuickOrderInput] = useState('');
   const [showQuickOrder, setShowQuickOrder] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [todaySoldByMenu, setTodaySoldByMenu] = useState<Record<string, number>>({});
   const [showActionsModal, setShowActionsModal] = useState(false);
-  const [showSelloutModal, setShowSelloutModal] = useState(false);
-
-  // 最初の販売時刻を追跡（完売予測の起点に使用）
-  const firstSaleTimeRef = useRef<Date | null>(null);
-  // 過去30分販売ログ: { menu_id, quantity, sold_at }
-  const saleLogRef = useRef<{ menu_id: string; quantity: number; sold_at: number }[]>([]);
+  const [mobileOrderRequests, setMobileOrderRequests] = useState<
+    Array<MobileOrderRequest & { items: MobileOrderRequestItem[] }>
+  >([]);
+  const [showMobileOrderModal, setShowMobileOrderModal] = useState(false);
+  const [importingRequestId, setImportingRequestId] = useState<string | null>(null);
+  const [importedMobileOrderRequestIds, setImportedMobileOrderRequestIds] = useState<string[]>([]);
 
 const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
@@ -156,85 +173,48 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     }
   }, [branch.id, sortMenus, isDemo, demoBranchId, canSyncToSupabase]);
 
-  const loadTodaySoldByMenu = useCallback(async () => {
-    try {
-      const sold: Record<string, number> = {};
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const tomorrowStart = new Date(todayStart);
-      tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-
-      // 初回ロード時に firstSaleTime を最古のトランザクション時刻から復元する
-      let earliestSaleTime: Date | null = null;
-
-      if (isDemo && demoBranchId) {
-        const demoTx = DEMO_TRANSACTIONS[demoBranchId] ?? [];
-        demoTx.forEach((tx) => {
-          tx.items.forEach((item) => {
-            sold[item.menu_id] = (sold[item.menu_id] ?? 0) + item.quantity;
-          });
-          const txTime = new Date(tx.created_at);
-          if (!earliestSaleTime || txTime < earliestSaleTime) earliestSaleTime = txTime;
-        });
-      }
-
-      const localPending = await getPendingTransactions();
-      localPending
-        .filter((tx) => tx.branch_id === branch.id && !tx.synced)
-        .filter((tx) => {
-          const created = new Date(tx.created_at);
-          return created >= todayStart && created < tomorrowStart;
-        })
-        .forEach((tx) => {
-          tx.items.forEach((item) => {
-            sold[item.menu_id] = (sold[item.menu_id] ?? 0) + item.quantity;
-          });
-          const txTime = new Date(tx.created_at);
-          if (!earliestSaleTime || txTime < earliestSaleTime) earliestSaleTime = txTime;
-        });
-
-      if (canSyncToSupabase) {
-        const { data: txData, error: txError } = await supabase
-          .from('transactions')
-          .select('id, created_at')
-          .eq('branch_id', branch.id)
-          .eq('status', 'completed')
-          .gte('created_at', todayStart.toISOString())
-          .lt('created_at', tomorrowStart.toISOString());
-
-        if (!txError && txData && txData.length > 0) {
-          const txIds = txData.map((tx) => tx.id);
-          txData.forEach((tx) => {
-            const txTime = new Date(tx.created_at);
-            if (!earliestSaleTime || txTime < earliestSaleTime) earliestSaleTime = txTime;
-          });
-          const { data: itemData, error: itemError } = await supabase
-            .from('transaction_items')
-            .select('menu_id,quantity')
-            .in('transaction_id', txIds);
-
-          if (!itemError) {
-            (itemData ?? []).forEach((row) => {
-              sold[row.menu_id] = (sold[row.menu_id] ?? 0) + (row.quantity ?? 0);
-            });
-          }
-        }
-      }
-
-      if (earliestSaleTime && !firstSaleTimeRef.current) {
-        firstSaleTimeRef.current = earliestSaleTime;
-      }
-
-      setTodaySoldByMenu(sold);
-    } catch (error) {
-      console.error('Failed to load today sold summary:', error);
-      setTodaySoldByMenu({});
+  const fetchMobileOrderRequests = useCallback(async () => {
+    if (!canSyncToSupabase) {
+      setMobileOrderRequests([]);
+      return;
     }
-  }, [branch.id, isDemo, demoBranchId, canSyncToSupabase]);
+    try {
+      const { data: requests, error: requestError } = await supabase
+        .from('mobile_order_requests')
+        .select('*')
+        .eq('branch_id', branch.id)
+        .eq('status', 'requested')
+        .order('created_at', { ascending: true })
+        .limit(50);
+      if (requestError) throw requestError;
+
+      const requestRows = (requests ?? []) as MobileOrderRequest[];
+      if (requestRows.length === 0) {
+        setMobileOrderRequests([]);
+        return;
+      }
+
+      const requestIds = requestRows.map((row) => row.id);
+      const { data: itemRows, error: itemError } = await supabase
+        .from('mobile_order_request_items')
+        .select('*')
+        .in('request_id', requestIds);
+      if (itemError) throw itemError;
+
+      const items = (itemRows ?? []) as MobileOrderRequestItem[];
+      const merged = requestRows.map((row) => ({
+        ...row,
+        items: items.filter((item) => item.request_id === row.id),
+      }));
+      setMobileOrderRequests(merged);
+    } catch (error) {
+      console.error('Failed to fetch mobile order requests:', error);
+    }
+  }, [branch.id, canSyncToSupabase]);
 
   useEffect(() => {
     fetchMenus();
-    loadTodaySoldByMenu();
+    fetchMobileOrderRequests();
     const loadSettings = async () => {
       const settings = await getStoreSettings();
       if (settings.payment_methods) {
@@ -243,7 +223,15 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       setCashlessLabel(settings.cashless_label || 'PayPay');
     };
     loadSettings();
-  }, [fetchMenus, loadTodaySoldByMenu]);
+  }, [fetchMenus, fetchMobileOrderRequests]);
+
+  useEffect(() => {
+    if (!canSyncToSupabase) return;
+    const timer = setInterval(() => {
+      fetchMobileOrderRequests();
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [canSyncToSupabase, fetchMobileOrderRequests]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -448,6 +436,60 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     setDiscountAmount('');
   };
 
+  const importMobileOrderToCart = async (requestId: string) => {
+    const request = mobileOrderRequests.find((row) => row.id === requestId);
+    if (!request || request.items.length === 0) {
+      alertNotify('取り込み不可', '注文内容が見つかりません');
+      return;
+    }
+
+    setImportingRequestId(requestId);
+    try {
+      setCart((prevCart) => {
+        const next = [...prevCart];
+        request.items.forEach((item) => {
+          const existingIndex = next.findIndex((cartItem) => cartItem.menu_id === item.menu_id);
+          if (existingIndex >= 0) {
+            const existing = next[existingIndex];
+            next[existingIndex] = {
+              ...existing,
+              quantity: existing.quantity + item.quantity,
+              subtotal: (existing.quantity + item.quantity) * existing.unit_price,
+            };
+          } else {
+            next.push({
+              menu_id: item.menu_id,
+              menu_name: item.menu_name,
+              unit_price: item.unit_price,
+              discount: 0,
+              quantity: item.quantity,
+              subtotal: item.unit_price * item.quantity,
+            });
+          }
+        });
+        return next;
+      });
+
+      const { error } = await supabase
+        .from('mobile_order_requests')
+        .update({ status: 'accepted' })
+        .eq('id', requestId);
+      if (error) throw error;
+
+      setShowMobileOrderModal(false);
+      setImportedMobileOrderRequestIds((prev) => (prev.includes(requestId) ? prev : [...prev, requestId]));
+      setMobileOrderRequests((prev) => prev.filter((row) => row.id !== requestId));
+      if (isMobile) {
+        setShowCart(true);
+      }
+    } catch (error) {
+      console.error('Failed to import mobile order request:', error);
+      alertNotify('エラー', 'モバイル注文の取り込みに失敗しました');
+    } finally {
+      setImportingRequestId(null);
+    }
+  };
+
   const generateTransactionCode = async (): Promise<string> => {
     const now = new Date();
     const dateStr = `${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
@@ -554,7 +596,19 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
               await supabase
                 .from('menus')
                 .update({ stock_quantity: menu.stock_quantity, updated_at: now })
-                .eq('id', menu.id);
+              .eq('id', menu.id);
+            }
+          }
+
+          if (importedMobileOrderRequestIds.length > 0) {
+            const { error: mobileOrderCompleteError } = await supabase
+              .from('mobile_order_requests')
+              .update({ status: 'completed' })
+              .in('id', importedMobileOrderRequestIds);
+            if (mobileOrderCompleteError) {
+              console.error('Failed to mark mobile orders completed:', mobileOrderCompleteError);
+            } else {
+              setImportedMobileOrderRequestIds([]);
             }
           }
 
@@ -567,23 +621,8 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       }
 
       // Clear cart and show success
-      const saletime = Date.now();
-      // 最初の販売時刻を記録
-      if (!firstSaleTimeRef.current) {
-        firstSaleTimeRef.current = new Date(saletime);
-      }
-      // 販売ログに追記（過去30分集計用）
-      cart.forEach((item) => {
-        saleLogRef.current.push({ menu_id: item.menu_id, quantity: item.quantity, sold_at: saletime });
-      });
-      setTodaySoldByMenu((prev) => {
-        const next = { ...prev };
-        cart.forEach((item) => {
-          next[item.menu_id] = (next[item.menu_id] ?? 0) + item.quantity;
-        });
-        return next;
-      });
       setCart([]);
+      setImportedMobileOrderRequestIds([]);
       setShowCart(false);
       setShowCashModal(false);
       setReceivedAmount('');
@@ -668,61 +707,6 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     return { color: 'text-gray-500', text: `残${menu.stock_quantity}` };
   };
 
-  // 過去30分間の販売個数を返す（saleLogRef を参照）
-  const getLast30MinSold = useCallback((menuId: string): number => {
-    const cutoff = Date.now() - 30 * 60 * 1000;
-    return saleLogRef.current
-      .filter((log) => log.menu_id === menuId && log.sold_at >= cutoff)
-      .reduce((sum, log) => sum + log.quantity, 0);
-  }, []);
-
-  const getSelloutHours = useCallback(
-    (menu: Menu): number | null => {
-      if (!menu.stock_management || menu.stock_quantity <= 0) return null;
-      const soldToday = todaySoldByMenu[menu.id] ?? 0;
-      if (soldToday <= 0) return null;
-
-      const now = new Date();
-      // 起点を「最初の販売時刻」にする。なければ現在時刻（= 販売前なので予測不能）
-      const saleStart = firstSaleTimeRef.current;
-      if (!saleStart) return null;
-      const elapsedHours = Math.max((now.getTime() - saleStart.getTime()) / 3600000, 1 / 60);
-      const perHour = soldToday / elapsedHours;
-      if (perHour <= 0.01) return null;
-      return menu.stock_quantity / perHour;
-    },
-    [todaySoldByMenu],
-  );
-
-  // 完売予測時刻を Date で返す（null = 予測不能）
-  const getSelloutAt = useCallback(
-    (menu: Menu): Date | null => {
-      const hoursLeft = getSelloutHours(menu);
-      if (hoursLeft == null) return null;
-      return new Date(Date.now() + hoursLeft * 3600000);
-    },
-    [getSelloutHours],
-  );
-
-  // 完売予測モーダル用: 在庫管理メニューを完売予測が早い順に並べた一覧
-  const selloutForecastList = useMemo(() => {
-    return menus
-      .filter((m) => m.stock_management)
-      .map((menu) => ({
-        menu,
-        hoursLeft: getSelloutHours(menu),
-        selloutAt: getSelloutAt(menu),
-        last30min: getLast30MinSold(menu.id),
-      }))
-      .sort((a, b) => {
-        // 予測あり → 早い順, 予測なし → 後ろ
-        if (a.hoursLeft == null && b.hoursLeft == null) return 0;
-        if (a.hoursLeft == null) return 1;
-        if (b.hoursLeft == null) return -1;
-        return a.hoursLeft - b.hoursLeft;
-      });
-  }, [menus, getSelloutHours, getSelloutAt, getLast30MinSold]);
-
   // Helper to render a group of menu cards
   const renderMenuCards = (
     menuList: Menu[],
@@ -771,18 +755,6 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
                     <Text className={`text-sm mt-1 ${stockStatus.color}`}>
                       {stockStatus.text}
                     </Text>
-                    {(() => {
-                      const h = getSelloutHours(menu);
-                      if (h == null || h > 8) return null;
-                      const label = h < 1
-                        ? `完売予測: 約${Math.max(1, Math.round(h * 60))}分`
-                        : `完売予測: 約${h.toFixed(1)}時間`;
-                      return (
-                        <Text className="text-[11px] mt-0.5 text-red-500 font-semibold">
-                          {label}
-                        </Text>
-                      );
-                    })()}
                   </>
                 )}
                 {cartItem && (
@@ -801,8 +773,8 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
   // MenuManagement と同じロジックでカテゴリ別セクションを構築
   const defaultCategoryId = useMemo(() => {
     if (orderedCategories.length === 0) return null;
-    const food = orderedCategories.find((c) => c.category_name.trim() === 'フード');
-    return food?.id ?? orderedCategories[0]?.id ?? null;
+    const defaultCategory = orderedCategories.find((c) => c.category_name.trim() === 'なし');
+    return defaultCategory?.id ?? orderedCategories[0]?.id ?? null;
   }, [orderedCategories]);
 
   const menuSections = useMemo(() => {
@@ -834,7 +806,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       } else {
         sections.push({
           id: 'uncategorized',
-          title: 'フード',
+          title: 'なし',
           code: '1',
           visual: UNCATEGORIZED_VISUAL,
           menus: uncategorized,
@@ -844,6 +816,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
     return sections.filter((s) => s.menus.length > 0);
   }, [orderedCategories, categoryMetaMap, categories, menus, sortMenus, defaultCategoryId]);
+  const shouldShowCategoryHeaders = (menuSections?.length ?? 0) > 1;
 
   // Menu Grid Component
   const MenuGrid = React.memo(() => {
@@ -861,11 +834,13 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
         {menuSections ? (
           menuSections.map((section) => (
             <View key={section.id} className="mb-4">
-              <View className={`mx-1 mb-2 px-3 py-2 rounded-lg ${section.visual.headerBgClass}`}>
-                <Text className={`font-bold ${section.visual.headerTextClass}`}>
-                  {section.code} {section.title}
-                </Text>
-              </View>
+              {shouldShowCategoryHeaders ? (
+                <View className={`mx-1 mb-2 px-3 py-2 rounded-lg ${section.visual.headerBgClass}`}>
+                  <Text className={`font-bold ${section.visual.headerTextClass}`}>
+                    {section.code} {section.title}
+                  </Text>
+                </View>
+              ) : null}
               {renderMenuCards(section.menus, section.visual)}
             </View>
           ))
@@ -1278,84 +1253,6 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     </Modal>
   );
 
-
-  // 完売予測モーダル
-  const selloutModal = (
-    <Modal
-      visible={showSelloutModal}
-      onClose={() => setShowSelloutModal(false)}
-      title="完売予測"
-    >
-      <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false}>
-        {selloutForecastList.length === 0 ? (
-          <Text className="text-gray-400 text-center py-4">在庫管理中のメニューがありません</Text>
-        ) : (
-          <>
-            {/* ヘッダー行 */}
-            <View className="flex-row mb-1 px-1">
-              <Text className="flex-1 text-xs text-gray-400 font-semibold">メニュー</Text>
-              <Text className="w-20 text-xs text-gray-400 font-semibold text-center">残在庫</Text>
-              <Text className="w-20 text-xs text-gray-400 font-semibold text-center">30分販売</Text>
-              <Text className="w-28 text-xs text-gray-400 font-semibold text-right">完売予測時刻</Text>
-            </View>
-            {selloutForecastList.map((row) => {
-              const isSoldOut = row.menu.stock_quantity <= 0;
-              const isUrgent = row.hoursLeft != null && row.hoursLeft <= 1;
-              const isWarning = row.hoursLeft != null && row.hoursLeft <= 2.5 && !isUrgent;
-              let timeLabel = '—';
-              if (isSoldOut) {
-                timeLabel = '売切';
-              } else if (row.selloutAt) {
-                const h = row.selloutAt.getHours().toString().padStart(2, '0');
-                const m = row.selloutAt.getMinutes().toString().padStart(2, '0');
-                timeLabel = `${h}:${m}頃`;
-              }
-              return (
-                <View
-                  key={row.menu.id}
-                  className={`flex-row items-center py-2 px-1 mb-1 rounded-lg ${
-                    isSoldOut ? 'bg-gray-100' : isUrgent ? 'bg-red-50' : isWarning ? 'bg-orange-50' : 'bg-white'
-                  }`}
-                >
-                  <Text
-                    className={`flex-1 text-sm font-semibold ${isSoldOut ? 'text-gray-400' : 'text-gray-800'}`}
-                    numberOfLines={2}
-                  >
-                    {row.menu.menu_name}
-                  </Text>
-                  <Text className={`w-20 text-sm text-center ${isSoldOut ? 'text-gray-400' : 'text-gray-700'}`}>
-                    {isSoldOut ? '0' : row.menu.stock_quantity}
-                  </Text>
-                  <Text className="w-20 text-sm text-center text-blue-600 font-semibold">
-                    {row.last30min > 0 ? `+${row.last30min}` : '—'}
-                  </Text>
-                  <Text
-                    className={`w-28 text-sm text-right font-semibold ${
-                      isSoldOut
-                        ? 'text-gray-400'
-                        : isUrgent
-                          ? 'text-red-600'
-                          : isWarning
-                            ? 'text-orange-500'
-                            : 'text-gray-600'
-                    }`}
-                  >
-                    {timeLabel}
-                  </Text>
-                </View>
-              );
-            })}
-            {!firstSaleTimeRef.current && (
-              <Text className="text-xs text-gray-400 text-center mt-2">
-                ※ 最初の販売後に完売予測時刻が表示されます
-              </Text>
-            )}
-          </>
-        )}
-      </ScrollView>
-    </Modal>
-  );
-
   // ハンバーガー（アクション）モーダル
   const actionsModal = (
     <Modal
@@ -1364,22 +1261,6 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       title="メニュー操作"
     >
       <View className="gap-3">
-        {/* 完売予測 */}
-        <TouchableOpacity
-          onPress={() => {
-            setShowActionsModal(false);
-            setShowSelloutModal(true);
-          }}
-          className="flex-row items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-4 py-3"
-          activeOpacity={0.7}
-        >
-          <Text className="text-lg">📊</Text>
-          <View className="flex-1">
-            <Text className="text-orange-800 font-semibold text-sm">完売予測</Text>
-            <Text className="text-orange-600 text-xs">各メニューの完売予測時刻・販売ペースを確認</Text>
-          </View>
-        </TouchableOpacity>
-
         {/* 番号入力 ON/OFF */}
         <TouchableOpacity
           onPress={() => {
@@ -1560,6 +1441,63 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     </Modal>
   );
 
+  const mobileOrderBanner =
+    canSyncToSupabase && mobileOrderRequests.length > 0 && !showCart ? (
+      <View className="mx-4 mt-3 mb-2">
+        <TouchableOpacity
+          onPress={() => setShowMobileOrderModal(true)}
+          className="bg-violet-50 border border-violet-200 rounded-xl px-4 py-3"
+          activeOpacity={0.8}
+        >
+          <View className="flex-row items-center justify-between">
+            <View>
+              <Text className="text-violet-700 font-bold">モバイルオーダー注文件数</Text>
+              <Text className="text-violet-900 text-xl font-bold mt-0.5">{mobileOrderRequests.length}件</Text>
+            </View>
+            <View className="bg-violet-600 rounded-lg px-3 py-2">
+              <Text className="text-white font-semibold text-sm">注文を開く</Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </View>
+    ) : null;
+
+  const mobileOrderModal = (
+    <Modal visible={showMobileOrderModal} onClose={() => setShowMobileOrderModal(false)} title="モバイルオーダー注文">
+      <ScrollView style={{ maxHeight: 440 }}>
+        {mobileOrderRequests.length === 0 ? (
+          <Text className="text-gray-500 text-center py-8">現在、注文申請はありません</Text>
+        ) : (
+          mobileOrderRequests.map((request) => (
+            <View key={request.id} className="mb-3 border border-violet-200 rounded-xl px-3 py-3 bg-white">
+              <View className="flex-row items-center justify-between mb-2">
+                <Text className="text-violet-800 font-bold">注文番号: {formatOrderNumber2Digits(request.order_number)}</Text>
+                <Text className="text-xs text-gray-500">{new Date(request.created_at).toLocaleTimeString()}</Text>
+              </View>
+              <View className="mb-2">
+                {request.items.map((item) => (
+                  <Text key={item.id} className="text-gray-700 text-sm">
+                    ・{item.menu_name} x{item.quantity}
+                  </Text>
+                ))}
+              </View>
+              <TouchableOpacity
+                onPress={() => importMobileOrderToCart(request.id)}
+                disabled={importingRequestId !== null}
+                className={`rounded-lg py-2 ${importingRequestId !== null ? 'bg-gray-300' : 'bg-violet-600'}`}
+                activeOpacity={0.8}
+              >
+                <Text className="text-white text-center font-semibold">
+                  {importingRequestId === request.id ? '取り込み中...' : 'この注文をカートに取り込む'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ))
+        )}
+      </ScrollView>
+    </Modal>
+  );
+
   // Mobile Layout
   if (isMobile) {
     return (
@@ -1571,6 +1509,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
           onBack={onBack}
           rightElement={registerHeaderRight}
         />
+        {mobileOrderBanner}
 
         {showCart ? (
           <CartPanel />
@@ -1603,8 +1542,8 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
         {cashModal}
         {clearConfirmModal}
         {discountModal}
-        {selloutModal}
         {actionsModal}
+        {mobileOrderModal}
       </SafeAreaView>
     );
   }
@@ -1620,6 +1559,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
         onBack={onBack}
         rightElement={registerHeaderRight}
       />
+      {mobileOrderBanner}
 
       <View className="flex-1 flex-row">
         {/* Left: Menu List */}
@@ -1636,8 +1576,8 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       {cashModal}
       {clearConfirmModal}
       {discountModal}
-      {selloutModal}
       {actionsModal}
+      {mobileOrderModal}
     </SafeAreaView>
   );
 };

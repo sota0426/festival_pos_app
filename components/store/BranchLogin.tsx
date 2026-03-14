@@ -189,13 +189,13 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
       const nowIso = new Date().toISOString();
       const currentCategories = await getMenuCategories();
       const existingCategory = currentCategories.find(
-        (c) => c.branch_id === newBranch.id && c.category_name === 'フード',
+        (c) => c.branch_id === newBranch.id && c.category_name === 'なし',
       );
       if (!existingCategory) {
         const defaultCategory: MenuCategory = {
           id: defaultCategoryId,
           branch_id: newBranch.id,
-          category_name: 'フード',
+          category_name: 'なし',
           sort_order: 0,
           created_at: nowIso,
         };

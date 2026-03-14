@@ -7,6 +7,10 @@ DROP POLICY IF EXISTS "Users can view own prep ingredients" ON public.prep_ingre
 DROP POLICY IF EXISTS "Users can insert own prep ingredients" ON public.prep_ingredients;
 DROP POLICY IF EXISTS "Users can update own prep ingredients" ON public.prep_ingredients;
 DROP POLICY IF EXISTS "Users can delete own prep ingredients" ON public.prep_ingredients;
+DROP POLICY IF EXISTS "Prep ingredients public read" ON public.prep_ingredients;
+DROP POLICY IF EXISTS "Prep ingredients public insert" ON public.prep_ingredients;
+DROP POLICY IF EXISTS "Prep ingredients public update" ON public.prep_ingredients;
+DROP POLICY IF EXISTS "Prep ingredients public delete" ON public.prep_ingredients;
 
 CREATE POLICY "Prep ingredients public read"
   ON public.prep_ingredients

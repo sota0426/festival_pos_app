@@ -234,6 +234,10 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
 
   useEffect(() => {
     const branches = [...branchRows].sort((a, b) => a.branch_code.localeCompare(b.branch_code));
+    const existingBranchIds = new Set(branches.map((branch) => branch.id));
+    const validTransactions = transactionRows.filter((tx) => existingBranchIds.has(tx.branch_id));
+    const validExpenses = expenseRows.filter((expense) => existingBranchIds.has(expense.branch_id));
+
     setBranchLegend(
       branches.map((branch, index) => ({
         branch_id: branch.id,
@@ -243,12 +247,12 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
       })),
     );
 
-    const total_sales = transactionRows.reduce((sum, tx) => sum + (tx.total_amount ?? 0), 0);
-    const transaction_count = transactionRows.length;
-    const paypay_sales = transactionRows
+    const total_sales = validTransactions.reduce((sum, tx) => sum + (tx.total_amount ?? 0), 0);
+    const transaction_count = validTransactions.length;
+    const paypay_sales = validTransactions
       .filter((tx) => tx.payment_method === 'paypay')
       .reduce((sum, tx) => sum + tx.total_amount, 0);
-    const voucher_sales = transactionRows
+    const voucher_sales = validTransactions
       .filter((tx) => tx.payment_method === 'voucher')
       .reduce((sum, tx) => sum + tx.total_amount, 0);
     setTotalSales({
@@ -260,12 +264,12 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
     });
 
     const branchSalesData: BranchFinance[] = branches.map((branch) => {
-      const tx = transactionRows.filter((t) => t.branch_id === branch.id);
+      const tx = validTransactions.filter((t) => t.branch_id === branch.id);
       const total = tx.reduce((sum, t) => sum + t.total_amount, 0);
       const count = tx.length;
       const paypay = tx.filter((t) => t.payment_method === 'paypay').reduce((sum, t) => sum + t.total_amount, 0);
       const voucher = tx.filter((t) => t.payment_method === 'voucher').reduce((sum, t) => sum + t.total_amount, 0);
-      const expense = expenseRows
+      const expense = validExpenses
         .filter((e) => e.branch_id === branch.id)
         .reduce((sum, e) => sum + (e.amount ?? 0), 0);
       return {
@@ -287,7 +291,7 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
     setOverallTarget(branches.reduce((sum, b) => sum + b.sales_target, 0));
 
     const hourlyMap = new Map<string, Record<string, number>>();
-    transactionRows.forEach((tx) => {
+    validTransactions.forEach((tx) => {
       const d = new Date(tx.created_at);
       const key = `${String(d.getHours()).padStart(2, '0')}:00`;
       const current = hourlyMap.get(key) ?? {};

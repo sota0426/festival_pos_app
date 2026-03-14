@@ -1,8 +1,8 @@
 // Supabase Edge Function: Stripe Checkout Session 作成
 // デプロイ: supabase functions deploy create-checkout-session
 // 環境変数:
-// STRIPE_SECRET_KEY, STRIPE_STORE_PRICE_ID,
-// STRIPE_ORG_LIGHT_PRICE_ID, STRIPE_ORG_STANDARD_PRICE_ID, STRIPE_ORG_PREMIUM_PRICE_ID,
+// STRIPE_SECRET_KEY,
+// STRIPE_STORE_PRICE_ID, STRIPE_ORG_STANDARD_PRICE_ID, STRIPE_ORG_PREMIUM_PRICE_ID,
 // (互換) STRIPE_ORG_PRICE_ID, APP_URL
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
@@ -10,16 +10,14 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY')!;
 const STRIPE_STORE_PRICE_ID = Deno.env.get('STRIPE_STORE_PRICE_ID')!;
-const STRIPE_ORG_LIGHT_PRICE_ID = Deno.env.get('STRIPE_ORG_LIGHT_PRICE_ID')!;
 const STRIPE_ORG_STANDARD_PRICE_ID = Deno.env.get('STRIPE_ORG_STANDARD_PRICE_ID') || Deno.env.get('STRIPE_ORG_PRICE_ID')!;
 const STRIPE_ORG_PREMIUM_PRICE_ID = Deno.env.get('STRIPE_ORG_PREMIUM_PRICE_ID')!;
 const APP_URL = Deno.env.get('APP_URL') || 'https://localhost:8081';
 
-type CheckoutPlan = 'store' | 'org_light' | 'org_standard' | 'org_premium';
+type CheckoutPlan = 'store' | 'org_standard' | 'org_premium';
 
 const PRICE_ID_BY_PLAN: Record<CheckoutPlan, string> = {
   store: STRIPE_STORE_PRICE_ID,
-  org_light: STRIPE_ORG_LIGHT_PRICE_ID,
   org_standard: STRIPE_ORG_STANDARD_PRICE_ID,
   org_premium: STRIPE_ORG_PREMIUM_PRICE_ID,
 };
@@ -52,7 +50,7 @@ serve(async (req) => {
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
     const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
@@ -106,7 +104,7 @@ serve(async (req) => {
         .eq('user_id', user.id);
     }
 
-    // Checkout Session 作成（3か月利用パス: 一回払い）
+    // Checkout Session 作成（6か月利用パス: 一回払い）
     const sessionRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
       method: 'POST',
       headers: {
@@ -124,7 +122,7 @@ serve(async (req) => {
         cancel_url: `${APP_URL}?checkout=cancel`,
         'metadata[supabase_user_id]': user.id,
         'metadata[plan]': targetPlan,
-        'metadata[pass_duration_days]': '90',
+        'metadata[pass_duration_days]': '180',
       }),
     });
 

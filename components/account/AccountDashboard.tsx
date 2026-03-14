@@ -13,11 +13,11 @@ interface AccountDashboardProps {
 
 const planLabels: Record<string, { label: string; color: string; bg: string }> = {
   free: { label: '無料プラン', color: 'text-green-700', bg: 'bg-green-100' },
-  store: { label: '店舗3か月パス（1店舗）', color: 'text-blue-700', bg: 'bg-blue-100' },
-  org_light: { label: '団体ライト3か月パス（3店舗）', color: 'text-violet-700', bg: 'bg-violet-100' },
-  org_standard: { label: '団体スタンダード3か月パス（10店舗）', color: 'text-purple-700', bg: 'bg-purple-100' },
-  org_premium: { label: '団体プレミアム3か月パス（30店舗）', color: 'text-fuchsia-700', bg: 'bg-fuchsia-100' },
-  organization: { label: '団体スタンダード3か月パス（10店舗）', color: 'text-purple-700', bg: 'bg-purple-100' }, // legacy
+  store: { label: '店舗プラン（同時稼働1店舗）', color: 'text-blue-700', bg: 'bg-blue-100' },
+  org_light: { label: '団体ライト（3店舗）', color: 'text-violet-700', bg: 'bg-violet-100' },
+  org_standard: { label: '団体スタンダード（10店舗）', color: 'text-purple-700', bg: 'bg-purple-100' },
+  org_premium: { label: '団体プレミアム（30店舗）', color: 'text-fuchsia-700', bg: 'bg-fuchsia-100' },
+  organization: { label: '団体スタンダード（10店舗）', color: 'text-purple-700', bg: 'bg-purple-100' }, // legacy
 };
 
 export const AccountDashboard = ({
@@ -95,7 +95,7 @@ export const AccountDashboard = ({
               >
                 {canAccessHQ
                   ? '売上集計・店舗管理'
-                  : '団体プランで利用可能'}
+                  : '店舗プラン以上で利用可能'}
               </Text>
             </Card>
           </TouchableOpacity>
@@ -130,7 +130,7 @@ export const AccountDashboard = ({
                 DB連携・他端末アクセス・本部機能
               </Text>
               <Text className="text-white text-center text-xs mt-2">
-                3か月パス 300円から
+                6か月パス 200円から
               </Text>
             </Card>
           </TouchableOpacity>

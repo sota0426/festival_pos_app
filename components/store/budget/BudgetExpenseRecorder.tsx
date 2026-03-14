@@ -8,13 +8,21 @@ import {
   deleteBudgetExpense,
   getDefaultExpenseRecorder,
   getBudgetExpenses,
+  getStoreSettings,
   saveBudgetExpenses,
   saveDefaultExpenseRecorder,
   saveBudgetExpense,
 } from "lib/storage";
 import { isSupabaseConfigured, supabase } from "lib/supabase";
-import type { Branch, BudgetExpense, ExpenseCategory, ExpensePaymentMethod } from "types/database";
+import type {
+  Branch,
+  BudgetExpense,
+  ExpenseCategory,
+  ExpensePaymentMethod,
+  ExpensePaymentMethodSettings,
+} from "types/database";
 import { useAuth } from "contexts/AuthContext";
+import { useSubscription } from "contexts/SubscriptionContext";
 import { DEMO_BUDGET_EXPENSES, resolveDemoBranchId } from "data/demoData";
 
 interface Props {
@@ -56,6 +64,13 @@ const PAYMENT_METHOD_COLORS: Record<ExpensePaymentMethod, { bg: string; text: st
   bank_transfer: { bg: "bg-sky-100", text: "text-sky-700" },
   advance: { bg: "bg-amber-100", text: "text-amber-700" },
 };
+const EXPENSE_PAYMENT_METHOD_ORDER: ExpensePaymentMethod[] = ["cash", "cashless", "bank_transfer", "advance"];
+const DEFAULT_EXPENSE_PAYMENT_METHODS: ExpensePaymentMethodSettings = {
+  cash: true,
+  cashless: true,
+  bank_transfer: true,
+  advance: true,
+};
 const INITIAL_VISIBLE_EXPENSES = 5;
 type ExpenseTab = "entry" | "history";
 type ExpenseSortKey = "created_desc" | "created_asc" | "amount_desc" | "amount_asc";
@@ -74,9 +89,11 @@ const EXPENSE_SORT_OPTIONS: { key: ExpenseSortKey; label: string }[] = [
 
 export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
   const { authState } = useAuth();
+  const { canSync } = useSubscription();
   const isDemo = authState.status === "demo";
   const demoBranchId = resolveDemoBranchId(branch);
-  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+  const canSyncToSupabase =
+    isSupabaseConfigured() && !isDemo && (authState.status === "login_code" || canSync);
 
   const [expenses, setExpenses] = useState<BudgetExpense[]>([]);
   const [expCategory, setExpCategory] = useState<ExpenseCategory>("material");
@@ -94,6 +111,9 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
   const [historyPaymentFilter, setHistoryPaymentFilter] = useState<"all" | ExpensePaymentMethod>("all");
   const [historySort, setHistorySort] = useState<ExpenseSortKey>("created_desc");
   const [pendingReimbursedToggle, setPendingReimbursedToggle] = useState<BudgetExpense | null>(null);
+  const [enabledExpensePaymentMethods, setEnabledExpensePaymentMethods] = useState<ExpensePaymentMethodSettings>(
+    DEFAULT_EXPENSE_PAYMENT_METHODS,
+  );
 
   const buildDemoExpenses = useCallback((): BudgetExpense[] => {
     const base = (demoBranchId ? DEMO_BUDGET_EXPENSES[demoBranchId] ?? [] : [])
@@ -246,6 +266,20 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
     loadDefaultRecorder();
   }, [branch.id]);
 
+  useEffect(() => {
+    const loadPaymentMethodSettings = async () => {
+      const settings = await getStoreSettings();
+      const nextSettings = settings.expense_payment_methods ?? DEFAULT_EXPENSE_PAYMENT_METHODS;
+      setEnabledExpensePaymentMethods({
+        cash: nextSettings.cash ?? true,
+        cashless: nextSettings.cashless ?? true,
+        bank_transfer: nextSettings.bank_transfer ?? true,
+        advance: nextSettings.advance ?? true,
+      });
+    };
+    loadPaymentMethodSettings();
+  }, [branch.id]);
+
   const expenseWithNumbers = useMemo(() => {
     const sorted = [...expenses].sort(
       (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
@@ -283,12 +317,29 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
     });
     return sorted;
   }, [expenseWithNumbers, historyCategoryFilter, historyPaymentFilter, historyRecorderFilter, historySort]);
+  const enabledExpenseMethods = useMemo(() => {
+    const enabled = EXPENSE_PAYMENT_METHOD_ORDER.filter((method) => enabledExpensePaymentMethods[method]);
+    return enabled.length > 0 ? enabled : EXPENSE_PAYMENT_METHOD_ORDER;
+  }, [enabledExpensePaymentMethods]);
+  const paymentMethodButtonWidth = enabledExpenseMethods.length >= 4 ? "48%" : "100%";
 
   useEffect(() => {
     if (historyRecorderFilter === "all") return;
     if (historyRecorderOptions.includes(historyRecorderFilter)) return;
     setHistoryRecorderFilter("all");
   }, [historyRecorderFilter, historyRecorderOptions]);
+
+  useEffect(() => {
+    if (enabledExpenseMethods.length === 0) return;
+    if (enabledExpenseMethods.includes(expPaymentMethod)) return;
+    setExpPaymentMethod(enabledExpenseMethods[0]);
+  }, [enabledExpenseMethods, expPaymentMethod]);
+
+  useEffect(() => {
+    if (historyPaymentFilter === "all") return;
+    if (enabledExpenseMethods.includes(historyPaymentFilter)) return;
+    setHistoryPaymentFilter("all");
+  }, [enabledExpenseMethods, historyPaymentFilter]);
 
   const handleAddExpense = async () => {
     const amount = parseInt(expAmount, 10);
@@ -572,12 +623,13 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
 
               <View className="mb-3">
                 <Text className="text-gray-600 text-sm mb-1">支払い方法</Text>
-                <View className="flex-row gap-2">
-                  {(["cash", "cashless", "bank_transfer", "advance"] as ExpensePaymentMethod[]).map((method) => (
+                <View className="flex-row flex-wrap justify-between">
+                  {enabledExpenseMethods.map((method) => (
                     <TouchableOpacity
                       key={method}
                       onPress={() => setExpPaymentMethod(method)}
-                      className={`flex-1 py-2 rounded-lg items-center border ${
+                      style={{ width: paymentMethodButtonWidth }}
+                      className={`py-2 rounded-lg items-center border mb-2 ${
                         expPaymentMethod === method ? `${PAYMENT_METHOD_COLORS[method].bg} border-current` : "bg-gray-50 border-gray-200"
                       }`}
                     >
@@ -716,7 +768,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
                 >
                   <Text className={`text-xs font-semibold ${historyPaymentFilter === "all" ? "text-white" : "text-gray-600"}`}>すべて</Text>
                 </TouchableOpacity>
-                {(["cash", "cashless", "bank_transfer", "advance"] as ExpensePaymentMethod[]).map((method) => (
+                {enabledExpenseMethods.map((method) => (
                   <TouchableOpacity
                     key={method}
                     onPress={() => setHistoryPaymentFilter(method)}

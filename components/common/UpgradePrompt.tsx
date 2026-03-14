@@ -1,4 +1,4 @@
-import { View, Text, TouchableOpacity } from 'react-native';
+import { Text, TouchableOpacity } from 'react-native';
 import { Card } from './Card';
 
 interface UpgradePromptProps {
@@ -8,7 +8,7 @@ interface UpgradePromptProps {
 
 export const UpgradePrompt = ({
   onUpgrade,
-  message = 'DB連携・他端末アクセス・本部機能を使うには有料プランが必要です',
+  message = 'DB連携と複数デバイス運用には有料プランが必要です',
 }: UpgradePromptProps) => {
   return (
     <TouchableOpacity onPress={onUpgrade} activeOpacity={0.8}>
@@ -18,7 +18,7 @@ export const UpgradePrompt = ({
         </Text>
         <Text className="text-blue-600 text-xs">{message}</Text>
         <Text className="text-blue-500 text-xs mt-2 font-semibold">
-          月額300円から &rarr;
+          6か月200円から &rarr;
         </Text>
       </Card>
     </TouchableOpacity>

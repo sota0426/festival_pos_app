@@ -21,6 +21,7 @@ import {
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useSubscription } from '../../../contexts/SubscriptionContext';
 import {
   DEMO_BUDGET_EXPENSES,
   DEMO_BUDGET_SETTINGS,
@@ -89,9 +90,11 @@ const BREAKEVEN_HINTS: Record<string, string> = {
 // ------- component -------
 export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManagerProps) => {
   const { authState } = useAuth();
+  const { canSync } = useSubscription();
   const isDemo = authState.status === 'demo';
   const demoBranchId = resolveDemoBranchId(branch);
-  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+  const canSyncToSupabase =
+    isSupabaseConfigured() && !isDemo && (authState.status === 'login_code' || canSync);
 
   const [activeTab, setActiveTab] = useState<BudgetTab>('dashboard');
   const [loading, setLoading] = useState(true);

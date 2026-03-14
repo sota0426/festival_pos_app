@@ -36,6 +36,24 @@ const inferPlanFromStripeSubscription = (stripeSub: any): PlanType | null => {
 const isOrganizationPlan = (plan: PlanType | null): boolean =>
   plan === 'org_light' || plan === 'org_standard' || plan === 'org_premium' || plan === 'organization';
 
+const getPlanRank = (plan: PlanType | null): number => {
+  switch (plan) {
+    case 'free':
+      return 0;
+    case 'store':
+      return 1;
+    case 'org_light':
+      return 2;
+    case 'org_standard':
+    case 'organization':
+      return 3;
+    case 'org_premium':
+      return 4;
+    default:
+      return 0;
+  }
+};
+
 const addDays = (base: Date, days: number): Date => {
   const next = new Date(base);
   next.setUTCDate(next.getUTCDate() + days);
@@ -81,7 +99,7 @@ serve(async (req) => {
         const userId = session.metadata?.supabase_user_id;
         const metadataPlan = normalizePlan(session.metadata?.plan);
         const subscriptionId = session.subscription;
-        const passDurationDays = Number.parseInt(session.metadata?.pass_duration_days ?? '90', 10) || 90;
+        const passDurationDays = Number.parseInt(session.metadata?.pass_duration_days ?? '180', 10) || 180;
 
         console.log('[Webhook] checkout.session.completed', {
           sessionId: session.id,
@@ -177,10 +195,10 @@ serve(async (req) => {
             }
           }
 
-          // 既存期限が将来なら、購入時点から90日ではなく「残期間の後に延長」して時間を失わないようにする
+          // 既存期限が将来なら、購入時点から180日ではなく「残期間の後に延長」して時間を失わないようにする
           const { data: existingSub } = await supabaseAdmin
             .from('subscriptions')
-            .select('current_period_end')
+            .select('plan_type,current_period_end')
             .eq('user_id', userId)
             .maybeSingle();
 
@@ -192,7 +210,7 @@ serve(async (req) => {
             currentPeriodEndIso = addDays(extensionBase, passDurationDays).toISOString();
           }
 
-          // サブスクリプション更新（3か月利用パスの状態保存）
+          // サブスクリプション更新（6か月利用パスの状態保存）
           const { error: updateError } = await supabaseAdmin
             .from('subscriptions')
             .update({
@@ -213,6 +231,19 @@ serve(async (req) => {
             throw updateError;
           }
           console.log('[Webhook] subscriptions update SUCCESS for', userId, '→', plan);
+
+          const downgraded = getPlanRank(existingSub?.plan_type as PlanType | null) > getPlanRank(plan);
+          if (downgraded) {
+            const { error: inactiveError } = await supabaseAdmin
+              .from('branches')
+              .update({ status: 'inactive' })
+              .eq('owner_id', userId);
+            if (inactiveError) {
+              console.error('[Webhook] downgrade branch inactivation FAILED:', inactiveError.message);
+              throw inactiveError;
+            }
+            console.log('[Webhook] downgrade detected; all branches set inactive for', userId);
+          }
 
           // ユーザーが店舗を持っていなければデフォルト店舗+ログインコードを自動作成
           const { data: existingBranches, error: branchSelectError } = await supabaseAdmin
@@ -307,6 +338,11 @@ serve(async (req) => {
         console.log('[Webhook] customer.subscription.updated', { stripeSubId, status: subscription.status });
 
         const nextPlan = inferPlanFromStripeSubscription(subscription);
+        const { data: currentSub } = await supabaseAdmin
+          .from('subscriptions')
+          .select('user_id,plan_type')
+          .eq('stripe_subscription_id', stripeSubId)
+          .maybeSingle();
         const updatePayload: Record<string, unknown> = {
           status: subscription.status === 'active' ? 'active' :
                   subscription.status === 'trialing' ? 'trialing' :
@@ -331,6 +367,21 @@ serve(async (req) => {
           throw subUpdateError;
         }
         console.log('[Webhook] subscription.updated SUCCESS for', stripeSubId);
+
+        if (nextPlan && currentSub?.user_id) {
+          const downgraded = getPlanRank(currentSub.plan_type as PlanType | null) > getPlanRank(nextPlan);
+          if (downgraded) {
+            const { error: inactiveError } = await supabaseAdmin
+              .from('branches')
+              .update({ status: 'inactive' })
+              .eq('owner_id', currentSub.user_id);
+            if (inactiveError) {
+              console.error('[Webhook] subscription.updated branch inactivation FAILED:', inactiveError.message);
+              throw inactiveError;
+            }
+            console.log('[Webhook] subscription.updated downgrade; all branches set inactive');
+          }
+        }
         break;
       }
 

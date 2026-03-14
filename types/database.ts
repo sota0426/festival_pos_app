@@ -136,6 +136,28 @@ export interface TransactionItem {
   subtotal: number;
 }
 
+export type MobileOrderRequestStatus = 'requested' | 'accepted' | 'completed' | 'cancelled';
+
+export interface MobileOrderRequest {
+  id: string;
+  branch_id: string;
+  order_number: string;
+  status: MobileOrderRequestStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MobileOrderRequestItem {
+  id: string;
+  request_id: string;
+  menu_id: string;
+  menu_name: string;
+  quantity: number;
+  unit_price: number;
+  subtotal: number;
+  created_at: string;
+}
+
 // Local storage types for offline support
 export interface PendingTransaction {
   id: string;
@@ -157,9 +179,17 @@ export interface PaymentMethodSettings {
   voucher: boolean;
 }
 
+export interface ExpensePaymentMethodSettings {
+  cash: boolean;
+  cashless: boolean;
+  bank_transfer: boolean;
+  advance: boolean;
+}
+
 export interface StoreSettings {
   payment_mode: PaymentMode;
   payment_methods: PaymentMethodSettings;
+  expense_payment_methods: ExpensePaymentMethodSettings;
   cashless_label: string;
   order_board_enabled: boolean;
   sub_screen_mode: boolean;
@@ -174,6 +204,7 @@ export interface RestrictionSettings {
   sales_cancel: boolean;     // 売上取消
   sales_history: boolean;    // 売上履歴閲覧
   sales_reset: boolean;      // 売上全削除
+  branch_name_change: boolean; // 店舗名変更
   payment_change: boolean;   // 支払い方法変更
   recorder_manage: boolean;  // 登録者設定の変更
   data_manage: boolean;      // データ削除・入出力

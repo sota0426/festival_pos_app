@@ -90,7 +90,7 @@ serve(async (req) => {
     }
     if (branch.status === 'inactive') {
       return new Response(
-        JSON.stringify({ valid: false }),
+        JSON.stringify({ valid: false, reason: 'inactive' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

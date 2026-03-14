@@ -11,6 +11,7 @@ import { handleExportCSV } from './ExportCSV';
 import { CancelModal } from './CancelModal';
 import { TransactionCard } from './TransactionCard';
 import { useAuth } from '../../../../contexts/AuthContext';
+import { useSubscription } from '../../../../contexts/SubscriptionContext';
 import { DEMO_TRANSACTIONS, resolveDemoBranchId } from '../../../../data/demoData';
 
 interface SalesHistoryProps {
@@ -32,9 +33,11 @@ export const SalesHistory = ({
   onBack,
 }: SalesHistoryProps) => {
   const { authState } = useAuth();
+  const { canSync } = useSubscription();
   const isDemo = authState.status === 'demo';
   const demoBranchId = resolveDemoBranchId(branch);
-  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+  const canSyncToSupabase =
+    isSupabaseConfigured() && !isDemo && (authState.status === 'login_code' || canSync);
 
   const [transactions, setTransactions] = useState<TransactionWithItems[]>([]);
   const [loading, setLoading] = useState(true);

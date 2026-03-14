@@ -12,6 +12,8 @@ import {
   Platform,
   LayoutAnimation,
   UIManager,
+  KeyboardAvoidingView,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
@@ -25,6 +27,7 @@ import { alertConfirm, alertNotify } from '../../../lib/alertUtils';
 import type { Branch, Menu, MenuCategory, RestrictionSettings } from '../../../types/database';
 import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useSubscription } from '../../../contexts/SubscriptionContext';
 import { DEMO_MENU_CATEGORIES, DEMO_MENUS, resolveDemoBranchId } from '../../../data/demoData';
 
 const MENU_CSV_HEADER_COLUMNS = ['メニュー名', '価格', 'カテゴリ', '在庫管理', '在庫数', '表示'];
@@ -104,9 +107,11 @@ interface MenuManagementProps {
 
 export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const { authState } = useAuth();
+  const { canSync } = useSubscription();
   const isDemo = authState.status === 'demo';
   const demoBranchId = useMemo(() => resolveDemoBranchId(branch), [branch]);
-  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+  const canSyncToSupabase =
+    isSupabaseConfigured() && !isDemo && (authState.status === 'login_code' || canSync);
 
   const [menus, setMenus] = useState<Menu[]>([]);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
@@ -147,13 +152,15 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const [adminGuardPwInput, setAdminGuardPwInput] = useState('');
   const [adminGuardError, setAdminGuardError] = useState('');
   const [adminGuardCallback, setAdminGuardCallback] = useState<(() => void) | null>(null);
+  const { height: viewportHeight } = useWindowDimensions();
+  const menuFormModalMaxHeight = Math.max(320, Math.floor(viewportHeight * 0.72));
 
   const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
   const defaultCategoryId = useMemo(() => {
     if (categories.length === 0) return null;
     const ordered = [...categories].sort((a, b) => a.sort_order - b.sort_order);
-    const foodCategory = ordered.find((category) => category.category_name.trim() === 'フード');
-    return foodCategory?.id ?? ordered[0]?.id ?? null;
+    const defaultCategory = ordered.find((category) => category.category_name.trim() === 'なし');
+    return defaultCategory?.id ?? ordered[0]?.id ?? null;
   }, [categories]);
 
   const getNextSortOrder = useCallback(
@@ -217,35 +224,6 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     [getCategoryDigit, sortMenus],
   );
 
-  /** カテゴリが0件のとき「フード」をデフォルトとして作成する */
-  const ensureDefaultCategory = useCallback(async (existingCategories: MenuCategory[]): Promise<MenuCategory[]> => {
-    if (existingCategories.length > 0) return existingCategories;
-
-    const defaultCategory: MenuCategory = {
-      id: Crypto.randomUUID(),
-      branch_id: branch.id,
-      category_name: 'フード',
-      sort_order: 0,
-      created_at: new Date().toISOString(),
-    };
-
-    // Supabase に保存
-    if (canSyncToSupabase) {
-      const { error } = await supabase.from('menu_categories').insert(defaultCategory);
-      if (error) {
-        console.error('Error creating default category:', error);
-        // Supabase 失敗でもローカルには保存する
-      }
-    }
-
-    // ローカルに保存
-    const localCategories = await getMenuCategories();
-    const otherCategories = localCategories.filter((c) => c.branch_id !== branch.id);
-    await saveMenuCategories([...otherCategories, defaultCategory]);
-
-    return [defaultCategory];
-  }, [branch.id, canSyncToSupabase]);
-
   const fetchCategories = useCallback(async () => {
     try {
       if (isDemo && demoBranchId) {
@@ -268,25 +246,22 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           .order('sort_order', { ascending: true });
 
         if (!error && data) {
-          // カテゴリが0件なら「フード」を自動作成
-          const finalCategories = await ensureDefaultCategory(data);
-          setCategories(finalCategories);
+          setCategories(data);
           // Merge with other branches' categories in local storage
           const otherCategories = localCategories.filter((c) => c.branch_id !== branch.id);
-          await saveMenuCategories([...otherCategories, ...finalCategories]);
+          await saveMenuCategories([...otherCategories, ...data]);
           return;
         }
       }
 
-      // オフライン時: ローカルのカテゴリを使用（0件なら自動作成）
-      const finalCategories = await ensureDefaultCategory(branchCategories);
-      setCategories(finalCategories);
+      // オフライン時: ローカルのカテゴリをそのまま使用
+      setCategories(branchCategories);
     } catch (error) {
       console.error('Error fetching categories:', error);
       const localCategories = await getMenuCategories();
       setCategories(localCategories.filter((c) => c.branch_id === branch.id));
     }
-  }, [branch.id, ensureDefaultCategory, isDemo, demoBranchId, canSyncToSupabase]);
+  }, [branch.id, isDemo, demoBranchId, canSyncToSupabase]);
 
   const fetchMenus = useCallback(async () => {
     try {
@@ -768,7 +743,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   };
 
   const buildMenuImportTemplateCsv = (): string => {
-    const sample = ['サンプルメニュー', '500', 'フード', 'true', '50', 'true'].map(toCsvCell).join(',');
+    const sample = ['サンプルメニュー', '500', 'なし', 'true', '50', 'true'].map(toCsvCell).join(',');
     return `\uFEFF${MENU_CSV_HEADER}\n${sample}`;
   };
 
@@ -1258,6 +1233,10 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   }, [categories, menus, resequenceCategoryMenus, sortMenus, canSyncToSupabase]);
 
   const menuSections = useMemo(() => {
+    if (orderedCategories.length === 0) {
+      return [];
+    }
+
       let sections = orderedCategories
       .map((category) => ({
         id: category.id,
@@ -1292,10 +1271,9 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           menus: uncategorized,
         });
       } else {
-        // no fallback category at all → create a generic uncategorized section
         sections.push({
           id: 'uncategorized',
-          title: 'フード',
+          title: 'なし',
           categoryCode: '1',
           visual: UNCATEGORIZED_VISUAL,
           menus: uncategorized,
@@ -1304,6 +1282,11 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     }
     return sections.filter((section) => section.menus.length > 0);
   }, [orderedCategories, categoryMetaMap, categories, menus, sortMenus, defaultCategoryId]);
+
+  const flatMenusWithoutCategory = useMemo(
+    () => sortMenus(menus),
+    [menus, sortMenus],
+  );
 
   const renderMenuItem = ({
     item,
@@ -1627,7 +1610,37 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               />
             </View>
           ) : null}
-          {menuSections.length === 0 ? (
+          {orderedCategories.length === 0 ? (
+            flatMenusWithoutCategory.length === 0 ? (
+              <View className="items-center py-16 px-6">
+                <Text className="text-5xl mb-4">🍽️</Text>
+                <Text className="text-gray-700 text-lg font-bold mb-2">メニューがありません</Text>
+                <Text className="text-gray-400 text-sm text-center mb-8 leading-5">
+                  最初のメニューを追加して{'\n'}お客様に提供する商品を登録しましょう
+                </Text>
+                <TouchableOpacity
+                  onPress={() => withMenuRestrictionCheck('menu_add', () => { resetForm(); setShowAddModal(true); })}
+                  activeOpacity={0.8}
+                  className="bg-blue-500 px-8 py-4 rounded-2xl"
+                >
+                  <Text className="text-white text-base font-bold">＋ メニューを追加</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View className="mb-5">
+                {flatMenusWithoutCategory.map((menu, index) => (
+                  <View key={menu.id}>
+                    {renderMenuItem({
+                      item: menu,
+                      indexInSection: index,
+                      sectionLength: flatMenusWithoutCategory.length,
+                      categoryVisual: UNCATEGORIZED_VISUAL,
+                    })}
+                  </View>
+                ))}
+              </View>
+            )
+          ) : menuSections.length === 0 ? (
             <View className="items-center py-16 px-6">
               <Text className="text-5xl mb-4">🍽️</Text>
               <Text className="text-gray-700 text-lg font-bold mb-2">メニューがありません</Text>
@@ -1819,7 +1832,19 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         }}
         title="メニュー追加"
       >
-        {renderMenuForm(false)}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
+        >
+          <ScrollView
+            style={{ maxHeight: menuFormModalMaxHeight }}
+            contentContainerStyle={{ paddingBottom: 12 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {renderMenuForm(false)}
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal
@@ -1831,7 +1856,19 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         }}
         title="メニュー編集"
       >
-        {renderMenuForm(true)}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
+        >
+          <ScrollView
+            style={{ maxHeight: menuFormModalMaxHeight }}
+            contentContainerStyle={{ paddingBottom: 12 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {renderMenuForm(true)}
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Category add modal */}
@@ -2080,7 +2117,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         title="管理者パスワード"
       >
         <Text className="text-gray-600 text-sm mb-3">
-          この操作には管理者パスワードが必要です
+          この操作には管理者パスワードが必要です<br />デフォルトのパスワードは[0000]です。
         </Text>
         <TextInput
           value={adminGuardPwInput}

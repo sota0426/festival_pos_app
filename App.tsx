@@ -10,7 +10,7 @@ import { SubscriptionProvider } from './contexts/SubscriptionContext';
 import { DemoProvider } from './contexts/DemoContext';
 
 import { HQDashboard, HQBranchReports } from './components/hq';
-import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, PrepInventory, BudgetManager } from './components/store';
+import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBoard, MobileOrderDashboard, PrepInventory, BudgetManager } from './components/store';
 import { useSync } from './hooks/useSync';
 import type { Branch, BudgetExpense, Menu, MenuCategory, PrepIngredient } from './types/database';
 import {
@@ -36,6 +36,7 @@ import { PricingScreen } from './components/account/PricingScreen';
 import { MyStores } from './components/account/MyStores';
 import { DemoBanner, SyncStatusBanner } from './components/common';
 import { DEMO_BRANCHES } from './data/demoData';
+import { MobileOrderClient } from './components/customer/MobileOrderClient';
 
 type Screen =
   // 新画面
@@ -46,6 +47,7 @@ type Screen =
   | 'account_dashboard'
   | 'pricing'
   | 'my_stores'
+  | 'mobile_order_client'
   // 既存画面
   | 'home'
   | 'hq_home'
@@ -57,6 +59,7 @@ type Screen =
   | 'store_register'
   | 'store_history'
   | 'store_order_board'
+  | 'store_mobile_order'
   | 'store_prep'
   | 'store_budget'
   | 'store_budget_expense';
@@ -65,8 +68,26 @@ function AppContent() {
   const { authState, enterDemo, exitDemo, hasDemoReturnTarget, refreshSubscription } = useAuth();
 
   const [currentScreen, setCurrentScreen] = useState<Screen>(() => {
-    if (Platform.OS !== 'web') return 'landing';
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('mobile_order') === '1' && params.get('branch')) {
+        return 'mobile_order_client';
+      }
+      if (params.get('login_code')) {
+        return 'login_code_entry';
+      }
+    }
     return 'landing';
+  });
+  const [mobileOrderBranchId] = useState<string | null>(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('branch');
+  });
+  const [prefillLoginCode] = useState<string | null>(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('login_code');
   });
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [hqBranchInfoReturnScreen, setHqBranchInfoReturnScreen] = useState<'hq_home' | 'hq_dashboard'>('hq_home');
@@ -191,7 +212,6 @@ function AppContent() {
       if (hasDemoReturnTarget && demoReturnScreen) {
         exitDemo();
         setCurrentBranch(null);
-        // デモ中の「ログイン画面に戻る」は、安全に復帰できる管理者トップへ戻す
         setCurrentScreen('account_dashboard');
       } else {
         setCurrentBranch(null);
@@ -411,6 +431,16 @@ function AppContent() {
 
   const renderScreen = () => {
     switch (currentScreen) {
+      case 'mobile_order_client':
+        if (!mobileOrderBranchId) {
+          return (
+            <View className="flex-1 justify-center items-center bg-white">
+              <Text className="text-gray-600">無効なモバイルオーダーURLです</Text>
+            </View>
+          );
+        }
+        return <MobileOrderClient branchId={mobileOrderBranchId} />;
+
       // ===== 新画面 =====
       case 'landing':
         return (
@@ -436,6 +466,7 @@ function AppContent() {
         return (
           <LoginCodeEntry
             onBack={() => setCurrentScreen('landing')}
+            initialCode={prefillLoginCode}
           />
         );
 
@@ -575,6 +606,7 @@ function AppContent() {
               onNavigateToMenus={() => setCurrentScreen('store_menus')}
               onNavigateToHistory={() => setCurrentScreen('store_history')}
               onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
+              onNavigateToMobileOrder={() => setCurrentScreen('store_mobile_order')}
               onNavigateToPrep={() => setCurrentScreen('store_prep')}
               onNavigateToBudget={() => setCurrentScreen('store_budget')}
               onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
@@ -650,6 +682,22 @@ function AppContent() {
             <DemoBanner />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <OrderBoard
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_home')}
+            />
+          </>
+        );
+
+      case 'store_mobile_order':
+        if (!currentBranch) {
+          navigateToStoreEntry();
+          return null;
+        }
+        return (
+          <>
+            <DemoBanner />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
+            <MobileOrderDashboard
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
             />

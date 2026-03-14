@@ -6,9 +6,9 @@ import { Button, Card, Header, Input, Modal } from '../../common';
 import { isSupabaseConfigured, supabase } from '../../../lib/supabase';
 import { alertNotify } from '../../../lib/alertUtils';
 import { getPrepIngredients, savePrepIngredients } from '../../../lib/storage';
-import { getSyncEnabled } from '../../../lib/syncMode';
 import type { Branch, PrepIngredient } from '../../../types/database';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useSubscription } from '../../../contexts/SubscriptionContext';
 import { DEMO_PREP_INGREDIENTS, resolveDemoBranchId } from '../../../data/demoData';
 
 interface PrepInventoryProps {
@@ -18,9 +18,11 @@ interface PrepInventoryProps {
 
 export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
   const { authState } = useAuth();
+  const { canSync } = useSubscription();
   const isDemo = authState.status === 'demo';
   const demoBranchId = resolveDemoBranchId(branch);
-  const canSyncToSupabase = isSupabaseConfigured() && getSyncEnabled() && !isDemo;
+  const canSyncToSupabase =
+    isSupabaseConfigured() && !isDemo && (authState.status === 'login_code' || canSync);
 
   const [ingredients, setIngredients] = useState<PrepIngredient[]>([]);
   const [loading, setLoading] = useState(true);

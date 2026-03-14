@@ -266,6 +266,7 @@ export const saveStoreSettings = async (settings: StoreSettings): Promise<void> 
 };
 
 const DEFAULT_PAYMENT_METHODS = { cash: true, cashless: true, voucher: true };
+const DEFAULT_EXPENSE_PAYMENT_METHODS = { cash: true, cashless: true, bank_transfer: true, advance: true };
 
 export const getStoreSettings = async (): Promise<StoreSettings> => {
   const data = await AsyncStorage.getItem(STORAGE_KEYS.STORE_SETTINGS);
@@ -276,6 +277,10 @@ export const getStoreSettings = async (): Promise<StoreSettings> => {
     return {
       payment_mode: parsed.payment_mode ?? 'cashless',
       payment_methods: { ...DEFAULT_PAYMENT_METHODS, ...parsed.payment_methods },
+      expense_payment_methods: {
+        ...DEFAULT_EXPENSE_PAYMENT_METHODS,
+        ...parsed.expense_payment_methods,
+      },
       cashless_label: String(parsed.cashless_label ?? 'PayPay').trim() || 'PayPay',
       order_board_enabled: parsed.order_board_enabled ?? false,
       sub_screen_mode: parsed.sub_screen_mode ?? false,
@@ -286,6 +291,7 @@ export const getStoreSettings = async (): Promise<StoreSettings> => {
   return {
     payment_mode: 'cashless',
     payment_methods: DEFAULT_PAYMENT_METHODS,
+    expense_payment_methods: DEFAULT_EXPENSE_PAYMENT_METHODS,
     cashless_label: 'PayPay',
     order_board_enabled: false,
     sub_screen_mode: false,
@@ -494,6 +500,7 @@ const DEFAULT_RESTRICTIONS: RestrictionSettings = {
   sales_cancel: false,
   sales_history: false,
   sales_reset: true,
+  branch_name_change: false,
   payment_change: false,
   recorder_manage: false,
   data_manage: false,

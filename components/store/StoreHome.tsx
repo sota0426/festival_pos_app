@@ -34,6 +34,7 @@ import type {
   Branch,
   BudgetExpense,
   BudgetSettings,
+  ExpensePaymentMethodSettings,
   Menu,
   MenuCategory,
   PaymentMethodSettings,
@@ -69,6 +70,7 @@ interface StoreHomeProps {
   onNavigateToMenus: () => void;
   onNavigateToHistory: () => void;
   onNavigateToOrderBoard: () => void;
+  onNavigateToMobileOrder: () => void;
   onNavigateToPrep: () => void;
   onNavigateToBudget: () => void;
   onNavigateToBudgetExpense: () => void;
@@ -259,6 +261,7 @@ export const StoreHome = ({
   onNavigateToMenus,
   onNavigateToHistory,
   onNavigateToOrderBoard,
+  onNavigateToMobileOrder,
   onNavigateToPrep,
   onNavigateToBudget,
   onNavigateToBudgetExpense,
@@ -269,13 +272,19 @@ export const StoreHome = ({
 }: StoreHomeProps) => {
   const recorderFeatureEnabled = false;
   const { authState, exitLoginCode, hasDemoReturnTarget } = useAuth();
-  const { isOrgPlan, isFreePlan } = useSubscription();
+  const { isOrgPlan, isFreePlan, canSync } = useSubscription();
   const [activeTab, setActiveTab] = useState<TabKey>('main');
   const [settingsView, setSettingsView] = useState<SettingsView>('admin');
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodSettings>({
     cash: false,
     cashless: true,
     voucher: true,
+  });
+  const [expensePaymentMethods, setExpensePaymentMethods] = useState<ExpensePaymentMethodSettings>({
+    cash: true,
+    cashless: true,
+    bank_transfer: true,
+    advance: true,
   });
   const [cashlessLabel, setCashlessLabel] = useState('PayPay');
   const [showCashlessLabelEditor, setShowCashlessLabelEditor] = useState(false);
@@ -309,12 +318,16 @@ export const StoreHome = ({
   const [importSourceName, setImportSourceName] = useState('');
   const [importError, setImportError] = useState('');
   const isFreeAuthenticatedPlan = authState.status === 'authenticated' && isFreePlan;
-  const canSyncToSupabase = isSupabaseConfigured() && authState.status !== 'demo';
+  const canSyncToSupabase =
+    isSupabaseConfigured() &&
+    authState.status !== 'demo' &&
+    (authState.status === 'login_code' || canSync);
 
   // Restriction management state
   const [restrictions, setRestrictions] = useState<RestrictionSettings>({
     menu_add: false, menu_edit: false, menu_delete: false,
     sales_cancel: false, sales_history: false, sales_reset: true,
+    branch_name_change: false,
     payment_change: false, recorder_manage: false, data_manage: false, settings_access: false,
   });
   const [showRestrictionsModal, setShowRestrictionsModal] = useState(false);
@@ -328,6 +341,7 @@ export const StoreHome = ({
   const [branchLoginCode, setBranchLoginCode] = useState<string | null>(null);
   const [showLoginCodeModal, setShowLoginCodeModal] = useState(false);
   const [copiedLoginCode, setCopiedLoginCode] = useState(false);
+  const [copiedLoginUrl, setCopiedLoginUrl] = useState(false);
   const [recorders, setRecorders] = useState<BranchRecorder[]>([]);
   const [newRecorderName, setNewRecorderName] = useState('');
   const [newRecorderNote, setNewRecorderNote] = useState('');
@@ -380,10 +394,14 @@ export const StoreHome = ({
       }
       if (authState.status === 'demo') {
         setPaymentMethods({ cash: true, cashless: true, voucher: true });
+        setExpensePaymentMethods({ cash: true, cashless: true, bank_transfer: true, advance: true });
         setCashlessLabel('PayPay');
       } else {
         if (settings.payment_methods) {
           setPaymentMethods(settings.payment_methods);
+        }
+        if (settings.expense_payment_methods) {
+          setExpensePaymentMethods(settings.expense_payment_methods);
         }
         setCashlessLabel(settings.cashless_label || 'PayPay');
       }
@@ -458,7 +476,8 @@ export const StoreHome = ({
 
   useEffect(() => {
     const loadBranchLoginCode = async () => {
-      if (authState.status !== 'authenticated') {
+      const canUseShareInfo = authState.status === 'authenticated' || authState.status === 'login_code';
+      if (!canUseShareInfo) {
         setBranchLoginCode(null);
         return;
       }
@@ -1000,6 +1019,21 @@ export const StoreHome = ({
       setPaymentMethods(updated);
       const currentSettings = await getStoreSettings();
       await saveStoreSettings({ ...currentSettings, payment_methods: updated });
+    };
+    if (restrictions.payment_change) {
+      openAdminGuard(doToggle);
+    } else {
+      await doToggle();
+    }
+  };
+
+  const toggleExpensePaymentMethod = async (key: keyof ExpensePaymentMethodSettings) => {
+    const doToggle = async () => {
+      const updated = { ...expensePaymentMethods, [key]: !expensePaymentMethods[key] };
+      if (!updated.cash && !updated.cashless && !updated.bank_transfer && !updated.advance) return;
+      setExpensePaymentMethods(updated);
+      const currentSettings = await getStoreSettings();
+      await saveStoreSettings({ ...currentSettings, expense_payment_methods: updated });
     };
     if (restrictions.payment_change) {
       openAdminGuard(doToggle);
@@ -1853,12 +1887,20 @@ export const StoreHome = ({
       onLogout();
   };
 
-  const maskedLoginCode = branchLoginCode
-    ? `${branchLoginCode.slice(0, 1)}${'＊'.repeat(Math.max(0, branchLoginCode.length - 1))}`
-    : null;
-  const canShowLoginCodeInHeader = authState.status === 'authenticated';
+  const webLoginUrl =
+    Platform.OS === 'web' && typeof window !== 'undefined' && branchLoginCode
+      ? `${window.location.origin}${window.location.pathname}?login_code=${encodeURIComponent(branchLoginCode)}`
+      : null;
+  const canShowLoginCodeInHeader = authState.status === 'authenticated' || authState.status === 'login_code';
   const topButtonTitle =
     authState.status === 'demo' && hasDemoReturnTarget ? 'ログイン画面に戻る' : 'トップ画面';
+
+  const notifyPaidFeatureOnly = (featureName: string) => {
+    alertNotify(
+      '有料プラン限定',
+      `${featureName} は有料プラン（店舗6か月パス以上）で利用できます。`
+    );
+  };
 
   const handleCopyLoginCode = async () => {
     if (!branchLoginCode) return;
@@ -1872,6 +1914,21 @@ export const StoreHome = ({
       setTimeout(() => setCopiedLoginCode(false), 1600);
     } catch {
       alertNotify('エラー', 'ログインコードのコピーに失敗しました');
+    }
+  };
+
+  const handleCopyLoginUrl = async () => {
+    if (!webLoginUrl) return;
+    try {
+      if (Platform.OS === 'web') {
+        await navigator.clipboard.writeText(webLoginUrl);
+      } else {
+        await Clipboard.setStringAsync(webLoginUrl);
+      }
+      setCopiedLoginUrl(true);
+      setTimeout(() => setCopiedLoginUrl(false), 1600);
+    } catch {
+      alertNotify('エラー', 'ログインURLのコピーに失敗しました');
     }
   };
 
@@ -1908,16 +1965,15 @@ export const StoreHome = ({
         titleLeftElement={branchSwitcher}
         subtitleElement={
           <View className="mt-1 gap-1">
-            <Text className="text-sm text-gray-500">支店番号: {branch.branch_code}</Text>
-            <View className="flex-row flex-wrap items-start gap-1.5">
-
-              {canShowLoginCodeInHeader && maskedLoginCode ? (
+            <View className="flex-row items-center gap-2">
+              <Text className="text-sm text-gray-500">支店番号: {branch.branch_code}</Text>
+              {canShowLoginCodeInHeader && branchLoginCode ? (
                 <TouchableOpacity
                   onPress={() => setShowLoginCodeModal(true)}
                   activeOpacity={0.8}
                   className="px-2 py-0.5 rounded-full border border-blue-200 bg-blue-50"
                 >
-                  <Text className="text-xs font-medium text-blue-700">ログインコード: {maskedLoginCode}</Text>
+                  <Text className="text-[11px] font-semibold text-blue-700">共有</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -1986,22 +2042,57 @@ export const StoreHome = ({
 
         {activeTab === 'share' && (
           <View className="flex-1 gap-4">
-            {/* 注文受付 */}
-            <TouchableOpacity onPress={() => handleSubFeatureNavigation(onNavigateToOrderBoard)} activeOpacity={0.8}>
+            {isFreeAuthenticatedPlan && (
+              <Card className="bg-amber-50 border border-amber-200 p-4">
+                <Text className="text-amber-900 font-bold text-base">共有タブは有料プラン機能です</Text>
+                <Text className="text-amber-800 text-sm mt-1">
+                  ボタンはお試しできますが、実際の利用には有料プラン（店舗6か月パス以上）が必要です。
+                </Text>
+              </Card>
+            )}
+          {/* 注文受付 */}
+            <TouchableOpacity
+              onPress={() =>
+                isFreeAuthenticatedPlan
+                  ? notifyPaidFeatureOnly('注文受付')
+                  : handleSubFeatureNavigation(onNavigateToOrderBoard)
+              }
+              activeOpacity={0.8}
+            >
               <Card className="bg-orange-500 p-4">
                 <Text className="text-white text-2xl font-bold text-center">注文受付</Text>
                 <Text className="text-orange-100 text-center mt-2">別端末で注文を表示・管理</Text>
               </Card>
             </TouchableOpacity>
 
+
+            {/* モバイルオーダー */}
+            <TouchableOpacity
+              onPress={() =>
+                isFreeAuthenticatedPlan
+                  ? notifyPaidFeatureOnly('モバイルオーダー')
+                  : handleSubFeatureNavigation(onNavigateToMobileOrder)
+              }
+              activeOpacity={0.8}
+            >
+              <Card className="bg-rose-500 p-4">
+                <Text className="text-white text-2xl font-bold text-center">モバイルオーダー</Text>
+                <Text className="text-rose-100 text-center mt-2">注文状況を共有して提供をスムーズに</Text>
+              </Card>
+            </TouchableOpacity>
+
             {/* 在庫確認（旧: 調理の下準備） */}
             <TouchableOpacity
-              onPress={onNavigateToPrep}
+              onPress={() =>
+                isFreeAuthenticatedPlan
+                  ? notifyPaidFeatureOnly('在庫確認')
+                  : onNavigateToPrep()
+              }
               activeOpacity={0.8}
             >
               <Card className="bg-indigo-500 p-4">
                 <Text className="text-white text-2xl font-bold text-center">在庫確認</Text>
-                <Text className="text-indigo-100 text-center mt-2">食材・在庫をみんなで共有</Text>
+                <Text className="text-indigo-100 text-center mt-2">在庫をみんなで共有</Text>
               </Card>
             </TouchableOpacity>
 
@@ -2290,7 +2381,7 @@ export const StoreHome = ({
                   <Text className="text-gray-900 font-bold mb-2">店舗設定</Text>
 
                   <TouchableOpacity
-                    onPress={() => withRestrictionCheck('settings_access', () => { resetBranchNameForm(); setShowBranchNameModal(true); })}
+                    onPress={() => withRestrictionCheck('branch_name_change', () => { resetBranchNameForm(); setShowBranchNameModal(true); })}
                     activeOpacity={0.8}
                     className="flex-row items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 mb-2"
                   >
@@ -2355,23 +2446,6 @@ export const StoreHome = ({
                   </TouchableOpacity>
                 </View>
 
-                {authState.status === 'login_code' ? (
-                  <TouchableOpacity
-                    onPress={async () => {
-                      await exitLoginCode();
-                      onLogout();
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Card className="bg-white border border-red-200 p-4">
-                      <Text className="text-red-700 text-xl font-bold text-center">ログアウト</Text>
-                      <Text className="text-red-500 text-center mt-1 text-xs">
-                        ログインコード利用を終了してトップへ戻る
-                      </Text>
-                    </Card>
-                  </TouchableOpacity>
-                ) : null}
-
                 <View className="bg-white rounded-2xl border border-red-200 p-3">
                   <View className="bg-red-50 rounded-xl px-3 py-2 mb-2">
                     <Text className="text-red-800 font-bold">データ管理</Text>
@@ -2434,6 +2508,24 @@ export const StoreHome = ({
                   </TouchableOpacity>
 
                 </View>
+
+
+                {authState.status === 'login_code' ? (
+                  <TouchableOpacity
+                    onPress={async () => {
+                      await exitLoginCode();
+                      onLogout();
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Card className="bg-white border border-red-200 p-4">
+                      <Text className="text-red-700 text-xl font-bold text-center">ログアウト</Text>
+                      <Text className="text-red-500 text-center mt-1 text-xs">
+                        ログインコード利用を終了してトップへ戻る
+                      </Text>
+                    </Card>
+                  </TouchableOpacity>
+                ) : null}                
               </>
             )}
 
@@ -2604,6 +2696,65 @@ export const StoreHome = ({
           </View>
         </TouchableOpacity>
 
+        <View className="border-t border-gray-200 pt-3 mt-1">
+          <Text className="text-gray-900 font-semibold mb-1">支出管理の支払い方法</Text>
+          <Text className="text-gray-500 text-xs mb-2">会計→支出記録・履歴の選択肢を設定できます</Text>
+          <View className="flex-row flex-wrap justify-between">
+            {(
+              [
+                {
+                  key: 'cash',
+                  label: '現金',
+                  hint: '現金支払い',
+                  active: 'border-emerald-500 bg-emerald-50',
+                  icon: 'border-emerald-500 bg-emerald-500',
+                },
+                {
+                  key: 'cashless',
+                  label: 'キャッシュレス',
+                  hint: 'QR・カード決済',
+                  active: 'border-indigo-500 bg-indigo-50',
+                  icon: 'border-indigo-500 bg-indigo-500',
+                },
+                {
+                  key: 'bank_transfer',
+                  label: '振込・ネット決済',
+                  hint: '銀行振込・ネット決済',
+                  active: 'border-sky-500 bg-sky-50',
+                  icon: 'border-sky-500 bg-sky-500',
+                },
+                {
+                  key: 'advance',
+                  label: '立替',
+                  hint: 'あとで精算',
+                  active: 'border-amber-500 bg-amber-50',
+                  icon: 'border-amber-500 bg-amber-500',
+                },
+              ] as const
+            ).map((method) => {
+              const enabled = expensePaymentMethods[method.key];
+              return (
+                <TouchableOpacity
+                  key={`expense-payment-${method.key}`}
+                  onPress={() => toggleExpensePaymentMethod(method.key)}
+                  activeOpacity={0.7}
+                  className={`w-[48%] mb-2 p-3 rounded-xl border-2 ${enabled ? method.active : 'border-gray-200 bg-white'}`}
+                >
+                  <View className="flex-row items-center">
+                    <View className={`w-5 h-5 rounded border-2 mr-2 items-center justify-center ${enabled ? method.icon : 'border-gray-300'}`}>
+                      {enabled ? <Text className="text-white text-[10px] font-bold">✓</Text> : null}
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-gray-900 text-sm font-semibold">{method.label}</Text>
+                      <Text className="text-gray-500 text-[11px] mt-0.5">{method.hint}</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
         <Button
           title="閉じる"
           variant="secondary"
@@ -2672,35 +2823,57 @@ export const StoreHome = ({
         onClose={() => {
           setShowLoginCodeModal(false);
           setCopiedLoginCode(false);
+          setCopiedLoginUrl(false);
         }}
-        title="ログインコード"
+        title="共有情報"
       >
-        <View className="items-center py-2">
-          <Text className="text-3xl font-bold tracking-[0.28em] text-gray-900">
-            {branchLoginCode ?? '------'}
-          </Text>
-          <Text className="text-gray-500 text-xs mt-2">
-            タップでコピーして、店舗ログインに共有できます
-          </Text>
+        <View className="py-1">
+          <Text className="text-gray-700 text-xs font-semibold mb-1">スマホ用ログインコード</Text>
+          <View className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3">
+            <Text className="text-2xl font-bold tracking-[0.22em] text-blue-900 text-center">
+              {branchLoginCode ?? '------'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={handleCopyLoginCode}
+            activeOpacity={0.8}
+            className="mt-2 rounded-lg bg-blue-600 py-2"
+          >
+            <Text className="text-white text-center font-semibold">
+              {copiedLoginCode ? 'コードをコピーしました' : 'コードをコピー'}
+            </Text>
+          </TouchableOpacity>
         </View>
+
+        <View className="py-2">
+          <Text className="text-gray-700 text-xs font-semibold mb-1">WEB用ログインURL</Text>
+          <View className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2">
+            <Text className="text-[11px] text-indigo-800" numberOfLines={2}>
+              {webLoginUrl ?? 'WEB版でURLが表示されます'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={handleCopyLoginUrl}
+            activeOpacity={0.8}
+            disabled={!webLoginUrl}
+            className={`mt-2 rounded-lg py-2 ${webLoginUrl ? 'bg-indigo-600' : 'bg-gray-300'}`}
+          >
+            <Text className="text-white text-center font-semibold">
+              {copiedLoginUrl ? 'URLをコピーしました' : 'URLをコピー'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <View className="flex-row gap-3 mt-3">
-          <View className="flex-1">
-            <Button
-              title="閉じる"
-              onPress={() => {
-                setShowLoginCodeModal(false);
-                setCopiedLoginCode(false);
-              }}
-              variant="secondary"
-            />
-          </View>
-          <View className="flex-1">
-            <Button
-              title={copiedLoginCode ? 'コピー済み' : 'コピー'}
-              onPress={handleCopyLoginCode}
-              disabled={!branchLoginCode}
-            />
-          </View>
+          <Button
+            title="閉じる"
+            onPress={() => {
+              setShowLoginCodeModal(false);
+              setCopiedLoginCode(false);
+              setCopiedLoginUrl(false);
+            }}
+            variant="secondary"
+          />
         </View>
       </Modal>
 
@@ -3249,8 +3422,9 @@ export const StoreHome = ({
           {/* Settings Section */}
           <Text className="font-bold text-gray-700 mb-2 mt-3">設定</Text>
           {([
+            { key: 'settings_access' as const, label: '設定画面自体のアクセス', desc: '設定タブ自体へのアクセス' },
+            { key: 'branch_name_change' as const, label: '店舗名変更', desc: '店舗名の変更操作' },
             { key: 'payment_change' as const, label: '支払い方法の変更', desc: '現金/キャッシュレス/金券のON/OFF' },
-            { key: 'settings_access' as const, label: '設定タブへのアクセス', desc: '設定タブ自体へのアクセス' },
             { key: 'data_manage' as const, label: 'データ管理操作', desc: 'データ削除・エクスポート・インポート' },
           ]).map((item) => (
             <TouchableOpacity

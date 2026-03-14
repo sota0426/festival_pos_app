@@ -1,19 +1,21 @@
 import { View, Text, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { validateLoginCode } from '../../lib/loginCode';
 import { Card } from '../common';
 
 interface LoginCodeEntryProps {
   onBack: () => void;
+  initialCode?: string | null;
 }
 
-export const LoginCodeEntry = ({ onBack }: LoginCodeEntryProps) => {
+export const LoginCodeEntry = ({ onBack, initialCode }: LoginCodeEntryProps) => {
   const { enterWithLoginCode } = useAuth();
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const autoValidatedRef = useRef(false);
 
   const handleCodeChange = (text: string) => {
     const filtered = text.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 6);
@@ -21,8 +23,9 @@ export const LoginCodeEntry = ({ onBack }: LoginCodeEntryProps) => {
     setError(null);
   };
 
-  const handleValidate = async () => {
-    if (code.trim().length !== 6) {
+  const handleValidate = useCallback(async (overrideCode?: string) => {
+    const targetCode = (overrideCode ?? code).toUpperCase().trim();
+    if (targetCode.length !== 6) {
       setError('6文字のコードを入力してください');
       return;
     }
@@ -30,10 +33,10 @@ export const LoginCodeEntry = ({ onBack }: LoginCodeEntryProps) => {
     try {
       setLoading(true);
       setError(null);
-      const result = await validateLoginCode(code);
+      const result = await validateLoginCode(targetCode);
 
       if (result.valid && result.branch) {
-        enterWithLoginCode(result.branch, code.toUpperCase().trim());
+        enterWithLoginCode(result.branch, targetCode);
         return;
       }
 
@@ -41,6 +44,8 @@ export const LoginCodeEntry = ({ onBack }: LoginCodeEntryProps) => {
         setError('ログインコード認証の設定エラーです（Functionが401）。管理者に連絡してください。');
       } else if (result.reason === 'server_error') {
         setError('ログインコード認証サーバーでエラーが発生しました。時間をおいて再試行してください。');
+      } else if (result.reason === 'inactive') {
+        setError('この店舗は現在停止中です。管理者に稼働状態を確認してください。');
       } else {
         setError('無効なコードです。コードを確認してもう一度お試しください。');
       }
@@ -50,7 +55,17 @@ export const LoginCodeEntry = ({ onBack }: LoginCodeEntryProps) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [code, enterWithLoginCode]);
+
+  useEffect(() => {
+    const normalized = (initialCode ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 6);
+    if (!normalized) return;
+    setCode(normalized);
+    if (normalized.length === 6 && !autoValidatedRef.current) {
+      autoValidatedRef.current = true;
+      void handleValidate(normalized);
+    }
+  }, [initialCode, handleValidate]);
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
@@ -79,7 +94,9 @@ export const LoginCodeEntry = ({ onBack }: LoginCodeEntryProps) => {
         />
 
         <TouchableOpacity
-          onPress={handleValidate}
+          onPress={() => {
+            void handleValidate();
+          }}
           disabled={loading || code.length !== 6}
           activeOpacity={0.8}
           className={`rounded-xl py-4 items-center ${code.length === 6 && !loading ? 'bg-blue-600' : 'bg-gray-300'}`}

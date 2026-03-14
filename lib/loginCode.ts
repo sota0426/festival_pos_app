@@ -48,7 +48,7 @@ export type ValidateLoginCodeResult = {
   valid: boolean;
   branch?: Branch;
   loginCode?: LoginCode;
-  reason?: 'invalid' | 'unauthorized' | 'server_error';
+  reason?: 'invalid' | 'inactive' | 'unauthorized' | 'server_error';
 };
 
 export const validateLoginCode = async (
@@ -65,6 +65,9 @@ export const validateLoginCode = async (
   if (!fnError && fnData) {
     if (fnData.valid && fnData.branch) {
       return { valid: true, branch: fnData.branch as Branch };
+    }
+    if (fnData.reason === 'inactive') {
+      return { valid: false, reason: 'inactive' };
     }
     return { valid: false, reason: 'invalid' };
   }
@@ -115,7 +118,7 @@ export const validateLoginCode = async (
     return { valid: false, reason: fnError ? 'server_error' : 'invalid' };
   }
   if (branch.status === 'inactive') {
-    return { valid: false, reason: 'invalid' };
+    return { valid: false, reason: 'inactive' };
   }
 
   return { valid: true, branch, loginCode };

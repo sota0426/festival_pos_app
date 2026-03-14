@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button } from '../../common';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { getPendingTransactions, addServedTransactionId, getServedTransactionIds } from '../../../lib/storage';
 import type { Branch, Transaction, TransactionItem, OrderBoardItem } from '../../../types/database';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useSubscription } from '../../../contexts/SubscriptionContext';
 import { DEMO_TRANSACTIONS, resolveDemoBranchId } from '../../../data/demoData';
 
 interface OrderBoardProps {
@@ -13,11 +14,21 @@ interface OrderBoardProps {
   onBack: () => void;
 }
 
+const formatOrderNumber2DigitsFromTransactionCode = (transactionCode: string): string => {
+  const suffix = String(transactionCode ?? '').split('-').pop() ?? '';
+  const parsed = Number.parseInt(suffix, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return '00';
+  const normalized = ((parsed - 1) % 99) + 1;
+  return String(normalized).padStart(2, '0');
+};
+
 export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
   const { authState } = useAuth();
+  const { canSync } = useSubscription();
   const isDemo = authState.status === 'demo';
   const demoBranchId = resolveDemoBranchId(branch);
-  const canSyncToSupabase = isSupabaseConfigured() && !isDemo;
+  const canSyncToSupabase =
+    isSupabaseConfigured() && !isDemo && (authState.status === 'login_code' || canSync);
 
   const [orders, setOrders] = useState<OrderBoardItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,9 +36,6 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
   const [completing, setCompleting] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
-
-  const { width } = useWindowDimensions();
-  const isMobile = width < 768;
   const canRemoteRefresh = canSyncToSupabase;
 
     // Fetch active orders
@@ -52,8 +60,8 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
               transaction_code: t.transaction_code,
               total_amount: t.total_amount,
               payment_method: t.payment_method,
-              status: 'completed',
-              fulfillment_status: 'pending',
+              status: 'completed' as const,
+              fulfillment_status: 'pending' as const,
               created_at: createdAt,
               cancelled_at: null,
               served_at: null,
@@ -249,98 +257,72 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
         }
       />
 
-      {/* Pending count banner + last refreshed */}
-      <View className="bg-amber-100 px-4 py-2 flex-row items-center justify-between">
-        <Text className="text-amber-800 font-bold">
-          未提供: {orders.length}件
-        </Text>
-        {lastRefreshed && (
-          <Text className="text-amber-600 text-xs">
-            最終更新: {formatTime(lastRefreshed)}
-          </Text>
-        )}
-      </View>
-
-      {orders.length === 0 ? (
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-gray-400 text-xl">注文待ち...</Text>
-          {canRemoteRefresh && (
-            <>
-              <Text className="text-gray-300 mt-2">「更新」ボタンで最新の注文を取得できます</Text>
-              <TouchableOpacity
-                onPress={handleRefresh}
-                className="mt-6 bg-amber-400 rounded-xl px-8 py-4"
-                activeOpacity={0.7}
-              >
-                <Text className="text-white font-bold text-lg">更新する</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-      ) : (
-        <ScrollView className="flex-1" contentContainerStyle={{ padding: 8 }}>
-          <View className="flex-wrap ">
-            {orders.map((order) => {
-              const elapsed = getElapsedMinutes(order.transaction.created_at);
-              const urgency = getUrgencyStyle(elapsed);
-              const orderNumber = order.transaction.transaction_code.split('-').pop();
-
-              return (
-                <View key={order.transaction.id} className={isMobile ? 'w-full p-4' : 'w-1/2 p-4'}>
-                  <Card className={`border-l-4 ${urgency.border}`}>
-                    {/* Header: order number + elapsed time */}
-                    <View className="flex-row justify-between items-center mb-1">
-                      <Text className="font-bold text-gray-900 text-2xl">#{orderNumber}</Text>
-                      <View className={`px-2 py-0.5 rounded-full ${urgency.bg}`}>
-                        <Text className={`text-sm font-medium ${urgency.text}`}>
-                          {elapsed === 0 ? '今' : `${elapsed}分前`}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Items list */}
-                    <View className="mb-1">
-                      {order.items.map((item) => (
-                        <View
-                          key={item.id}
-                          className="flex-row justify-center items-center py-1.5 border-b border-gray-100"
-                        >
-                          <Text className="text-gray-800 text-base font-medium ">
-                            {item.menu_name}
-                          </Text>
-                          
-                          <View className="bg-blue-100 rounded px-2 py-0.5 ml-2">
-                            <Text className="text-blue-800 font-bold text-base">
-                              {item.quantity} 個
-                            </Text>
-                          </View>
-
-                        </View>
-                      ))}
-                    </View>
-
-                    {/* Served button */}
-                    <TouchableOpacity
-                      onPress={() => handleMarkServed(order.transaction.id)}
-                      disabled={completing === order.transaction.id}
-                      className={`rounded-lg py-3 items-center ${
-                        completing === order.transaction.id ? 'bg-gray-300' : 'bg-green-600'
-                      }`}
-                      activeOpacity={0.7}
-                    >
-                      {completing === order.transaction.id ? (
-                        <ActivityIndicator color="white" />
-                      ) : (
-                        <Text className="text-white font-bold text-lg">提供完了</Text>
-                      )}
-                    </TouchableOpacity>
-                  </Card>
-                </View>
-              );
-            })}
+      <ScrollView className="flex-1 px-4 pt-3">
+        <Card className="bg-white border border-amber-200 mb-3">
+          <View className="flex-row items-center justify-between">
+            <Text className="text-amber-800 font-bold">受付中の注文</Text>
+            <Text className="text-amber-700 font-bold">{orders.length}件</Text>
           </View>
-        </ScrollView>
-      )}
+          <Text className="text-amber-700 text-xs mt-1">
+            複数の遠隔注文を受ける際に便利です。
+          </Text>
+          {lastRefreshed ? (
+            <Text className="text-gray-500 text-xs mt-1">最終更新: {formatTime(lastRefreshed)}</Text>
+          ) : null}
+        </Card>
+
+        {orders.length === 0 ? (
+          <Card className="bg-white border border-gray-200 mb-4">
+            <Text className="text-gray-500 text-center py-6">受付中の注文はありません</Text>
+          </Card>
+        ) : (
+          orders.map((order) => {
+            const elapsed = getElapsedMinutes(order.transaction.created_at);
+            const urgency = getUrgencyStyle(elapsed);
+            return (
+              <Card key={order.transaction.id} className={`mb-3 bg-white border-l-4 ${urgency.border}`}>
+                <View className="flex-row items-center justify-between mb-2">
+                  <Text className="text-gray-900 font-bold text-base">
+                    注文番号: {formatOrderNumber2DigitsFromTransactionCode(order.transaction.transaction_code)}
+                  </Text>
+                  <View className={`rounded-full px-2 py-0.5 ${urgency.bg}`}>
+                    <Text className={`text-xs font-bold ${urgency.text}`}>{elapsed}分経過</Text>
+                  </View>
+                </View>
+
+                <View className="mb-2">
+                  {order.items.map((item) => (
+                    <View key={item.id} className="flex-row items-center justify-between py-0.5">
+                      <Text className="text-gray-700 text-sm flex-1 mr-2">{item.menu_name}</Text>
+                      <Text className="text-gray-700 text-sm">x{item.quantity}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                <View className="flex-row items-center justify-between mb-3">
+                  <Text className="text-gray-500 text-xs">
+                    受付: {new Date(order.transaction.created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                  </Text>
+                  <Text className="text-gray-900 font-bold">{order.transaction.total_amount.toLocaleString()}円</Text>
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => handleMarkServed(order.transaction.id)}
+                  disabled={completing === order.transaction.id}
+                  activeOpacity={0.8}
+                  className={`rounded-lg py-2.5 ${
+                    completing === order.transaction.id ? 'bg-gray-300' : 'bg-green-500'
+                  }`}
+                >
+                  <Text className="text-white text-center font-bold">
+                    {completing === order.transaction.id ? '処理中...' : '提供完了'}
+                  </Text>
+                </TouchableOpacity>
+              </Card>
+            );
+          })
+        )}
+      </ScrollView>
     </SafeAreaView>
   );
 };

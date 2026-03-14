@@ -20,6 +20,8 @@
 
   alter table public.menu_cooking_manuals enable row level security;
 
+  drop policy if exists "branch members can manage menu_cooking_manuals" on public.menu_cooking_manuals;
+
   create policy "branch members can manage menu_cooking_manuals"
     on public.menu_cooking_manuals
     for all
