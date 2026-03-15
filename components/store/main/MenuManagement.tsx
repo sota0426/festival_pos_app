@@ -1317,9 +1317,9 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
 
     return (
       <Card
-        className={`mb-1.5 overflow-hidden border ${categoryVisual.cardBorderClass} ${!item.is_show ? 'opacity-50' : ''}`}
+        className={`mb-2 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-none ${!item.is_show ? 'opacity-50' : ''}`}
       >
-        <View className={`px-2.5 py-2 ${categoryVisual.cardBgClass}`}>
+        <View className="px-3 py-3 bg-white">
           <View className="flex-row items-stretch">
             <View className="justify-center pr-2" style={{ width: '42%' }}>
               <View className="flex-row items-center gap-2 mb-1">
@@ -1346,7 +1346,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               </Text>
             </View>
 
-            <View className="justify-center border-l border-gray-100 px-2" style={{ width: '18%' }}>
+            <View className="justify-center border-l border-gray-200 px-2" style={{ width: '18%' }}>
               <Text className="text-[11px] font-semibold text-gray-500 text-center">在庫数</Text>
               {item.stock_management ? (
                 <View className="mt-1 flex-row items-center justify-center gap-1">
@@ -1381,7 +1381,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               )}
             </View>
 
-            <View className="justify-center items-center border-l border-gray-100 px-2 gap-1.5" style={{ width: '16%' }}>
+            <View className="justify-center items-center border-l border-gray-200 px-2 gap-1.5" style={{ width: '16%' }}>
               <Text className="text-[11px] font-semibold text-gray-500 text-center">順番</Text>
               <TouchableOpacity
                 onPress={() => moveMenuOrder(item, 'up')}
@@ -1405,7 +1405,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               </TouchableOpacity>
             </View>
 
-            <View className="justify-center items-end border-l border-gray-100 pl-2" style={{ width: '24%' }}>
+            <View className="justify-center items-end border-l border-gray-200 pl-2" style={{ width: '24%' }}>
               <TouchableOpacity
                 onPress={() => handleVisible(item)}
                 activeOpacity={0.7}
@@ -1709,7 +1709,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           ListHeaderComponent={
             <View className="mb-4">
               {/* 統計カード */}
-              <Card className="p-4 mb-3">
+              <Card className="p-4 mb-3 bg-white shadow-none rounded-2xl border border-gray-200">
                 <View className="flex-row">
                   {/* カテゴリ数 */}
                   <View className="flex-1 items-center py-2 border-r border-gray-100">
@@ -1742,24 +1742,24 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             const categoryCode = categoryMeta?.code ?? '-';
             const visual = categoryMeta?.visual ?? UNCATEGORIZED_VISUAL;
             return (
-              <Card className={`mb-3 overflow-hidden border ${visual.cardBorderClass}`}>
-                <View className={`px-3 py-2.5 flex-row items-stretch ${visual.cardBgClass}`}>
-                  <View className="justify-center pr-2" style={{ width: '42%' }}>
+              <Card className="mb-3 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-none">
+                <View className="px-3 py-3 flex-row items-stretch bg-white">
+                  <View className="justify-center pr-2" style={{ width: '40%' }}>
                     <View className="flex-row items-center gap-2 mb-1">
                       <View className={`px-2.5 py-0.5 rounded-full ${visual.chipBgClass}`}>
                         <Text className={`text-xs font-bold ${visual.chipTextClass}`}>{categoryCode}</Text>
                       </View>
                     </View>
                     <Text className="text-base font-bold text-gray-900" numberOfLines={1}>{item.category_name}</Text>
+                    <Text className="mt-1 text-[11px] text-gray-500">カテゴリ {index + 1}</Text>
                   </View>
 
-                  <View className="justify-center border-l border-gray-100 px-2" style={{ width: '18%' }}>
+                  <View className="justify-center border-l border-gray-200 px-2" style={{ width: '20%' }}>
                     <Text className="text-[11px] font-semibold text-gray-500 text-center">メニュー数</Text>
                     <Text className="mt-1 text-center text-lg font-bold text-gray-900">{menuCount}</Text>
-                    <Text className="text-center text-[10px] text-gray-500">表示順 {index + 1}</Text>
                   </View>
 
-                  <View className="justify-center items-center border-l border-gray-100 px-2 gap-1.5" style={{ width: '16%' }}>
+                  <View className="justify-center items-center border-l border-gray-200 px-2 gap-1.5" style={{ width: '16%' }}>
                     <Text className="text-[11px] font-semibold text-gray-500 text-center">順番</Text>
                     <TouchableOpacity
                       onPress={() => moveCategoryOrder(item, 'up')}
@@ -1779,7 +1779,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                     </TouchableOpacity>
                   </View>
 
-                  <View className="justify-center items-end border-l border-gray-100 pl-2" style={{ width: '24%' }}>
+                  <View className="justify-center items-end border-l border-gray-200 pl-2" style={{ width: '24%' }}>
                     <TouchableOpacity
                       onPress={() => {
                         setEditingCategory(item);
@@ -2122,7 +2122,8 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         title="管理者パスワード"
       >
         <Text className="text-gray-600 text-sm mb-3">
-          この操作には管理者パスワードが必要です<br />デフォルトのパスワードは[0000]です。
+          この操作には管理者パスワードが必要です。{'\n'}
+          デフォルトのパスワードは[0000]です。
         </Text>
         <TextInput
           value={adminGuardPwInput}

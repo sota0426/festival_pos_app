@@ -450,11 +450,11 @@ export const SalesHistory = ({
 
       {/* Summary */}
       <View className="flex-row p-4 gap-4">
-        <Card className="flex-1 items-center">
+        <Card className="flex-1 items-center bg-white shadow-none">
           <Text className="text-gray-500 text-sm">売上合計</Text>
           <Text className="text-xl font-bold text-blue-600">{totalSales.toLocaleString()}円</Text>
         </Card>
-        <Card className="flex-1 items-center">
+        <Card className="flex-1 items-center bg-white shadow-none">
           <Text className="text-gray-500 text-sm">取引件数</Text>
           <Text className="text-xl font-bold text-gray-900">{transactionCount}件</Text>
         </Card>

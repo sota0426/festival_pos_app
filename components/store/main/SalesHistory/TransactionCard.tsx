@@ -18,7 +18,7 @@ export const TransactionCard =({
 
   return(
 
-    <Card className={`mb-3 ${isCancelled ? 'opacity-60 bg-gray-300' : ''}`}>
+    <Card className={`mb-3 bg-white shadow-none ${isCancelled ? 'opacity-60 bg-gray-300' : ''}`}>
       <View className="flex-row items-center justify-between">
         {/**menu */}
         <View className="flex-1">

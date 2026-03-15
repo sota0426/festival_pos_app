@@ -101,7 +101,7 @@ const PLANS: PlanCard[] = [
   },
   {
     key: 'org_standard',
-    name: '団体スタンダード10',
+    name: '団体スタンダード10店舗',
     shortName: '団体10',
     priceLabel: '500円 / 6か月',
     tone: {
@@ -130,7 +130,7 @@ const PLANS: PlanCard[] = [
   },
   {
     key: 'org_premium',
-    name: '団体プレミアム30',
+    name: '団体プレミアム30店舗',
     shortName: '団体30',
     priceLabel: '1,000円 / 6か月',
     tone: {

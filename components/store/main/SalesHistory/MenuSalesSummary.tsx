@@ -1,6 +1,5 @@
-import { Card, Header } from "components/common";
+import { Card } from "components/common";
 import { FlatList, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { Branch, Transaction, TransactionItem } from "types/database";
 
 interface TransactionWithItems extends Transaction{
@@ -56,14 +55,13 @@ export const MenuSalesSummary =({
   const menuSales = aggregateMenuSales(transactions);
 
   return(
-    <SafeAreaView>
-
+    <View className="flex-1">
       <FlatList 
         data={menuSales}
         keyExtractor={(item) => item.menu_id}
-        contentContainerStyle={{padding:16}}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
         renderItem={({item}) => (
-          <Card className="mb-3">
+          <Card className="mb-3 bg-white shadow-none">
             <View className="flex-row justify-between items-center">
               <View>
                 <Text className="text-gray-900 font-medium">
@@ -89,6 +87,6 @@ export const MenuSalesSummary =({
           </View>
         }
       />
-    </SafeAreaView>
+    </View>
   )
 }

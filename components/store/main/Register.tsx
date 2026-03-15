@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, PanResponder, TextInput, Keyboard, Platform } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Button, Card, Header, Modal } from '../../common';
@@ -954,7 +955,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
   const quickOrderSection = (
   <View className="px-4 pt-2 pb-1 bg-gray-100">
-      <Card className="px-3 py-2">
+      <Card className="px-3 py-2 bg-white shadow-none border border-gray-200">
         <View className="mb-1">
           <Text className="text-xs text-gray-500">番号で注文追加（例: 101, 203, 007）</Text>
         </View>
@@ -963,10 +964,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
               ref={quickOrderInputRef}
               value={quickOrderInput}
               onChangeText={setQuickOrderInput}
-              keyboardType="numeric"
-              returnKeyType="done"
-              blurOnSubmit={false}
-              onSubmitEditing={addToCartByNumber}
+              keyboardType="number-pad"
               placeholder="メニュー番号"
               placeholderTextColor="#9CA3AF"
               className="flex-1 border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-900"
@@ -1375,7 +1373,9 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
           }`}
           activeOpacity={0.7}
         >
-          <Text className="text-lg">🔢</Text>
+          <View className="rounded-md bg-white border border-blue-200 p-2">
+            <Feather name="hash" size={16} color={showQuickOrder ? '#1d4ed8' : '#374151'} />
+          </View>
           <View className="flex-1">
             <Text className={`font-semibold text-sm ${showQuickOrder ? 'text-blue-800' : 'text-gray-800'}`}>
               番号入力: {showQuickOrder ? 'ON' : 'OFF'}
@@ -1406,7 +1406,9 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
           className="flex-row items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3"
           activeOpacity={0.7}
         >
-          <Text className="text-lg">📋</Text>
+          <View className="rounded-md bg-white border border-gray-200 p-2">
+            <Feather name="file-text" size={16} color="#374151" />
+          </View>
           <View className="flex-1">
             <Text className="text-gray-800 font-semibold text-sm">販売履歴</Text>
             <Text className="text-gray-500 text-xs">売上確認・取消</Text>
