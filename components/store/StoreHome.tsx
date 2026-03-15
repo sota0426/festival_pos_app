@@ -76,6 +76,9 @@ interface StoreHomeProps {
   onNavigateToBudgetExpense: () => void;
   onNavigateToPricing?: () => void;
   onNavigateToDemoHome?: () => void;
+  onNavigateToDemoOrderBoard?: () => void;
+  onNavigateToDemoMobileOrder?: () => void;
+  onNavigateToDemoPrep?: () => void;
   onBranchUpdated?: (branch: Branch) => void;
   onLogout: () => void;
 }
@@ -267,6 +270,9 @@ export const StoreHome = ({
   onNavigateToBudgetExpense,
   onNavigateToPricing,
   onNavigateToDemoHome,
+  onNavigateToDemoOrderBoard,
+  onNavigateToDemoMobileOrder,
+  onNavigateToDemoPrep,
   onBranchUpdated,
   onLogout,
 }: StoreHomeProps) => {
@@ -290,7 +296,8 @@ export const StoreHome = ({
   const [showCashlessLabelEditor, setShowCashlessLabelEditor] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showBranchNameModal, setShowBranchNameModal] = useState(false);
-  const [showPaymentSettingsModal, setShowPaymentSettingsModal] = useState(false);
+  const [showRegisterPaymentSettingsModal, setShowRegisterPaymentSettingsModal] = useState(false);
+  const [showExpensePaymentSettingsModal, setShowExpensePaymentSettingsModal] = useState(false);
   const [branchNameInput, setBranchNameInput] = useState(branch.branch_name);
   const [branchNameError, setBranchNameError] = useState('');
   const [savingBranchName, setSavingBranchName] = useState(false);
@@ -318,6 +325,7 @@ export const StoreHome = ({
   const [importSourceName, setImportSourceName] = useState('');
   const [importError, setImportError] = useState('');
   const isFreeAuthenticatedPlan = authState.status === 'authenticated' && isFreePlan;
+  const isShareFeatureLocked = isFreePlan && authState.status !== 'demo';
   const canSyncToSupabase =
     isSupabaseConfigured() &&
     authState.status !== 'demo' &&
@@ -2042,26 +2050,29 @@ export const StoreHome = ({
 
         {activeTab === 'share' && (
           <View className="flex-1 gap-4">
-            {isFreeAuthenticatedPlan && (
+            {isShareFeatureLocked && (
               <Card className="bg-amber-50 border border-amber-200 p-4">
                 <Text className="text-amber-900 font-bold text-base">共有タブは有料プラン機能です</Text>
                 <Text className="text-amber-800 text-sm mt-1">
-                  ボタンはお試しできますが、実際の利用には有料プラン（店舗6か月パス以上）が必要です。
+                  無料プランではデモモードで動作をお試しできます。実運用には有料プラン（店舗6か月パス以上）が必要です。
                 </Text>
               </Card>
             )}
           {/* 注文受付 */}
             <TouchableOpacity
               onPress={() =>
-                isFreeAuthenticatedPlan
-                  ? notifyPaidFeatureOnly('注文受付')
+                isShareFeatureLocked
+                  ? undefined
                   : handleSubFeatureNavigation(onNavigateToOrderBoard)
               }
+              disabled={isShareFeatureLocked}
               activeOpacity={0.8}
             >
-              <Card className="bg-orange-500 p-4">
+              <Card className={`${isShareFeatureLocked ? 'bg-gray-400' : 'bg-orange-500'} p-4`}>
                 <Text className="text-white text-2xl font-bold text-center">注文受付</Text>
-                <Text className="text-orange-100 text-center mt-2">別端末で注文を表示・管理</Text>
+                <Text className={`${isShareFeatureLocked ? 'text-gray-100' : 'text-orange-100'} text-center mt-2`}>
+                  別端末で注文を表示・管理
+                </Text>
               </Card>
             </TouchableOpacity>
 
@@ -2069,32 +2080,50 @@ export const StoreHome = ({
             {/* モバイルオーダー */}
             <TouchableOpacity
               onPress={() =>
-                isFreeAuthenticatedPlan
-                  ? notifyPaidFeatureOnly('モバイルオーダー')
+                isShareFeatureLocked
+                  ? undefined
                   : handleSubFeatureNavigation(onNavigateToMobileOrder)
               }
+              disabled={isShareFeatureLocked}
               activeOpacity={0.8}
             >
-              <Card className="bg-rose-500 p-4">
+              <Card className={`${isShareFeatureLocked ? 'bg-gray-400' : 'bg-rose-500'} p-4`}>
                 <Text className="text-white text-2xl font-bold text-center">モバイルオーダー</Text>
-                <Text className="text-rose-100 text-center mt-2">注文状況を共有して提供をスムーズに</Text>
+                <Text className={`${isShareFeatureLocked ? 'text-gray-100' : 'text-rose-100'} text-center mt-2`}>
+                  注文状況を共有して提供をスムーズに
+                </Text>
               </Card>
             </TouchableOpacity>
 
             {/* 在庫確認（旧: 調理の下準備） */}
             <TouchableOpacity
               onPress={() =>
-                isFreeAuthenticatedPlan
-                  ? notifyPaidFeatureOnly('在庫確認')
+                isShareFeatureLocked
+                  ? undefined
                   : onNavigateToPrep()
               }
+              disabled={isShareFeatureLocked}
               activeOpacity={0.8}
             >
-              <Card className="bg-indigo-500 p-4">
+              <Card className={`${isShareFeatureLocked ? 'bg-gray-400' : 'bg-indigo-500'} p-4`}>
                 <Text className="text-white text-2xl font-bold text-center">在庫確認</Text>
-                <Text className="text-indigo-100 text-center mt-2">在庫をみんなで共有</Text>
+                <Text className={`${isShareFeatureLocked ? 'text-gray-100' : 'text-indigo-100'} text-center mt-2`}>
+                  在庫をみんなで共有
+                </Text>
               </Card>
             </TouchableOpacity>
+
+            {isShareFeatureLocked && (
+              <TouchableOpacity
+                onPress={() => onNavigateToDemoHome?.()}
+                activeOpacity={0.8}
+              >
+                <Card className="bg-amber-500 p-4 border border-amber-600">
+                  <Text className="text-white text-xl font-bold text-center">デモモードで体験</Text>
+                  <Text className="text-amber-100 text-center mt-2">ダミーメニュー付きのデモ画面を開く</Text>
+                </Card>
+              </TouchableOpacity>
+            )}
 
           </View>
         )}
@@ -2398,18 +2427,36 @@ export const StoreHome = ({
                     onPress={() =>
                       withRestrictionCheck('settings_access', () => {
                         setShowCashlessLabelEditor(false);
-                        setShowPaymentSettingsModal(true);
+                        setShowRegisterPaymentSettingsModal(true);
                       })
                     }
                     activeOpacity={0.8}
-                    className="flex-row items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3"
+                    className="flex-row items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 mb-2"
                   >
                     <View className="w-9 h-9 rounded-full bg-emerald-200 items-center justify-center">
                       <Text className="text-emerald-700 font-bold">決済</Text>
                     </View>
                     <View className="flex-1">
-                      <Text className="text-emerald-900 font-semibold">支払い設定</Text>
-                      <Text className="text-emerald-700 text-xs">支払い方法とキャッシュレス表示名を設定</Text>
+                      <Text className="text-emerald-900 font-semibold">レジ支払い設定</Text>
+                      <Text className="text-emerald-700 text-xs">レジの支払い方法とキャッシュレス表示名を設定</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() =>
+                      withRestrictionCheck('settings_access', () => {
+                        setShowExpensePaymentSettingsModal(true);
+                      })
+                    }
+                    activeOpacity={0.8}
+                    className="flex-row items-center gap-3 rounded-xl border border-teal-200 bg-teal-50 px-3 py-3"
+                  >
+                    <View className="w-9 h-9 rounded-full bg-teal-200 items-center justify-center">
+                      <Text className="text-teal-700 font-bold">支出</Text>
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-teal-900 font-semibold">支出支払い設定</Text>
+                      <Text className="text-teal-700 text-xs">支出管理で使う支払い方法を設定</Text>
                     </View>
                   </TouchableOpacity>
                 </View>
@@ -2575,12 +2622,12 @@ export const StoreHome = ({
       </Modal>
 
       <Modal
-        visible={showPaymentSettingsModal}
+        visible={showRegisterPaymentSettingsModal}
         onClose={() => {
-          setShowPaymentSettingsModal(false);
+          setShowRegisterPaymentSettingsModal(false);
           setShowCashlessLabelEditor(false);
         }}
-        title="支払い設定"
+        title="レジ支払い設定"
       >
         <Text className="text-gray-500 text-sm mb-2">
           レジ画面に表示する支払い方法を選択してください
@@ -2696,72 +2743,84 @@ export const StoreHome = ({
           </View>
         </TouchableOpacity>
 
-        <View className="border-t border-gray-200 pt-3 mt-1">
-          <Text className="text-gray-900 font-semibold mb-1">支出管理の支払い方法</Text>
-          <Text className="text-gray-500 text-xs mb-2">会計→支出記録・履歴の選択肢を設定できます</Text>
-          <View className="flex-row flex-wrap justify-between">
-            {(
-              [
-                {
-                  key: 'cash',
-                  label: '現金',
-                  hint: '現金支払い',
-                  active: 'border-emerald-500 bg-emerald-50',
-                  icon: 'border-emerald-500 bg-emerald-500',
-                },
-                {
-                  key: 'cashless',
-                  label: 'キャッシュレス',
-                  hint: 'QR・カード決済',
-                  active: 'border-indigo-500 bg-indigo-50',
-                  icon: 'border-indigo-500 bg-indigo-500',
-                },
-                {
-                  key: 'bank_transfer',
-                  label: '振込・ネット決済',
-                  hint: '銀行振込・ネット決済',
-                  active: 'border-sky-500 bg-sky-50',
-                  icon: 'border-sky-500 bg-sky-500',
-                },
-                {
-                  key: 'advance',
-                  label: '立替',
-                  hint: 'あとで精算',
-                  active: 'border-amber-500 bg-amber-50',
-                  icon: 'border-amber-500 bg-amber-500',
-                },
-              ] as const
-            ).map((method) => {
-              const enabled = expensePaymentMethods[method.key];
-              return (
-                <TouchableOpacity
-                  key={`expense-payment-${method.key}`}
-                  onPress={() => toggleExpensePaymentMethod(method.key)}
-                  activeOpacity={0.7}
-                  className={`w-[48%] mb-2 p-3 rounded-xl border-2 ${enabled ? method.active : 'border-gray-200 bg-white'}`}
-                >
-                  <View className="flex-row items-center">
-                    <View className={`w-5 h-5 rounded border-2 mr-2 items-center justify-center ${enabled ? method.icon : 'border-gray-300'}`}>
-                      {enabled ? <Text className="text-white text-[10px] font-bold">✓</Text> : null}
-                    </View>
-                    <View className="flex-1">
-                      <Text className="text-gray-900 text-sm font-semibold">{method.label}</Text>
-                      <Text className="text-gray-500 text-[11px] mt-0.5">{method.hint}</Text>
-                    </View>
+        <Button
+          title="閉じる"
+          variant="secondary"
+          onPress={() => {
+            setShowRegisterPaymentSettingsModal(false);
+            setShowCashlessLabelEditor(false);
+          }}
+        />
+      </Modal>
+
+      <Modal
+        visible={showExpensePaymentSettingsModal}
+        onClose={() => setShowExpensePaymentSettingsModal(false)}
+        title="支出支払い設定"
+      >
+        <Text className="text-gray-500 text-sm mb-2">
+          支出管理で表示する支払い方法を選択してください
+        </Text>
+
+        <View className="flex-row flex-wrap justify-between">
+          {(
+            [
+              {
+                key: 'cash',
+                label: '現金',
+                hint: '現金支払い',
+                active: 'border-emerald-500 bg-emerald-50',
+                icon: 'border-emerald-500 bg-emerald-500',
+              },
+              {
+                key: 'cashless',
+                label: 'キャッシュレス',
+                hint: 'QR・カード決済',
+                active: 'border-indigo-500 bg-indigo-50',
+                icon: 'border-indigo-500 bg-indigo-500',
+              },
+              {
+                key: 'bank_transfer',
+                label: '振込・ネット決済',
+                hint: '銀行振込・ネット決済',
+                active: 'border-sky-500 bg-sky-50',
+                icon: 'border-sky-500 bg-sky-500',
+              },
+              {
+                key: 'advance',
+                label: '立替',
+                hint: 'あとで精算',
+                active: 'border-amber-500 bg-amber-50',
+                icon: 'border-amber-500 bg-amber-500',
+              },
+            ] as const
+          ).map((method) => {
+            const enabled = expensePaymentMethods[method.key];
+            return (
+              <TouchableOpacity
+                key={`expense-payment-${method.key}`}
+                onPress={() => toggleExpensePaymentMethod(method.key)}
+                activeOpacity={0.7}
+                className={`w-full mb-2 p-3 rounded-xl border-2 ${enabled ? method.active : 'border-gray-200 bg-white'}`}
+              >
+                <View className="flex-row items-center">
+                  <View className={`w-5 h-5 rounded border-2 mr-2 items-center justify-center ${enabled ? method.icon : 'border-gray-300'}`}>
+                    {enabled ? <Text className="text-white text-[10px] font-bold">✓</Text> : null}
                   </View>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                  <View className="flex-1">
+                    <Text className="text-gray-900 text-sm font-semibold">{method.label}</Text>
+                    <Text className="text-gray-500 text-[11px] mt-0.5">{method.hint}</Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         <Button
           title="閉じる"
           variant="secondary"
-          onPress={() => {
-            setShowPaymentSettingsModal(false);
-            setShowCashlessLabelEditor(false);
-          }}
+          onPress={() => setShowExpensePaymentSettingsModal(false)}
         />
       </Modal>
 

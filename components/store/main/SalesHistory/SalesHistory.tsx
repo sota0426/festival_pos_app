@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, FlatList, RefreshControl, ActivityIndicator, TextInput, TouchableOpacity } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Modal, Button } from '../../../common';
 import { supabase, isSupabaseConfigured } from '../../../../lib/supabase';
@@ -439,7 +440,7 @@ export const SalesHistory = ({
               className="w-9 h-9 bg-gray-100 rounded-lg items-center justify-center"
               activeOpacity={0.7}
             >
-              <Text className="text-gray-700 text-lg font-bold leading-none">☰</Text>
+              <Feather name="menu" size={18} color="#374151" />
             </TouchableOpacity>
 
           </View>
@@ -529,7 +530,9 @@ export const SalesHistory = ({
             className="flex-row items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3"
             activeOpacity={0.7}
           >
-            <Text className="text-lg">📤</Text>
+            <View className="rounded-md bg-white border border-blue-200 p-2">
+              <Feather name="download" size={16} color="#1d4ed8" />
+            </View>
             <View className="flex-1">
               <Text className="text-blue-800 font-semibold text-sm">CSV出力</Text>
               <Text className="text-blue-600 text-xs">販売履歴データをCSVで出力</Text>
@@ -548,7 +551,9 @@ export const SalesHistory = ({
               }`}
               activeOpacity={0.7}
             >
-              <Text className="text-lg">🗑️</Text>
+              <View className="rounded-md bg-white border border-red-200 p-2">
+                <Feather name="trash-2" size={16} color="#b91c1c" />
+              </View>
               <View className="flex-1">
                 <Text className="text-red-800 font-semibold text-sm">全消去</Text>
                 <Text className="text-red-600 text-xs">販売履歴をすべて削除</Text>

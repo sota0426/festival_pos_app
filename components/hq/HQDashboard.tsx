@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import { Feather } from '@expo/vector-icons';
 import { Button, Card, Header, Modal } from '../common';
 import { alertNotify } from '../../lib/alertUtils';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
@@ -586,7 +587,9 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
             }`}
             activeOpacity={0.8}
           >
-            <Text className="text-xl">📄</Text>
+            <View className="rounded-md bg-white border border-blue-200 p-2">
+              <Feather name="file-text" size={16} color="#1d4ed8" />
+            </View>
             <View className="flex-1">
               <Text className="text-blue-800 font-semibold">全販売データCSV</Text>
               <Text className="text-blue-600 text-xs">すべての販売明細を1ファイルで出力</Text>
@@ -604,7 +607,9 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
             }`}
             activeOpacity={0.8}
           >
-            <Text className="text-xl">📊</Text>
+            <View className="rounded-md bg-white border border-emerald-200 p-2">
+              <Feather name="bar-chart-2" size={16} color="#047857" />
+            </View>
             <View className="flex-1">
               <Text className="text-emerald-800 font-semibold">店舗別集計CSV</Text>
               <Text className="text-emerald-600 text-xs">売上・支出・利益などの表データを出力</Text>

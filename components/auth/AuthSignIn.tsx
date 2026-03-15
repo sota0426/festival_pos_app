@@ -46,8 +46,11 @@ export const AuthSignIn = ({ onBack }: AuthSignInProps) => {
       setInfo(null);
       await signInWithGoogle();
     } catch (e: any) {
+      if (String(e?.message ?? '').includes('キャンセル')) {
+        setInfo('Googleログインをキャンセルしました。');
+        return;
+      }
       const msg = e?.message ? ` (${e.message})` : '';
-      console.error('[AuthSignIn] Google sign-in error:', e);
       setError(`Googleログインに失敗しました${msg}`);
     } finally {
       setLoading(null);

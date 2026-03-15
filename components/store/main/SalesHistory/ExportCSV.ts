@@ -1,7 +1,7 @@
 import { alertNotify } from "lib/alertUtils";
 import { Platform } from "react-native";
 import { Branch } from "types/database";
-import { File, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { TransactionWithItems } from "./SalesHistory";
 
@@ -28,7 +28,7 @@ const generateCSV = (transactions:TransactionWithItems[]): string => {
     const methodLabel =
       t.payment_method === 'paypay' ? 'キャッシュレス' : t.payment_method === 'cash' ? '現金' : '金券';
 
-    t.items.forEach((item) => {
+    t.items.forEach((item, index) => {
       rows.push([
         t.transaction_code,
         dateStr,
@@ -37,7 +37,7 @@ const generateCSV = (transactions:TransactionWithItems[]): string => {
         item.unit_price.toString(),
         item.quantity.toString(),
         item.subtotal.toString(),
-        t.total_amount.toString(),
+        index === 0 ? t.total_amount.toString() : '',
       ]);
     });
   });
@@ -107,12 +107,11 @@ export const handleExportCSV = async ({
       URL.revokeObjectURL(url);
       alertNotify('完了', 'CSVファイルをダウンロードしました');
     } else {
-      // Native: expo-file-system (new API) + expo-sharing
+      // Native: UTF-8(BOM付き) で保存して文字化けを避ける
       try {
-        const file = new File(Paths.cache, filename);
-        file.create();
-        file.write(csv);
-        await Sharing.shareAsync(file.uri, {
+        const fileUri = `${FileSystem.cacheDirectory}${filename}`;
+        await FileSystem.writeAsStringAsync(fileUri, csv, { encoding: 'utf8' });
+        await Sharing.shareAsync(fileUri, {
           mimeType: 'text/csv',
           dialogTitle: '売上データCSV',
           UTI: 'public.comma-separated-values-text',

@@ -63,7 +63,7 @@ export const TransactionCard =({
             activeOpacity={0.7}
             className="border border-red-400 px-4 py-1.5 rounded-full"
           >
-            <Text className="text-red-500 text-sm font-mi">注文取消</Text>
+            <Text className="text-red-500 text-xs">注文取消</Text>
           </TouchableOpacity>
         ):(
           <Text className="px-12 py-1.5 "></Text>

@@ -6,9 +6,15 @@ interface HomeProps {
   onNavigateToHQ: () => void;
   onNavigateToStore: () => void;
   onReturnToLoggedIn?: () => void;
+  onReturnButtonLabel?: string;
 }
 
-export const Home = ({ onNavigateToHQ, onNavigateToStore, onReturnToLoggedIn }: HomeProps) => {
+export const Home = ({
+  onNavigateToHQ,
+  onNavigateToStore,
+  onReturnToLoggedIn,
+  onReturnButtonLabel = 'ログイン画面に戻る',
+}: HomeProps) => {
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
       <View className="flex-1 justify-center p-6">
@@ -18,7 +24,7 @@ export const Home = ({ onNavigateToHQ, onNavigateToStore, onReturnToLoggedIn }: 
             className="absolute top-4 right-4 z-10 px-3 py-2 rounded-lg bg-white border border-blue-200"
             activeOpacity={0.8}
           >
-            <Text className="text-blue-700 text-sm font-semibold">ログイン画面に戻る</Text>
+            <Text className="text-blue-700 text-sm font-semibold">{onReturnButtonLabel}</Text>
           </TouchableOpacity>
         )}
 

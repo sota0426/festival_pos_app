@@ -78,6 +78,10 @@ export const Register = ({
   const [discountTargetMenuId, setDiscountTargetMenuId] = useState<string | null>(null);
   const [discountAmount, setDiscountAmount] = useState('');
   const [showHint, setShowHint] = useState(false);
+  const [showStockModal, setShowStockModal] = useState(false);
+  const [stockTargetMenuId, setStockTargetMenuId] = useState<string | null>(null);
+  const [stockQuantityInput, setStockQuantityInput] = useState('');
+  const [stockManagementEnabled, setStockManagementEnabled] = useState(true);
   const [quickOrderInput, setQuickOrderInput] = useState('');
   const [showQuickOrder, setShowQuickOrder] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -415,6 +419,72 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     }
   };
 
+  const openStockModal = (menuId: string) => {
+    const menu = menus.find((m) => m.id === menuId);
+    if (!menu) return;
+    setStockTargetMenuId(menuId);
+    setStockManagementEnabled(menu.stock_management);
+    setStockQuantityInput(String(menu.stock_quantity));
+    setShowStockModal(true);
+  };
+
+  const onStockNumpadPress = (key: string) => {
+    if (key === 'clear') {
+      setStockQuantityInput('');
+    } else if (key === 'backspace') {
+      setStockQuantityInput((prev) => prev.slice(0, -1));
+    } else {
+      setStockQuantityInput((prev) => {
+        const next = prev + key;
+        if (next.length > 4) return prev;
+        return next;
+      });
+    }
+  };
+
+  const applyStockQuantity = async () => {
+    if (!stockTargetMenuId) return;
+    const nextQuantity = Math.max(0, parseInt(stockQuantityInput, 10) || 0);
+    const now = new Date().toISOString();
+    const updatedMenus = menus.map((menu) =>
+      menu.id === stockTargetMenuId
+        ? {
+            ...menu,
+            stock_management: stockManagementEnabled,
+            stock_quantity: stockManagementEnabled ? nextQuantity : 0,
+            updated_at: now,
+          }
+        : menu,
+    );
+
+    setMenus(updatedMenus);
+    setShowStockModal(false);
+    setStockTargetMenuId(null);
+    setStockQuantityInput('');
+    setStockManagementEnabled(true);
+
+    try {
+      if (!isDemo) {
+        await saveMenus(updatedMenus);
+      }
+
+      if (canSyncToSupabase) {
+        const { error } = await supabase
+          .from('menus')
+          .update({
+            stock_management: stockManagementEnabled,
+            stock_quantity: stockManagementEnabled ? nextQuantity : 0,
+            updated_at: now,
+          })
+          .eq('id', stockTargetMenuId);
+        if (error) throw error;
+      }
+    } catch (error) {
+      console.error('Failed to update stock quantity:', error);
+      alertNotify('エラー', '残数の更新に失敗しました');
+    }
+  };
+
   const applyDiscount = () => {
     if (!discountTargetMenuId) return;
     const amount = parseInt(discountAmount, 10) || 0;
@@ -728,6 +798,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
           <View key={menu.id} className={isMobile ? 'w-1/2 p-1' : 'w-1/3 p-1'}>
             <TouchableOpacity
               onPress={() => addToCart(menu)}
+              onLongPress={() => openStockModal(menu.id)}
               disabled={isDisabled}
               activeOpacity={0.7}
             >
@@ -939,12 +1010,35 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
         <Modal
           visible={showHint}
           onClose={() => setShowHint(false)}
-          title="メニューの割引について"
+          title="レジ画面のヒント"
         >
-          <Text className="text-gray-700">
-            カート内のメニューを長押しすると、割引設定画面が現れます。
-          </Text>
-      </Modal>
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View className="gap-3">
+              <View className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
+                <Text className="text-sm font-bold text-blue-900">⚫ 値引きをしたいとき</Text>
+                <Text className="mt-1 text-sm leading-6 text-blue-900">
+                  注文内容に入ったメニューを長押しすると、割引画面が開きます。
+                </Text>
+              </View>
+
+              <View className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3">
+                <Text className="text-sm font-bold text-amber-900">⚫︎ メニューの残数を変更したいとき</Text>
+                <Text className="mt-1 text-sm leading-6 text-amber-900">
+                  左側のメニューを長押しすると、残数の変更画面が開きます。
+                </Text>
+              </View>
+
+              <View className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3">
+                <Text className="text-sm font-bold text-emerald-900">⚫︎ 支払い方法を整理したいとき</Text>
+                <Text className="mt-1 text-sm leading-6 text-emerald-900">
+                  「設定」で必要な支払い方法だけを表示できます。{'\n'}
+                  キャッシュレスの表記名も変更できます。
+                </Text>
+              </View>
+
+            </View>
+          </ScrollView>
+        </Modal>
 
         {isMobile && (
           <TouchableOpacity onPress={() => setShowCart(false)} className="p-2">
@@ -1441,6 +1535,118 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     </Modal>
   );
 
+  const stockTargetMenu = menus.find((m) => m.id === stockTargetMenuId);
+  const stockNum = Math.max(0, parseInt(stockQuantityInput, 10) || 0);
+  const stockNumpadKeys = [
+    ['1', '2', '3'],
+    ['4', '5', '6'],
+    ['7', '8', '9'],
+    ['clear', '0', 'backspace'],
+  ];
+
+  const stockModal = (
+    <Modal
+      visible={showStockModal}
+      onClose={() => {
+        setShowStockModal(false);
+        setStockTargetMenuId(null);
+        setStockQuantityInput('');
+        setStockManagementEnabled(true);
+      }}
+      title="残数の変更"
+    >
+      {stockTargetMenu && (
+        <ScrollView contentContainerStyle={{ paddingBottom: 8 }}>
+          <View className="mb-3">
+            <Text className="text-gray-800 font-semibold">{stockTargetMenu.menu_name}</Text>
+            <Text className="text-sm text-gray-500 mt-1">
+              現在の状態: {stockTargetMenu.stock_management ? `${stockTargetMenu.stock_quantity}個` : '無制限'}
+            </Text>
+          </View>
+
+          <View className="mb-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+            <View className="flex-row items-center justify-between">
+              <View className="pr-3 flex-1">
+                <Text className="text-sm font-semibold text-gray-800">在庫管理を使う</Text>
+                <Text className="mt-1 text-xs leading-5 text-gray-500">
+                  オフにすると、このメニューは無制限として扱われます。
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setStockManagementEnabled((prev) => !prev)}
+                activeOpacity={0.8}
+                className={`w-14 rounded-full p-1 ${stockManagementEnabled ? 'bg-blue-500' : 'bg-gray-300'}`}
+              >
+                <View
+                  className={`h-5 w-5 rounded-full bg-white ${stockManagementEnabled ? 'ml-auto' : 'ml-0'}`}
+                />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View className="rounded-xl bg-gray-100 p-4 mb-3">
+            <Text className="text-sm text-gray-500">設定する残数</Text>
+            <Text className={`text-right text-2xl font-bold ${stockManagementEnabled ? 'text-gray-900' : 'text-green-600'}`}>
+              {stockManagementEnabled ? (stockQuantityInput === '' ? '---' : `${stockNum}個`) : '無制限'}
+            </Text>
+          </View>
+
+          <View className="flex-row gap-2 mb-3">
+            {[0, 5, 10].map((amount) => (
+              <TouchableOpacity
+                key={amount}
+                onPress={() => setStockQuantityInput(String(amount))}
+                disabled={!stockManagementEnabled}
+                activeOpacity={0.7}
+                className={`flex-1 rounded-xl py-3 items-center ${stockManagementEnabled ? 'bg-blue-50' : 'bg-gray-100'}`}
+              >
+                <Text className={`font-semibold ${stockManagementEnabled ? 'text-blue-700' : 'text-gray-400'}`}>{amount}個</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View className="gap-2">
+            {stockNumpadKeys.map((row, rowIndex) => (
+              <View key={rowIndex} className="flex-row gap-2">
+                {row.map((key) => (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => onStockNumpadPress(key)}
+                    disabled={!stockManagementEnabled}
+                    activeOpacity={0.7}
+                    className={`flex-1 py-3 rounded-xl items-center justify-center ${
+                      !stockManagementEnabled
+                        ? 'bg-gray-100'
+                        : key === 'clear'
+                          ? 'bg-red-100'
+                          : key === 'backspace'
+                            ? 'bg-gray-200'
+                            : 'bg-gray-100'
+                    }`}
+                  >
+                    <Text className={`text-xl font-bold ${
+                      !stockManagementEnabled ? 'text-gray-400' : key === 'clear' ? 'text-red-600' : 'text-gray-900'
+                    }`}>
+                      {key === 'clear' ? 'C' : key === 'backspace' ? '←' : key}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ))}
+          </View>
+
+          <TouchableOpacity
+            onPress={applyStockQuantity}
+            activeOpacity={0.8}
+            className="mt-3 rounded-xl bg-blue-500 items-center py-3"
+          >
+            <Text className="text-white text-lg font-bold">更新する</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      )}
+    </Modal>
+  );
+
   const mobileOrderBanner =
     canSyncToSupabase && mobileOrderRequests.length > 0 && !showCart ? (
       <View className="mx-4 mt-3 mb-2">
@@ -1542,6 +1748,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
         {cashModal}
         {clearConfirmModal}
         {discountModal}
+        {stockModal}
         {actionsModal}
         {mobileOrderModal}
       </SafeAreaView>
@@ -1576,6 +1783,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       {cashModal}
       {clearConfirmModal}
       {discountModal}
+      {stockModal}
       {actionsModal}
       {mobileOrderModal}
     </SafeAreaView>

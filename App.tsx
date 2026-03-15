@@ -36,6 +36,7 @@ import { PricingScreen } from './components/account/PricingScreen';
 import { MyStores } from './components/account/MyStores';
 import { DemoBanner, SyncStatusBanner } from './components/common';
 import { DEMO_BRANCHES } from './data/demoData';
+import { DemoMobileOrderClient } from './components/customer/DemoMobileOrderClient';
 import { MobileOrderClient } from './components/customer/MobileOrderClient';
 
 type Screen =
@@ -48,6 +49,7 @@ type Screen =
   | 'pricing'
   | 'my_stores'
   | 'mobile_order_client'
+  | 'mobile_order_demo_client'
   // 既存画面
   | 'home'
   | 'hq_home'
@@ -225,6 +227,12 @@ function AppContent() {
       setCurrentScreen('landing');
     }
   }, [authState.status, demoReturnScreen, exitDemo, hasDemoReturnTarget]);
+
+  const startShareFeatureDemo = useCallback((targetScreen: Screen) => {
+    setDemoReturnScreen('store_home');
+    enterDemo();
+    setCurrentScreen(targetScreen);
+  }, [enterDemo]);
 
   // render中のsetStateを避け、遷移はeffectで行う
   useEffect(() => {
@@ -441,6 +449,20 @@ function AppContent() {
         }
         return <MobileOrderClient branchId={mobileOrderBranchId} />;
 
+      case 'mobile_order_demo_client':
+        if (!currentBranch) {
+          return null;
+        }
+        return (
+          <>
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
+            <DemoMobileOrderClient
+              branch={currentBranch}
+              onBack={() => setCurrentScreen('store_mobile_order')}
+            />
+          </>
+        );
+
       // ===== 新画面 =====
       case 'landing':
         return (
@@ -507,18 +529,10 @@ function AppContent() {
       case 'home':
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <Home
               onNavigateToStore={navigateToStoreEntry}
               onNavigateToHQ={() => setCurrentScreen('hq_home')}
-              onReturnToLoggedIn={
-                authState.status === 'demo' && hasDemoReturnTarget && demoReturnScreen
-                  ? () => {
-                      exitDemo();
-                      setCurrentScreen(demoReturnScreen);
-                    }
-                  : undefined
-              }
             />
           </>
         );
@@ -527,7 +541,7 @@ function AppContent() {
       case 'hq_home':
         return(
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <HQHome
               onNavigateSales={() => setCurrentScreen('hq_dashboard')}
               onNavigateBranchInfo={() => {
@@ -549,7 +563,7 @@ function AppContent() {
       case 'hq_dashboard':
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <HQDashboard
               onNavigateToBranchInfo={(branchId?: string) => {
                 setHqBranchInfoReturnScreen('hq_dashboard');
@@ -564,7 +578,7 @@ function AppContent() {
       case 'hq_branch_info':
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <HQBranchReports
               focusBranchId={hqBranchInfoFocusBranchId}
               onBack={() => setCurrentScreen(hqBranchInfoReturnScreen)}
@@ -576,7 +590,7 @@ function AppContent() {
       case 'store_login':
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <BranchLogin
               onLoginSuccess={handleBranchLogin}
               onBackToHome={() => {
@@ -598,7 +612,7 @@ function AppContent() {
         }
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <StoreHome
               branch={currentBranch}
@@ -616,6 +630,9 @@ function AppContent() {
                 enterDemo();
                 setCurrentScreen('home');
               }}
+              onNavigateToDemoOrderBoard={() => startShareFeatureDemo('store_order_board')}
+              onNavigateToDemoMobileOrder={() => startShareFeatureDemo('store_mobile_order')}
+              onNavigateToDemoPrep={() => startShareFeatureDemo('store_prep')}
               onBranchUpdated={(updatedBranch) => setCurrentBranch(updatedBranch)}
               onLogout={handleBranchLogout}
             />
@@ -629,7 +646,7 @@ function AppContent() {
         }
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <MenuManagement
               branch={currentBranch}
@@ -645,7 +662,7 @@ function AppContent() {
         }
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <Register
               branch={currentBranch}
@@ -663,7 +680,7 @@ function AppContent() {
         }
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <SalesHistory
               branch={currentBranch}
@@ -679,7 +696,7 @@ function AppContent() {
         }
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <OrderBoard
               branch={currentBranch}
@@ -695,11 +712,16 @@ function AppContent() {
         }
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <MobileOrderDashboard
               branch={currentBranch}
               onBack={() => setCurrentScreen('store_home')}
+              onOpenDemoClient={
+                authState.status === 'demo'
+                  ? () => setCurrentScreen('mobile_order_demo_client')
+                  : undefined
+              }
             />
           </>
         );
@@ -711,7 +733,7 @@ function AppContent() {
         }
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <PrepInventory
               branch={currentBranch}
@@ -727,7 +749,7 @@ function AppContent() {
         }
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <BudgetManager
               branch={currentBranch}
@@ -743,7 +765,7 @@ function AppContent() {
         }
         return (
           <>
-            <DemoBanner />
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
             <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
             <BudgetExpenseRecorder
               branch={currentBranch}
@@ -763,9 +785,20 @@ function AppContent() {
     }
   };
 
+  const canEndDemoFromTopRight =
+    authState.status === 'demo' && hasDemoReturnTarget && Boolean(demoReturnScreen);
+  const handleExitDemoFromFooter = canEndDemoFromTopRight
+    ? () => {
+        exitDemo();
+        if (demoReturnScreen) setCurrentScreen(demoReturnScreen);
+      }
+    : undefined;
+
   return (
     <>
-      {renderScreen()}
+      <View style={{ flex: 1 }}>
+        {renderScreen()}
+      </View>
       <StatusBar style="auto" />
 
       {/* ── 同期確認ダイアログ ──────────────────────────── */}

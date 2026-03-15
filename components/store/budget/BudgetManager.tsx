@@ -107,6 +107,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
   });
   const [budgetInput, setBudgetInput] = useState('');
   const [targetInput, setTargetInput] = useState('');
+  const [showBudgetSettingsModal, setShowBudgetSettingsModal] = useState(false);
 
   // Expenses
   const [expenses, setExpenses] = useState<BudgetExpense[]>([]);
@@ -513,6 +514,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
     setSettings(newSettings);
     if (isDemo) {
       alertNotify('保存完了', 'デモの予算設定を更新しました');
+      setShowBudgetSettingsModal(false);
       return;
     }
     await saveBudgetSettings(newSettings);
@@ -531,6 +533,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
     }
 
     alertNotify('保存完了', '予算設定を保存しました');
+    setShowBudgetSettingsModal(false);
   };
 
   const handleAddExpense = async () => {
@@ -1446,9 +1449,23 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
           <View className="gap-3 mb-4">
             <View className="flex-row gap-3">
               <Card className="flex-1 bg-indigo-500 p-4">
-                <Text className="text-indigo-100 text-xs font-semibold mb-1">初期予算</Text>
+                <View className="flex-row items-start justify-between mb-1">
+                  <Text className="text-indigo-100 text-xs font-semibold">初期予算</Text>
+                  <TouchableOpacity
+                    onPress={() => setShowBudgetSettingsModal(true)}
+                    activeOpacity={0.8}
+                    className="rounded-md bg-white/20 px-2 py-1"
+                  >
+                    <Text className="text-[11px] font-bold text-white">
+                      {settings.initial_budget > 0 || settings.target_sales > 0 ? '変更' : '設定'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
                 <Text className="text-white text-xl font-bold">
                   {settings.initial_budget > 0 ? `¥${settings.initial_budget.toLocaleString()}` : '未設定'}
+                </Text>
+                <Text className="text-indigo-100  mt-1">
+                  目標売上: {settings.target_sales > 0 ? `¥${settings.target_sales.toLocaleString()}` : '未設定'}
                 </Text>
               </Card>
               <Card className="flex-1 bg-rose-500 p-4">
@@ -1476,38 +1493,6 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
               </Text>
             </Card>
           </View>
-
-          {/* Budget Settings */}
-          <Card className="mb-4">
-            <Text className="text-gray-900 text-lg font-bold mb-3">予算設定</Text>
-            <View className="gap-3">
-              <View>
-                <Text className="text-gray-600 text-sm mb-1">初期予算（円）</Text>
-                <TextInput
-                  value={budgetInput}
-                  onChangeText={setBudgetInput}
-                  keyboardType="numeric"
-                  placeholder="30000"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-                  placeholderTextColor="#9CA3AF"
-                />
-              </View>
-              <View>
-                <Text className="text-gray-600 text-sm mb-1">目標売上（円）</Text>
-                <TextInput
-                  value={targetInput}
-                  onChangeText={setTargetInput}
-                  keyboardType="numeric"
-                  placeholder="50000"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
-                  placeholderTextColor="#9CA3AF"
-                />
-              </View>
-              <Button title="予算設定を保存" onPress={handleSaveBudgetSettings} />
-            </View>
-          </Card>
-
-
         </ScrollView>
       )}
 
@@ -1699,6 +1684,49 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
           </Card>
         </ScrollView>
       )}
+
+      <Modal
+        visible={showBudgetSettingsModal}
+        onClose={() => setShowBudgetSettingsModal(false)}
+        title="予算設定"
+      >
+        <View className="gap-3">
+          <View>
+            <Text className="text-gray-600 text-sm mb-1">初期予算（円）</Text>
+            <TextInput
+              value={budgetInput}
+              onChangeText={setBudgetInput}
+              keyboardType="numeric"
+              placeholder="30000"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+              placeholderTextColor="#9CA3AF"
+            />
+          </View>
+          <View>
+            <Text className="text-gray-600 text-sm mb-1">目標売上（円）</Text>
+            <TextInput
+              value={targetInput}
+              onChangeText={setTargetInput}
+              keyboardType="numeric"
+              placeholder="50000"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
+              placeholderTextColor="#9CA3AF"
+            />
+          </View>
+          <View className="flex-row gap-3 mt-1">
+            <View className="flex-1">
+              <Button
+                title="キャンセル"
+                onPress={() => setShowBudgetSettingsModal(false)}
+                variant="secondary"
+              />
+            </View>
+            <View className="flex-1">
+              <Button title="保存" onPress={handleSaveBudgetSettings} />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };

@@ -20,6 +20,7 @@ import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
+import { Feather } from '@expo/vector-icons';
 import { Button, Input, Card, Header, Modal } from '../../common';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { saveMenus, getMenus, saveMenuCategories, getMenuCategories, verifyAdminPassword, getRestrictions } from '../../../lib/storage';
@@ -222,6 +223,20 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       return targetMenus.map((menu) => reassignedMap.get(menu.id) ?? menu);
     },
     [getCategoryDigit, sortMenus],
+  );
+
+  const applyCategoryMenuOrder = useCallback(
+    (targetMenus: Menu[], orderedCategoryMenus: Menu[], categoryId: string | null, targetCategories: MenuCategory[]) => {
+      const categoryDigit = getCategoryDigit(categoryId, targetCategories);
+      const reassigned = orderedCategoryMenus.map((menu, index) => ({
+        ...menu,
+        sort_order: index,
+        menu_number: categoryDigit * 100 + (index + 1),
+      }));
+      const reassignedMap = new Map(reassigned.map((menu) => [menu.id, menu]));
+      return targetMenus.map((menu) => reassignedMap.get(menu.id) ?? menu);
+    },
+    [getCategoryDigit],
   );
 
   const fetchCategories = useCallback(async () => {
@@ -696,31 +711,6 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     );
   };
 
-  const handleStockChange = async (menu: Menu, change: number) => {
-    const newQuantity = Math.max(0, menu.stock_quantity + change);
-
-    try {
-      if (canSyncToSupabase) {
-        const { error } = await supabase
-          .from('menus')
-          .update({ stock_quantity: newQuantity, updated_at: new Date().toISOString() })
-          .eq('id', menu.id);
-        if (error) throw error;
-      }
-
-      const updatedMenus = menus.map((m) =>
-        m.id === menu.id ? { ...m, stock_quantity: newQuantity, updated_at: new Date().toISOString() } : m
-      );
-      setMenus(updatedMenus);
-      await saveMenus(updatedMenus);
-    } catch (error) {
-      console.error('Error updating stock:', error);
-      Alert.alert('エラー', '在庫数の更新に失敗しました');
-    }
-  };
-
-
-
   // ─── CSV Export ───
 
   const buildMenuCsv = (): string => {
@@ -1016,6 +1006,29 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     setShowEditModal(true);
   };
 
+  const handleStockChange = async (menu: Menu, change: number) => {
+    const newQuantity = Math.max(0, menu.stock_quantity + change);
+
+    try {
+      if (canSyncToSupabase) {
+        const { error } = await supabase
+          .from('menus')
+          .update({ stock_quantity: newQuantity, updated_at: new Date().toISOString() })
+          .eq('id', menu.id);
+        if (error) throw error;
+      }
+
+      const updatedMenus = menus.map((m) =>
+        m.id === menu.id ? { ...m, stock_quantity: newQuantity, updated_at: new Date().toISOString() } : m
+      );
+      setMenus(updatedMenus);
+      await saveMenus(updatedMenus);
+    } catch (error) {
+      console.error('Error updating stock:', error);
+      Alert.alert('エラー', '在庫数の更新に失敗しました');
+    }
+  };
+
   const { orderedCategories, categoryMetaMap } = useMemo(() => getCategoryMetaMap(categories), [categories]);
   const menuCodeMap = useMemo(() => buildMenuCodeMap(menus, categories), [menus, categories]);
 
@@ -1172,17 +1185,10 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       if (direction === 'down' && idx === sameCategoryMenus.length - 1) return;
 
       const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-      const target = sameCategoryMenus[swapIdx];
-      const currentOrder = menu.sort_order ?? idx;
-      const targetOrder = target.sort_order ?? swapIdx;
+      const orderedCategoryMenus = [...sameCategoryMenus];
+      [orderedCategoryMenus[idx], orderedCategoryMenus[swapIdx]] = [orderedCategoryMenus[swapIdx], orderedCategoryMenus[idx]];
 
-      const reordered = menus.map((m) => {
-        if (m.id === menu.id) return { ...m, sort_order: targetOrder };
-        if (m.id === target.id) return { ...m, sort_order: currentOrder };
-        return m;
-      });
-
-      const resequenced = resequenceCategoryMenus(reordered, menu.category_id, categories);
+      const resequenced = applyCategoryMenuOrder(menus, orderedCategoryMenus, menu.category_id, categories);
       const sorted = sortMenus(resequenced);
       if (Platform.OS !== 'web') {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -1230,7 +1236,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     } finally {
       reorderInFlightRef.current = false;
     }
-  }, [categories, menus, resequenceCategoryMenus, sortMenus, canSyncToSupabase]);
+  }, [applyCategoryMenuOrder, categories, menus, sortMenus, canSyncToSupabase]);
 
   const menuSections = useMemo(() => {
     if (orderedCategories.length === 0) {
@@ -1313,39 +1319,76 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       <Card
         className={`mb-1.5 overflow-hidden border ${categoryVisual.cardBorderClass} ${!item.is_show ? 'opacity-50' : ''}`}
       >
-          {/* 上部: メニュー情報 */}
-          <View className={`px-2.5 pt-2 pb-1.5 ${categoryVisual.cardBgClass}`}>
-          {/* 1行目: コードバッジ + 非表示バッジ */}
-          <View className="flex-row items-center justify-between mb-0.5">
-            <View className="flex-row items-center gap-2">
-              {isBulkDeleteMode ? (
-                <TouchableOpacity
-                  onPress={() => toggleMenuSelection(item.id)}
-                  activeOpacity={0.8}
-                  className={`w-5 h-5 rounded border items-center justify-center ${
-                    isSelected ? 'bg-red-500 border-red-500' : 'bg-white border-gray-300'
-                  }`}
-                >
-                  {isSelected ? <Text className="text-white text-[10px] font-bold">✓</Text> : null}
-                </TouchableOpacity>
-              ) : null}
-              <View className={`px-1.5 py-0.5 rounded-full ${categoryVisual.chipBgClass}`}>
-                <Text className={`text-xs font-bold ${categoryVisual.chipTextClass}`}>{menuCode}</Text>
-              </View>
-              {!item.is_show && (
-                <View className="bg-orange-100 px-1.5 py-0.5 rounded-full">
-                  <Text className="text-orange-600 text-[10px] font-bold">非表示</Text>
+        <View className={`px-2.5 py-2 ${categoryVisual.cardBgClass}`}>
+          <View className="flex-row items-stretch">
+            <View className="justify-center pr-2" style={{ width: '42%' }}>
+              <View className="flex-row items-center gap-2 mb-1">
+                {isBulkDeleteMode ? (
+                  <TouchableOpacity
+                    onPress={() => toggleMenuSelection(item.id)}
+                    activeOpacity={0.8}
+                    className={`w-5 h-5 rounded border items-center justify-center ${
+                      isSelected ? 'bg-red-500 border-red-500' : 'bg-white border-gray-300'
+                    }`}
+                  >
+                    {isSelected ? <Text className="text-white text-[10px] font-bold">✓</Text> : null}
+                  </TouchableOpacity>
+                ) : null}
+                <View className={`px-1.5 py-0.5 rounded-full ${categoryVisual.chipBgClass}`}>
+                  <Text className={`text-xs font-bold ${categoryVisual.chipTextClass}`}>{menuCode}</Text>
                 </View>
+              </View>
+              <Text className="text-base font-bold text-gray-900" numberOfLines={1}>
+                {item.menu_name}
+              </Text>
+              <Text className="mt-1 text-sm font-bold text-blue-600">
+                ¥{item.price.toLocaleString()}
+              </Text>
+            </View>
+
+            <View className="justify-center border-l border-gray-100 px-2" style={{ width: '18%' }}>
+              <Text className="text-[11px] font-semibold text-gray-500 text-center">在庫数</Text>
+              {item.stock_management ? (
+                <View className="mt-1 flex-row items-center justify-center gap-1">
+                  <TouchableOpacity
+                    onPress={() => handleStockChange(item, -1)}
+                    activeOpacity={0.7}
+                    className="h-6 w-6 items-center justify-center rounded-md border border-gray-200 bg-white"
+                  >
+                    <Text className="text-xs font-bold text-gray-700">−</Text>
+                  </TouchableOpacity>
+                  <Text
+                    className={`min-w-[24px] text-center text-lg font-bold ${
+                      item.stock_quantity === 0
+                        ? 'text-red-500'
+                        : item.stock_quantity <= 5
+                          ? 'text-orange-500'
+                          : 'text-gray-900'
+                    }`}
+                  >
+                    {item.stock_quantity}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => handleStockChange(item, 1)}
+                    activeOpacity={0.7}
+                    className="h-6 w-6 items-center justify-center rounded-md border border-gray-200 bg-white"
+                  >
+                    <Text className="text-xs font-bold text-gray-700">＋</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <Text className="mt-1 text-center text-xs font-semibold text-green-700">無制限</Text>
               )}
             </View>
-            {/* 並び替えボタン（右上） */}
-            <View className="flex-row items-center gap-1">
+
+            <View className="justify-center items-center border-l border-gray-100 px-2 gap-1.5" style={{ width: '16%' }}>
+              <Text className="text-[11px] font-semibold text-gray-500 text-center">順番</Text>
               <TouchableOpacity
                 onPress={() => moveMenuOrder(item, 'up')}
                 disabled={isTopInSection}
                 activeOpacity={0.7}
-                className={`w-7 h-7 items-center justify-center rounded-md ${
-                  isTopInSection ? 'bg-gray-100 opacity-30' : 'bg-white/80 border border-gray-200'
+                className={`w-8 h-8 items-center justify-center rounded-md ${
+                  isTopInSection ? 'bg-gray-100 opacity-30' : 'bg-white border border-gray-200'
                 }`}
               >
                 <Text className="text-gray-600 font-bold text-xs">↑</Text>
@@ -1354,78 +1397,35 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                 onPress={() => moveMenuOrder(item, 'down')}
                 disabled={isBottomInSection}
                 activeOpacity={0.7}
-                className={`w-7 h-7 items-center justify-center rounded-md ${
-                  isBottomInSection ? 'bg-gray-100 opacity-30' : 'bg-white/80 border border-gray-200'
+                className={`w-8 h-8 items-center justify-center rounded-md ${
+                  isBottomInSection ? 'bg-gray-100 opacity-30' : 'bg-white border border-gray-200'
                 }`}
               >
                 <Text className="text-gray-600 font-bold text-xs">↓</Text>
               </TouchableOpacity>
             </View>
+
+            <View className="justify-center items-end border-l border-gray-100 pl-2" style={{ width: '24%' }}>
+              <TouchableOpacity
+                onPress={() => handleVisible(item)}
+                activeOpacity={0.7}
+                className={`mb-2 rounded-full px-2.5 py-1 ${
+                  item.is_show ? 'bg-green-50 border border-green-200' : 'bg-orange-50 border border-orange-200'
+                }`}
+              >
+                <Text className={`text-xs font-semibold ${item.is_show ? 'text-green-600' : 'text-orange-500'}`}>
+                  {item.is_show ? '表示中' : '非表示'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => withMenuRestrictionCheck('menu_edit', () => openEditModal(item))}
+                activeOpacity={0.7}
+                className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-1.5"
+              >
+                <Text className="text-blue-600 text-xs font-semibold">編集</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-
-          {/* 2行目: メニュー名 */}
-          <Text className="text-base font-bold text-gray-900 mb-1" numberOfLines={1}>
-            {item.menu_name}
-          </Text>
-
-          {/* 3行目: 価格 + 在庫 */}
-          <View className="flex-row items-center justify-between">
-            <Text className="text-blue-600 font-bold text-sm">
-              ¥{item.price.toLocaleString()}
-            </Text>
-            {item.stock_management ? (
-              <View className="flex-row items-center gap-1">
-                <Text className="text-gray-500 text-xs">在庫</Text>
-                <TouchableOpacity
-                  onPress={() => handleStockChange(item, -1)}
-                  activeOpacity={0.7}
-                  className="w-6 h-6 bg-white/80 border border-gray-200 rounded-l-md items-center justify-center"
-                >
-                  <Text className="text-gray-700 font-bold text-sm">−</Text>
-                </TouchableOpacity>
-                <View className={`w-8 h-6 items-center justify-center border-t border-b border-gray-200 bg-white/80 ${
-                  item.stock_quantity === 0 ? 'bg-red-50' : item.stock_quantity <= 5 ? 'bg-orange-50' : ''
-                }`}>
-                  <Text className={`font-bold text-xs ${
-                    item.stock_quantity === 0 ? 'text-red-500' : item.stock_quantity <= 5 ? 'text-orange-500' : 'text-gray-900'
-                  }`}>
-                    {item.stock_quantity}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => handleStockChange(item, 1)}
-                  activeOpacity={0.7}
-                  className="w-6 h-6 bg-white/80 border border-gray-200 rounded-r-md items-center justify-center"
-                >
-                  <Text className="text-gray-700 font-bold text-sm">＋</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View className="bg-green-100 px-1.5 py-0.5 rounded-full">
-                <Text className="text-green-700 text-[10px] font-medium">在庫無制限</Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* 下部: 操作ボタン */}
-        <View className="flex-row border-t border-gray-100 bg-white">
-          <TouchableOpacity
-            onPress={() => handleVisible(item)}
-            activeOpacity={0.7}
-            className={`py-1 items-center justify-center ${isBulkDeleteMode ? 'flex-1' : 'flex-1 border-r border-gray-100'}`}
-          >
-            <Text className={`text-xs font-semibold ${item.is_show ? 'text-green-600' : 'text-orange-500'}`}>
-              {item.is_show ? '表示中' : '非表示中'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => withMenuRestrictionCheck('menu_edit', () => openEditModal(item))}
-            activeOpacity={0.7}
-            className={`py-1 items-center justify-center ${isBulkDeleteMode ? 'flex-1' : 'flex-1'}`}
-          >
-            <Text className="text-blue-600 text-xs font-semibold">編集</Text>
-          </TouchableOpacity>
         </View>
       </Card>
     );
@@ -1553,7 +1553,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                 className="w-9 h-9 bg-gray-100 rounded-lg items-center justify-center"
                 activeOpacity={0.7}
               >
-                <Text className="text-gray-700 text-lg font-bold leading-none">☰</Text>
+                <Feather name="menu" size={18} color="#374151" />
               </TouchableOpacity>
             </View>
           ) : (
@@ -1743,63 +1743,62 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             const visual = categoryMeta?.visual ?? UNCATEGORIZED_VISUAL;
             return (
               <Card className={`mb-3 overflow-hidden border ${visual.cardBorderClass}`}>
-                {/* カード上部: カテゴリ情報 + 並び替えボタン */}
-                <View className={`px-4 py-3 flex-row items-center ${visual.cardBgClass}`}>
-                  {/* 左: コード + 名前 */}
-                  <View className="flex-1">
+                <View className={`px-3 py-2.5 flex-row items-stretch ${visual.cardBgClass}`}>
+                  <View className="justify-center pr-2" style={{ width: '42%' }}>
                     <View className="flex-row items-center gap-2 mb-1">
                       <View className={`px-2.5 py-0.5 rounded-full ${visual.chipBgClass}`}>
                         <Text className={`text-xs font-bold ${visual.chipTextClass}`}>{categoryCode}</Text>
                       </View>
-                      <Text className="text-base font-bold text-gray-900" numberOfLines={1}>{item.category_name}</Text>
                     </View>
-                    <View className="flex-row items-center gap-1">
-                      <View className="bg-white/70 rounded-full px-2.5 py-0.5">
-                        <Text className="text-gray-600 text-xs font-medium">{menuCount} 件のメニュー</Text>
-                      </View>
-                      <Text className="text-gray-400 text-xs">· 表示順 {index + 1}</Text>
-                    </View>
+                    <Text className="text-base font-bold text-gray-900" numberOfLines={1}>{item.category_name}</Text>
                   </View>
-                  {/* 右: 並び替えボタン（縦並び・大きめ） */}
-                  <View className="gap-1 ml-2">
+
+                  <View className="justify-center border-l border-gray-100 px-2" style={{ width: '18%' }}>
+                    <Text className="text-[11px] font-semibold text-gray-500 text-center">メニュー数</Text>
+                    <Text className="mt-1 text-center text-lg font-bold text-gray-900">{menuCount}</Text>
+                    <Text className="text-center text-[10px] text-gray-500">表示順 {index + 1}</Text>
+                  </View>
+
+                  <View className="justify-center items-center border-l border-gray-100 px-2 gap-1.5" style={{ width: '16%' }}>
+                    <Text className="text-[11px] font-semibold text-gray-500 text-center">順番</Text>
                     <TouchableOpacity
                       onPress={() => moveCategoryOrder(item, 'up')}
                       disabled={index === 0}
                       activeOpacity={0.7}
-                      className={`w-10 h-10 items-center justify-center rounded-lg bg-white/80 shadow-sm ${index === 0 ? 'opacity-25' : ''}`}
+                      className={`w-8 h-8 items-center justify-center rounded-md bg-white/80 ${index === 0 ? 'opacity-25' : 'border border-gray-200'}`}
                     >
-                      <Text className="text-gray-700 text-lg font-bold">↑</Text>
+                      <Text className="text-gray-700 text-xs font-bold">↑</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => moveCategoryOrder(item, 'down')}
                       disabled={index === orderedCategories.length - 1}
                       activeOpacity={0.7}
-                      className={`w-10 h-10 items-center justify-center rounded-lg bg-white/80 shadow-sm ${index === orderedCategories.length - 1 ? 'opacity-25' : ''}`}
+                      className={`w-8 h-8 items-center justify-center rounded-md bg-white/80 ${index === orderedCategories.length - 1 ? 'opacity-25' : 'border border-gray-200'}`}
                     >
-                      <Text className="text-gray-700 text-lg font-bold">↓</Text>
+                      <Text className="text-gray-700 text-xs font-bold">↓</Text>
                     </TouchableOpacity>
                   </View>
-                </View>
-                {/* カード下部: 操作ボタン */}
-                <View className="flex-row border-t border-gray-100 bg-white">
-                  <TouchableOpacity
-                    onPress={() => {
-                      setEditingCategory(item);
-                      setCategoryName(item.category_name);
-                      setShowEditCategoryModal(true);
-                    }}
-                    activeOpacity={0.7}
-                    className="flex-1 py-3 items-center justify-center border-r border-gray-100"
-                  >
-                    <Text className="text-blue-600 text-sm font-semibold">編集</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => handleDeleteCategory(item)}
-                    activeOpacity={0.7}
-                    className="flex-1 py-3 items-center justify-center"
-                  >
-                    <Text className="text-red-500 text-sm font-semibold">削除</Text>
-                  </TouchableOpacity>
+
+                  <View className="justify-center items-end border-l border-gray-100 pl-2" style={{ width: '24%' }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setEditingCategory(item);
+                        setCategoryName(item.category_name);
+                        setShowEditCategoryModal(true);
+                      }}
+                      activeOpacity={0.7}
+                      className="mb-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5"
+                    >
+                      <Text className="text-blue-600 text-xs font-semibold">編集</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleDeleteCategory(item)}
+                      activeOpacity={0.7}
+                      className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5"
+                    >
+                      <Text className="text-red-500 text-xs font-semibold">削除</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </Card>
             );
@@ -2063,7 +2062,9 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             }`}
             activeOpacity={0.7}
           >
-            <Text className="text-lg">📄</Text>
+            <View className="rounded-md bg-white border border-amber-200 p-2">
+              <Feather name="file-text" size={16} color="#b45309" />
+            </View>
             <View className="flex-1">
               <Text className="text-amber-900 font-semibold text-sm">
                 {exporting ? 'ダウンロード中...' : 'インポート形式CSVダウンロード'}
@@ -2080,7 +2081,9 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             className="flex-row items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3"
             activeOpacity={0.7}
           >
-            <Text className="text-lg">📥</Text>
+            <View className="rounded-md bg-white border border-green-200 p-2">
+              <Feather name="upload" size={16} color="#166534" />
+            </View>
             <View className="flex-1">
               <Text className="text-green-800 font-semibold text-sm">CSV一括登録</Text>
               <Text className="text-green-600 text-xs">ひな形に入力したCSVを読み込んで登録</Text>
@@ -2098,7 +2101,9 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             }`}
             activeOpacity={0.7}
           >
-            <Text className="text-lg">📤</Text>
+            <View className="rounded-md bg-white border border-blue-200 p-2">
+              <Feather name="download" size={16} color="#1d4ed8" />
+            </View>
             <View className="flex-1">
               <Text className="text-blue-800 font-semibold text-sm">
                 {exporting ? 'CSV出力中...' : 'メニューCSV出力'}

@@ -65,7 +65,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const getOAuthRedirectUri = useCallback((): string => {
     if (Platform.OS === 'web') {
-      return typeof window !== 'undefined' ? window.location.origin : '';
+      const prodWebUrl = 'https://festival-pos-app.vercel.app';
+      if (typeof window === 'undefined') return prodWebUrl;
+
+      const origin = window.location.origin;
+      const host = window.location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') return origin;
+
+      // Web本番では常に固定URLへ戻して localhost への誤リダイレクトを防ぐ
+      return prodWebUrl;
     }
     // Expo Go ではカスタムschemeより、現在のhostを使ったexp:// URLの方が復帰が安定する
     if (Constants.appOwnership === 'expo') {
@@ -348,17 +356,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
     if (result.type !== 'success' || !result.url) {
+      if (result.type === 'cancel' || result.type === 'dismiss') {
+        throw new Error('ログインをキャンセルしました');
+      }
       throw new Error('OAuth認証が完了しませんでした');
     }
 
     const code = extractQueryParam(result.url, 'code');
-    if (!code) {
-      throw new Error('認証コードを取得できませんでした');
+    if (code) {
+      const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+      if (exchangeError) throw exchangeError;
+      return;
     }
 
-    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-    if (exchangeError) throw exchangeError;
-  }, [extractQueryParam, getOAuthRedirectUri]);
+    const accessToken = extractHashParam(result.url, 'access_token');
+    const refreshToken = extractHashParam(result.url, 'refresh_token');
+    if (accessToken && refreshToken) {
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (sessionError) throw sessionError;
+      return;
+    }
+
+    throw new Error('認証情報を取得できませんでした。iOSシミュレータではブラウザを閉じずに完了してください。');
+  }, [extractHashParam, extractQueryParam, getOAuthRedirectUri]);
 
   const signInWithGoogle = useCallback(async () => {
     await signInWithProvider('google');
@@ -380,10 +403,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signUpWithEmail = useCallback(async (email: string, password: string, displayName: string) => {
     const normalizedEmail = email.trim().toLowerCase();
     const normalizedDisplayName = displayName.trim();
-    const emailRedirectTo =
-      Platform.OS === 'web' && typeof window !== 'undefined'
-        ? window.location.origin
-        : undefined;
+    const emailRedirectTo = Platform.OS === 'web' ? getOAuthRedirectUri() : undefined;
     const { data, error } = await supabase.auth.signUp({
       email: normalizedEmail,
       password,
@@ -402,7 +422,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       needsEmailConfirmation: !data.session,
       alreadyRegistered,
     };
-  }, []);
+  }, [getOAuthRedirectUri]);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
