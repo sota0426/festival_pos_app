@@ -14,11 +14,11 @@ interface AccountDashboardProps {
 
 const planLabels: Record<string, { label: string; color: string; bg: string }> = {
   free: { label: '無料プラン', color: 'text-green-700', bg: 'bg-green-100' },
-  store: { label: '店舗プラン（買い切り500円）', color: 'text-blue-700', bg: 'bg-blue-100' },
+  store: { label: '店舗プラン', color: 'text-blue-700', bg: 'bg-blue-100' },
   org_light: { label: '団体プラン（10店舗）', color: 'text-violet-700', bg: 'bg-violet-100' },
-  org_standard: { label: '団体プラン（10店舗・3,000円）', color: 'text-purple-700', bg: 'bg-purple-100' },
-  org_premium: { label: '団体プラン（30店舗・6,000円）', color: 'text-fuchsia-700', bg: 'bg-fuchsia-100' },
-  organization: { label: '団体プラン（10店舗・3,000円）', color: 'text-purple-700', bg: 'bg-purple-100' }, // legacy
+  org_standard: { label: '団体プラン（10店舗）', color: 'text-purple-700', bg: 'bg-purple-100' },
+  org_premium: { label: '団体プラン（30店舗）', color: 'text-fuchsia-700', bg: 'bg-fuchsia-100' },
+  organization: { label: '団体プラン（10店舗）', color: 'text-purple-700', bg: 'bg-purple-100' }, // legacy
 };
 
 export const AccountDashboard = ({

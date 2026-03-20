@@ -26,6 +26,7 @@ import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { saveMenus, getMenus, saveMenuCategories, getMenuCategories, verifyAdminPassword, getRestrictions } from '../../../lib/storage';
 import { alertConfirm, alertNotify } from '../../../lib/alertUtils';
 import { formatBranchDisplayTitle } from '../../../lib/branchDisplay';
+import { cleanupLegacyNoneCategory } from '../../../lib/menuCategoryCleanup';
 import type { Branch, Menu, MenuCategory, RestrictionSettings } from '../../../types/database';
 import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -86,6 +87,9 @@ const parseCsvLine = (line: string): string[] => {
   cells.push(current.trim());
   return cells;
 };
+
+const isNonNegativeIntegerText = (value: string): boolean => /^\d+$/.test(value.trim());
+const digitsOnly = (value: string): string => value.replace(/[^\d]/g, '');
 
 type CsvMenuImportRow = {
   menu_name: string;
@@ -159,12 +163,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const isPhoneLayout = viewportWidth < 430;
 
   const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
-  const defaultCategoryId = useMemo(() => {
-    if (categories.length === 0) return null;
-    const ordered = [...categories].sort((a, b) => a.sort_order - b.sort_order);
-    const defaultCategory = ordered.find((category) => category.category_name.trim() === 'なし');
-    return defaultCategory?.id ?? ordered[0]?.id ?? null;
-  }, [categories]);
+  const defaultCategoryId = useMemo(() => null, []);
 
   const getNextSortOrder = useCallback(
     (categoryId: string | null, targetMenus: Menu[]) => {
@@ -256,6 +255,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       const branchCategories = localCategories.filter((c) => c.branch_id === branch.id);
 
       if (canSyncToSupabase) {
+        const localMenus = await getMenus();
         const { data, error } = await supabase
           .from('menu_categories')
           .select('*')
@@ -263,20 +263,47 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           .order('sort_order', { ascending: true });
 
         if (!error && data) {
-          setCategories(data);
+          const remoteMenus = localMenus.filter((menu) => menu.branch_id === branch.id);
+          const cleaned = cleanupLegacyNoneCategory(data, remoteMenus);
+          setCategories(cleaned.categories);
+
+          if (cleaned.removedCategoryIds.length > 0) {
+            const otherMenus = localMenus.filter((menu) => menu.branch_id !== branch.id);
+            await saveMenus([...otherMenus, ...cleaned.menus]);
+            await supabase
+              .from('menus')
+              .update({ category_id: null })
+              .in('category_id', cleaned.removedCategoryIds);
+            await supabase.from('menu_categories').delete().in('id', cleaned.removedCategoryIds);
+          }
+
           // Merge with other branches' categories in local storage
           const otherCategories = localCategories.filter((c) => c.branch_id !== branch.id);
-          await saveMenuCategories([...otherCategories, ...data]);
+          await saveMenuCategories([...otherCategories, ...cleaned.categories]);
           return;
         }
       }
 
       // オフライン時: ローカルのカテゴリをそのまま使用
-      setCategories(branchCategories);
+      const localMenus = await getMenus();
+      const branchMenus = localMenus.filter((menu) => menu.branch_id === branch.id);
+      const cleaned = cleanupLegacyNoneCategory(branchCategories, branchMenus);
+      setCategories(cleaned.categories);
+      if (cleaned.removedCategoryIds.length > 0) {
+        const otherCategories = localCategories.filter((c) => c.branch_id !== branch.id);
+        const otherMenus = localMenus.filter((menu) => menu.branch_id !== branch.id);
+        await saveMenuCategories([...otherCategories, ...cleaned.categories]);
+        await saveMenus([...otherMenus, ...cleaned.menus]);
+      }
     } catch (error) {
       console.error('Error fetching categories:', error);
       const localCategories = await getMenuCategories();
-      setCategories(localCategories.filter((c) => c.branch_id === branch.id));
+      const localMenus = await getMenus();
+      const cleaned = cleanupLegacyNoneCategory(
+        localCategories.filter((c) => c.branch_id === branch.id),
+        localMenus.filter((menu) => menu.branch_id === branch.id),
+      );
+      setCategories(cleaned.categories);
     }
   }, [branch.id, isDemo, demoBranchId, canSyncToSupabase]);
 
@@ -298,7 +325,12 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
 
       if (!canSyncToSupabase) {
         if (branchMenus.length > 0) {
-          setMenus(sortMenus(branchMenus));
+          const localCategories = await getMenuCategories();
+          const cleaned = cleanupLegacyNoneCategory(
+            localCategories.filter((c) => c.branch_id === branch.id),
+            branchMenus,
+          );
+          setMenus(sortMenus(cleaned.menus));
         } else {
           // Demo data
           const demoMenus: Menu[] = [
@@ -458,6 +490,14 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       Alert.alert('エラー', 'メニュー名と金額を入力してください');
       return;
     }
+    if (!isNonNegativeIntegerText(price)) {
+      Alert.alert('エラー', '金額は数字のみで入力してください');
+      return;
+    }
+    if (stockManagement && stockQuantity.trim() && !isNonNegativeIntegerText(stockQuantity)) {
+      Alert.alert('エラー', '在庫数は数字のみで入力してください');
+      return;
+    }
 
     setSaving(true);
 
@@ -516,6 +556,14 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const handleEditMenu = async () => {
     if (!editingMenu || !menuName.trim() || !price.trim()) {
       Alert.alert('エラー', 'メニュー名と金額を入力してください');
+      return;
+    }
+    if (!isNonNegativeIntegerText(price)) {
+      Alert.alert('エラー', '金額は数字のみで入力してください');
+      return;
+    }
+    if (stockManagement && stockQuantity.trim() && !isNonNegativeIntegerText(stockQuantity)) {
+      Alert.alert('エラー', '在庫数は数字のみで入力してください');
       return;
     }
 
@@ -735,7 +783,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   };
 
   const buildMenuImportTemplateCsv = (): string => {
-    const sample = ['サンプルメニュー', '500', 'なし', 'true', '50', 'true'].map(toCsvCell).join(',');
+    const sample = ['サンプルメニュー', '500', '', 'true', '50', 'true'].map(toCsvCell).join(',');
     return `\uFEFF${MENU_CSV_HEADER}\n${sample}`;
   };
 
@@ -1259,34 +1307,13 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       menus.filter((menu) => !menu.category_id || !categories.find((c) => c.id === menu.category_id)),
     );
     if (uncategorized.length > 0) {
-      const fallbackCategory = orderedCategories.find((category) => category.id === defaultCategoryId);
-      const fallbackInSections = sections.find((s) => s.id === defaultCategoryId);
-      if (fallbackCategory && fallbackInSections) {
-        // fallback category has directly-assigned menus → merge uncategorized into it
-        sections = sections.map((section) =>
-          section.id === fallbackCategory.id
-            ? { ...section, menus: sortMenus([...section.menus, ...uncategorized]) }
-            : section,
-        );
-      } else if (fallbackCategory && !fallbackInSections) {
-        // fallback category exists but was filtered out (no direct menus) → restore it with uncategorized
-        const meta = categoryMetaMap.get(fallbackCategory.id);
-        sections.push({
-          id: fallbackCategory.id,
-          title: fallbackCategory.category_name,
-          categoryCode: meta?.code ?? '1',
-          visual: meta?.visual ?? UNCATEGORIZED_VISUAL,
-          menus: uncategorized,
-        });
-      } else {
-        sections.push({
-          id: 'uncategorized',
-          title: 'なし',
-          categoryCode: '1',
-          visual: UNCATEGORIZED_VISUAL,
-          menus: uncategorized,
-        });
-      }
+      sections.push({
+        id: 'uncategorized',
+        title: '未登録',
+        categoryCode: '1',
+        visual: UNCATEGORIZED_VISUAL,
+        menus: uncategorized,
+      });
     }
     return sections.filter((section) => section.menus.length > 0);
   }, [orderedCategories, categoryMetaMap, categories, menus, sortMenus, defaultCategoryId]);
@@ -1484,7 +1511,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       <Input
         label="金額（円）"
         value={price}
-        onChangeText={setPrice}
+        onChangeText={(text) => setPrice(digitsOnly(text))}
         placeholder="例: 300"
         keyboardType="numeric"
       />
@@ -1494,6 +1521,16 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
           <Text className="text-gray-700 font-medium mb-2">カテゴリ</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View className="flex-row gap-2">
+              <TouchableOpacity
+                onPress={() => setSelectedCategoryId(null)}
+                className={`px-3 py-2 rounded-lg border ${
+                  selectedCategoryId === null ? 'bg-blue-500 border-blue-500' : 'bg-white border-gray-300'
+                }`}
+              >
+                <Text className={selectedCategoryId === null ? 'text-white font-medium' : 'text-gray-700'}>
+                  未登録
+                </Text>
+              </TouchableOpacity>
               {orderedCategories.map((cat) => (
                 <TouchableOpacity
                   key={cat.id}
@@ -1529,7 +1566,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
         <Input
           label="在庫数"
           value={stockQuantity}
-          onChangeText={setStockQuantity}
+          onChangeText={(text) => setStockQuantity(digitsOnly(text))}
           placeholder="例: 50"
           keyboardType="numeric"
         />
@@ -2172,7 +2209,6 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
             setAdminGuardPwInput(text);
             setAdminGuardError('');
           }}
-          secureTextEntry
           placeholder="管理者パスワードを入力"
           className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
           placeholderTextColor="#9CA3AF"

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, ScrollView, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { Alert, FlatList, ScrollView, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSubscription } from '../../contexts/SubscriptionContext';
+import { useAuth } from '../../contexts/AuthContext';
 import type { PlanType } from '../../types/database';
 
 interface PricingScreenProps {
   onBack: () => void;
+  onNavigateToAuth: () => void;
 }
 
 type PaidPlanKey = 'store' | 'org_standard' | 'org_premium';
@@ -93,7 +95,7 @@ const PLANS: PlanCard[] = [
       '複数端末で同時運用',
       'Web版での店舗操作',
       'モバイルオーダーなど共有機能',
-      'データ保管期間は最終更新から2年',
+      'データ保管期間は最終更新から1年',
     ],
     cannotDo: [
       '本部ダッシュボード',
@@ -125,7 +127,7 @@ const PLANS: PlanCard[] = [
       '本部ダッシュボード',
       '全店舗の売上集計と一括CSV出力',
       '各店舗のクラウド保存・複数端末運用',
-      'データ保管期間は最終更新から2年',
+      'データ保管期間は最終更新から1年',
     ],
     cannotDo: [
       '10店舗を超える大規模運用',
@@ -155,14 +157,15 @@ const PLANS: PlanCard[] = [
       '本部ダッシュボード',
       '全店舗の売上集計と一括CSV出力',
       '各店舗のクラウド保存・複数端末運用',
-      'データ保管期間は最終更新から2年',
+      'データ保管期間は最終更新から1年',
     ],
     cannotDo: [],
   },
 ];
 
-export const PricingScreen = ({ onBack }: PricingScreenProps) => {
+export const PricingScreen = ({ onBack, onNavigateToAuth }: PricingScreenProps) => {
   const { plan: currentPlan, openCheckout } = useSubscription();
+  const { authState } = useAuth();
   const [loading, setLoading] = useState<PaidPlanKey | null>(null);
   const currentPlanKey = normalizePlanKey(currentPlan);
   const initialIndex = Math.max(PLANS.findIndex((plan) => plan.key === currentPlanKey), 0);
@@ -190,12 +193,29 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
       return currentPlanKey === 'free' ? '現在のプランです' : '無料プランを利用中';
     }
     if (isCurrent) return '現在のプランです';
+    if (currentPlanKey === 'org_standard' && selectedPlan.key === 'org_premium') {
+      return '差額でこのプランにアップグレード';
+    }
     if (currentPlanKey === 'free') return 'このプランに変更';
     return 'このプランを購入';
   }, [currentPlanKey, isCurrent, selectedPlan.key]);
 
   const handleSelectPlan = async () => {
     if (selectedPlan.key === 'free' || isCurrent) return;
+    if (authState.status !== 'authenticated') {
+      Alert.alert(
+        'ログインが必要です',
+        '料金プランを申し込む前に、まずアカウントへログインしてください。',
+        [
+          { text: 'キャンセル', style: 'cancel' },
+          {
+            text: 'ログインする',
+            onPress: onNavigateToAuth,
+          },
+        ],
+      );
+      return;
+    }
     try {
       setLoading(selectedPlan.key);
       await openCheckout(selectedPlan.key);

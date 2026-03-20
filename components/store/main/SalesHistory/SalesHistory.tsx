@@ -534,7 +534,6 @@ export const SalesHistory = ({
             setAdminGuardPwInput(text);
             setAdminGuardError('');
           }}
-          secureTextEntry
           placeholder="管理者パスワードを入力"
           className="border border-gray-300 rounded-lg px-3 py-2 text-base bg-white"
           placeholderTextColor="#9CA3AF"

@@ -284,7 +284,6 @@ export const AuthSignIn = ({ onBack }: AuthSignInProps) => {
                     <TextInput
                       value={password}
                       onChangeText={setPassword}
-                      secureTextEntry
                       placeholder="6文字以上で入力"
                       placeholderTextColor="#9CA3AF"
                       editable={loading === null}
@@ -297,7 +296,6 @@ export const AuthSignIn = ({ onBack }: AuthSignInProps) => {
                       <TextInput
                         value={confirmPassword}
                         onChangeText={setConfirmPassword}
-                        secureTextEntry
                         placeholder="もう一度入力してください"
                         placeholderTextColor="#9CA3AF"
                         editable={loading === null}

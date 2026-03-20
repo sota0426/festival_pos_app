@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './AuthContext';
 import { supabase } from '../lib/supabase';
 import { setSyncEnabled } from '../lib/syncMode';
+import { runCloudRetentionCleanup } from '../lib/cloudRetention';
 import type { PlanType, SubscriptionStatus } from '../types/database';
 
 type CheckoutPlan = 'store' | 'org_standard' | 'org_premium';
@@ -129,6 +130,12 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
     void enforceDowngradeInactive();
   }, [authState, plan]);
 
+  useEffect(() => {
+    if (authState.status !== 'authenticated') return;
+    if (!canSync) return;
+    void runCloudRetentionCleanup(authState.user.id, authState.subscription?.organization_id);
+  }, [authState, canSync]);
+
   const resolveValidAccessToken = useCallback(async (): Promise<string | null> => {
     const isJwt = (token: string | null | undefined): token is string =>
       !!token && token.split('.').length === 3;
@@ -212,7 +219,10 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
 
-      const data = await invokeEdgeFunctionWithAuth('create-checkout-session', accessToken, { plan: targetPlan });
+      const data = await invokeEdgeFunctionWithAuth('create-checkout-session', accessToken, {
+        plan: targetPlan,
+        accessToken,
+      });
       if (data?.url) {
         if (Platform.OS === 'web') {
           window.location.href = data.url;

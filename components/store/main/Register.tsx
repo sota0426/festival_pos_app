@@ -18,6 +18,7 @@ import {
 } from '../../../lib/storage';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
 import { formatBranchDisplayTitle } from '../../../lib/branchDisplay';
+import { cleanupLegacyNoneCategory } from '../../../lib/menuCategoryCleanup';
 import type {
   Branch,
   Menu,
@@ -148,15 +149,24 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
           const branchMenus = (remoteMenus ?? []).filter((m) => m.is_show !== false);
           const branchCategories = (remoteCategories ?? []).sort((a, b) => a.sort_order - b.sort_order);
+          const cleaned = cleanupLegacyNoneCategory(branchCategories, branchMenus);
 
           // 同期有効時はDB結果をローカルにも反映して次回起動を高速化
           const otherMenus = localMenus.filter((m) => m.branch_id !== branch.id);
           const otherCategories = localCategories.filter((c) => c.branch_id !== branch.id);
-          await saveMenus([...otherMenus, ...(remoteMenus ?? [])]);
-          await saveMenuCategories([...otherCategories, ...(remoteCategories ?? [])]);
+          await saveMenus([...otherMenus, ...cleaned.menus]);
+          await saveMenuCategories([...otherCategories, ...cleaned.categories]);
 
-          setMenus(sortMenus(branchMenus));
-          setCategories(branchCategories);
+          if (cleaned.removedCategoryIds.length > 0) {
+            await supabase
+              .from('menus')
+              .update({ category_id: null })
+              .in('category_id', cleaned.removedCategoryIds);
+            await supabase.from('menu_categories').delete().in('id', cleaned.removedCategoryIds);
+          }
+
+          setMenus(sortMenus(cleaned.menus));
+          setCategories(cleaned.categories);
           return;
         } catch (remoteError) {
           console.error('Error fetching menus from Supabase, fallback to local:', remoteError);
@@ -169,9 +179,10 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       const branchCategories = localCategories
         .filter((c) => c.branch_id === branch.id)
         .sort((a, b) => a.sort_order - b.sort_order);
+      const cleaned = cleanupLegacyNoneCategory(branchCategories, branchMenus);
 
-      setMenus(sortMenus(branchMenus));
-      setCategories(branchCategories);
+      setMenus(sortMenus(cleaned.menus));
+      setCategories(cleaned.categories);
     } catch (error) {
       console.error('Error fetching menus:', error);
     } finally {
@@ -844,11 +855,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
   );
 
   // MenuManagement と同じロジックでカテゴリ別セクションを構築
-  const defaultCategoryId = useMemo(() => {
-    if (orderedCategories.length === 0) return null;
-    const defaultCategory = orderedCategories.find((c) => c.category_name.trim() === 'なし');
-    return defaultCategory?.id ?? orderedCategories[0]?.id ?? null;
-  }, [orderedCategories]);
+  const defaultCategoryId = useMemo(() => null, []);
 
   const menuSections = useMemo(() => {
     if (orderedCategories.length === 0) return null; // カテゴリなし → フラット表示
@@ -871,20 +878,13 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     );
 
     if (uncategorized.length > 0) {
-      const fallback = sections.find((s) => s.id === defaultCategoryId);
-      if (fallback) {
-        sections = sections.map((s) =>
-          s.id === fallback.id ? { ...s, menus: sortMenus([...s.menus, ...uncategorized]) } : s,
-        );
-      } else {
-        sections.push({
-          id: 'uncategorized',
-          title: 'なし',
-          code: '1',
-          visual: UNCATEGORIZED_VISUAL,
-          menus: uncategorized,
-        });
-      }
+      sections.push({
+        id: 'uncategorized',
+        title: '未登録',
+        code: '1',
+        visual: UNCATEGORIZED_VISUAL,
+        menus: uncategorized,
+      });
     }
 
     return sections.filter((s) => s.menus.length > 0);

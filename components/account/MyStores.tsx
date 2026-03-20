@@ -659,16 +659,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
       const { error } = await supabase.from('branches').insert(newBranch);
       if (error) throw error;
 
-      // デフォルトカテゴリ/サンプルメニューを作成
-      const defaultCategoryId = Crypto.randomUUID();
-      const { error: categoryError } = await supabase.from('menu_categories').insert({
-        id: defaultCategoryId,
-        branch_id: newBranch.id,
-        category_name: 'なし',
-        sort_order: 0,
-      });
-      if (categoryError) throw categoryError;
-
       const { error: menuError } = await supabase.from('menus').insert({
         id: Crypto.randomUUID(),
         branch_id: newBranch.id,
@@ -676,7 +666,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         price: 500,
         menu_number: 101,
         sort_order: 0,
-        category_id: defaultCategoryId,
+        category_id: null,
         stock_management: false,
         stock_quantity: 0,
         is_active: true,
@@ -685,6 +675,19 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         updated_at: new Date().toISOString(),
       });
       if (menuError) throw menuError;
+
+      // 古い初期化処理が残っている環境でも、新規店舗はカテゴリ未登録から始める。
+      const { error: normalizeMenuError } = await supabase
+        .from('menus')
+        .update({ category_id: null })
+        .eq('branch_id', newBranch.id);
+      if (normalizeMenuError) throw normalizeMenuError;
+
+      const { error: cleanupCategoryError } = await supabase
+        .from('menu_categories')
+        .delete()
+        .eq('branch_id', newBranch.id);
+      if (cleanupCategoryError) throw cleanupCategoryError;
 
       if (!isFreePlan) {
         const activeSubId = await getActiveSubscriptionId();
@@ -798,7 +801,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         }
       }
 
-      alertNotify('更新完了', '店舗設定を更新しました');
       handleCloseRename();
     } catch (e) {
       console.error('Failed to rename store:', e);
@@ -1282,11 +1284,15 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
               <View className="px-2 py-0.5 rounded bg-blue-100">
                 <Text className="text-[10px] font-bold text-blue-700">{formatBranchDisplayCode(item)}</Text>
               </View>
-              <View className={`px-2 py-0.5 rounded ${item.status === 'active' ? 'bg-green-100' : 'bg-gray-200'}`}>
-                <Text className={`text-[10px] font-bold ${item.status === 'active' ? 'text-green-700' : 'text-gray-500'}`}>
+              <TouchableOpacity
+                onPress={() => handleOpenRename(item)}
+                activeOpacity={0.8}
+                className={`px-2 py-0.5 rounded ${item.status === 'active' ? 'bg-green-100' : 'bg-pink-100'}`}
+              >
+                <Text className={`text-[10px] font-bold ${item.status === 'active' ? 'text-green-700' : 'text-pink-600'}`}>
                   {item.status === 'active' ? '稼働中' : '停止中'}
                 </Text>
-              </View>
+              </TouchableOpacity>
             </View>
             <Text className="text-base font-semibold text-gray-900" numberOfLines={1}>
               {item.branch_name}
@@ -1514,15 +1520,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
               disabled={!editingBranchName.trim()}
             />
           </View>
-        </View>
-        <View className="mt-3">
-          <Button
-            title={deletingBranch ? '削除中...' : '店舗を削除'}
-            onPress={handleDeleteStore}
-            variant="danger"
-            loading={deletingBranch}
-            disabled={deletingBranch}
-          />
         </View>
       </Modal>
 

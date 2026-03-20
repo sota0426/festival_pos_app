@@ -3,18 +3,28 @@
 // 環境変数:
 // STRIPE_SECRET_KEY,
 // STRIPE_STORE_PRICE_ID, STRIPE_ORG_STANDARD_PRICE_ID, STRIPE_ORG_PREMIUM_PRICE_ID,
+// STRIPE_ORG_PREMIUM_UPGRADE_PRICE_ID,
 // (互換) STRIPE_ORG_PRICE_ID, APP_URL
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY')!;
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const STRIPE_STORE_PRICE_ID = Deno.env.get('STRIPE_STORE_PRICE_ID')!;
 const STRIPE_ORG_STANDARD_PRICE_ID = Deno.env.get('STRIPE_ORG_STANDARD_PRICE_ID') || Deno.env.get('STRIPE_ORG_PRICE_ID')!;
 const STRIPE_ORG_PREMIUM_PRICE_ID = Deno.env.get('STRIPE_ORG_PREMIUM_PRICE_ID')!;
+const STRIPE_ORG_PREMIUM_UPGRADE_PRICE_ID = Deno.env.get('STRIPE_ORG_PREMIUM_UPGRADE_PRICE_ID') || '';
 const APP_URL = Deno.env.get('APP_URL') || 'https://localhost:8081';
 
 type CheckoutPlan = 'store' | 'org_standard' | 'org_premium';
+
+type DecodedJwt = {
+  sub?: string;
+  email?: string;
+};
 
 const PRICE_ID_BY_PLAN: Record<CheckoutPlan, string> = {
   store: STRIPE_STORE_PRICE_ID,
@@ -22,9 +32,24 @@ const PRICE_ID_BY_PLAN: Record<CheckoutPlan, string> = {
   org_premium: STRIPE_ORG_PREMIUM_PRICE_ID,
 };
 
+const isTenStoreOrgPlan = (planType: string | null | undefined): boolean =>
+  planType === 'org_light' || planType === 'org_standard' || planType === 'organization';
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+const decodeJwtPayload = (token: string): DecodedJwt | null => {
+  try {
+    const [, payload] = token.split('.');
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    return JSON.parse(atob(padded)) as DecodedJwt;
+  } catch {
+    return null;
+  }
 };
 
 serve(async (req) => {
@@ -33,28 +58,39 @@ serve(async (req) => {
   }
 
   try {
+    const requestBody = await req.json().catch(() => ({}));
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
+    const bodyAccessToken =
+      requestBody && typeof requestBody === 'object' && 'accessToken' in requestBody
+        ? String(requestBody.accessToken ?? '').trim()
+        : '';
+    const accessToken = authHeader?.replace(/^Bearer\s+/i, '').trim() || bodyAccessToken;
+    if (!accessToken) {
       return new Response(JSON.stringify({ error: 'Missing Authorization header' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    const accessToken = authHeader.replace(/^Bearer\s+/i, '').trim();
-    if (!accessToken) {
-      return new Response(JSON.stringify({ error: 'Missing access token' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+
+    const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    });
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+    const decodedJwt = decodeJwtPayload(accessToken);
+    const resolvedUserId = user?.id ?? decodedJwt?.sub ?? null;
+    const resolvedEmail = user?.email ?? decodedJwt?.email ?? null;
+
+    if (!resolvedUserId) {
+      console.error('[create-checkout-session] auth failed', {
+        authError: authError?.message ?? null,
+        hasDecodedSub: Boolean(decodedJwt?.sub),
       });
-    }
-
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-    );
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
-    if (authError || !user) {
       return new Response(JSON.stringify({
         error: 'Unauthorized',
         detail: authError?.message ?? 'No user found',
@@ -64,22 +100,30 @@ serve(async (req) => {
       });
     }
 
-    const { plan } = await req.json();
+    const plan =
+      requestBody && typeof requestBody === 'object' && 'plan' in requestBody
+        ? requestBody.plan
+        : null;
     if (!plan || !(plan in PRICE_ID_BY_PLAN)) {
       return new Response(JSON.stringify({ error: 'Invalid plan' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    const targetPlan = plan as CheckoutPlan;
-    const priceId = PRICE_ID_BY_PLAN[targetPlan];
-
-    // Stripe Customer を取得または作成
-    const { data: sub } = await supabase
+    const { data: sub } = await supabaseAdmin
       .from('subscriptions')
-      .select('stripe_customer_id')
-      .eq('user_id', user.id)
+      .select('stripe_customer_id, plan_type')
+      .eq('user_id', resolvedUserId)
       .single();
+
+    const targetPlan = plan as CheckoutPlan;
+    const shouldUsePremiumUpgradePrice =
+      targetPlan === 'org_premium' &&
+      isTenStoreOrgPlan(sub?.plan_type) &&
+      Boolean(STRIPE_ORG_PREMIUM_UPGRADE_PRICE_ID);
+    const priceId = shouldUsePremiumUpgradePrice
+      ? STRIPE_ORG_PREMIUM_UPGRADE_PRICE_ID
+      : PRICE_ID_BY_PLAN[targetPlan];
 
     let customerId = sub?.stripe_customer_id;
 
@@ -91,17 +135,17 @@ serve(async (req) => {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams({
-          email: user.email!,
-          'metadata[supabase_user_id]': user.id,
+          ...(resolvedEmail ? { email: resolvedEmail } : {}),
+          'metadata[supabase_user_id]': resolvedUserId,
         }),
       });
       const customer = await customerRes.json();
       customerId = customer.id;
 
-      await supabase
+      await supabaseAdmin
         .from('subscriptions')
         .update({ stripe_customer_id: customerId })
-        .eq('user_id', user.id);
+        .eq('user_id', resolvedUserId);
     }
 
     // Checkout Session 作成（6か月利用パス: 一回払い）
@@ -120,9 +164,10 @@ serve(async (req) => {
         'payment_method_types[1]': 'paypay',
         success_url: `${APP_URL}?checkout=success`,
         cancel_url: `${APP_URL}?checkout=cancel`,
-        'metadata[supabase_user_id]': user.id,
+        'metadata[supabase_user_id]': resolvedUserId,
         'metadata[plan]': targetPlan,
-        'metadata[pass_duration_days]': '180',
+        'metadata[price_mode]': shouldUsePremiumUpgradePrice ? 'upgrade' : 'standard',
+        'metadata[pass_duration_days]': '365',
       }),
     });
 

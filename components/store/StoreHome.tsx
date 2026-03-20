@@ -3174,7 +3174,6 @@ export const StoreHome = ({
               setResetError('');
             }}
             placeholder="パスワードを入力（デフォルト: 0000）"
-            secureTextEntry
             error={resetError}
           />
           <View className="flex-row gap-3 mt-2 pb-1">
@@ -3538,7 +3537,6 @@ export const StoreHome = ({
             setAdminGuardInput(text);
             setAdminGuardError('');
           }}
-          secureTextEntry
           placeholder="管理者パスワードを入力"
           error={adminGuardError}
         />

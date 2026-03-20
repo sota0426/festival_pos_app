@@ -60,10 +60,10 @@ const PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
 };
 
 const PAYMENT_METHOD_COLORS: Record<ExpensePaymentMethod, { bg: string; text: string }> = {
-  cash: { bg: "bg-emerald-100", text: "text-emerald-700" },
-  cashless: { bg: "bg-indigo-100", text: "text-indigo-700" },
-  bank_transfer: { bg: "bg-sky-100", text: "text-sky-700" },
-  advance: { bg: "bg-amber-100", text: "text-amber-700" },
+  cash: { bg: "bg-gray-100", text: "text-gray-700" },
+  cashless: { bg: "bg-gray-100", text: "text-gray-700" },
+  bank_transfer: { bg: "bg-gray-100", text: "text-gray-700" },
+  advance: { bg: "bg-gray-100", text: "text-gray-700" },
 };
 const EXPENSE_PAYMENT_METHOD_ORDER: ExpensePaymentMethod[] = ["cash", "cashless", "bank_transfer", "advance"];
 const DEFAULT_EXPENSE_PAYMENT_METHODS: ExpensePaymentMethodSettings = {
@@ -447,55 +447,59 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
   );
 
   const ExpenseRow = ({ expense }: { expense: BudgetExpense & { expenseNo: number } }) => (
-    <View className="flex-row items-center justify-between py-3 border-b border-gray-100">
-      <View className="flex-1">
-        <View className="flex-row items-center gap-2 mb-1">
-          <View className="bg-gray-200 rounded px-1.5 py-0.5">
-            <Text className="text-gray-600 text-xs font-bold">No.{expense.expenseNo}</Text>
+    <View className="rounded-2xl border border-gray-200 bg-white px-4 py-3">
+      <View className="flex-row items-start justify-between gap-3">
+        <View className="flex-1">
+          <View className="flex-row items-center gap-2 mb-1 flex-wrap">
+            <View className="bg-gray-200 rounded px-1.5 py-0.5">
+              <Text className="text-gray-600 text-xs font-bold">No.{expense.expenseNo}</Text>
+            </View>
+            <Text className="text-gray-400 text-xs">{expense.date}</Text>
+            <CategoryBadge category={expense.category} />
           </View>
-          <Text className="text-gray-400 text-xs">{expense.date}</Text>
-          <CategoryBadge category={expense.category} />
-        </View>
-        {expense.memo ? (
-          <Text className="text-gray-700 text-sm" numberOfLines={1}>
-            {expense.memo}
-          </Text>
-        ) : null}
-        <View className="flex-row items-center gap-2 mt-0.5">
-          <Text className="text-gray-400 text-xs">
-            登録者: {expense.recorded_by || "未設定"}
-          </Text>
-          <View className={`px-1.5 py-0.5 rounded ${PAYMENT_METHOD_COLORS[expense.payment_method].bg}`}>
-            <Text className={`text-[10px] font-semibold ${PAYMENT_METHOD_COLORS[expense.payment_method].text}`}>
-              {PAYMENT_METHOD_LABELS[expense.payment_method]}
+          {expense.memo ? (
+            <Text className="text-gray-800 text-sm font-medium" numberOfLines={2}>
+              {expense.memo}
             </Text>
-          </View>
-          {expense.payment_method === "advance" ? (
-            <View className={`px-1.5 py-0.5 rounded ${expense.is_reimbursed ? "bg-emerald-100" : "bg-amber-100"}`}>
-              <Text className={`text-[10px] font-semibold ${expense.is_reimbursed ? "text-emerald-700" : "text-amber-700"}`}>
-                {expense.is_reimbursed ? "精算済み" : "未精算"}
+          ) : null}
+          <View className="mt-2 flex-row items-center gap-2 flex-wrap">
+            <Text className="text-gray-500 text-xs">
+              登録者: {expense.recorded_by || "未設定"}
+            </Text>
+            <View className={`px-2 py-1 rounded-full border border-gray-200 ${PAYMENT_METHOD_COLORS[expense.payment_method].bg}`}>
+              <Text className={`text-[10px] font-medium ${PAYMENT_METHOD_COLORS[expense.payment_method].text}`}>
+                {PAYMENT_METHOD_LABELS[expense.payment_method]}
               </Text>
             </View>
-          ) : null}
+            {expense.payment_method === "advance" ? (
+              <View className={`px-2 py-1 rounded-full border ${expense.is_reimbursed ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-gray-50"}`}>
+                <Text className={`text-[10px] font-medium ${expense.is_reimbursed ? "text-emerald-700" : "text-gray-600"}`}>
+                  {expense.is_reimbursed ? "精算済み" : "未精算"}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        <View className="items-end">
+          <Text className="text-gray-900 text-base font-bold">¥{expense.amount.toLocaleString()}</Text>
         </View>
       </View>
-      <View className="flex-row items-center gap-2">
+      <View className="mt-3 flex-row items-center justify-end gap-2">
         {expense.payment_method === "advance" ? (
           <TouchableOpacity
             onPress={() => setPendingReimbursedToggle(expense)}
-            className={`rounded-lg px-2 py-1 ${expense.is_reimbursed ? "bg-amber-100" : "bg-emerald-100"}`}
+            className={`rounded-lg border px-3 py-2 ${expense.is_reimbursed ? "border-gray-300 bg-white" : "border-emerald-200 bg-emerald-50"}`}
           >
-            <Text className={`text-xs font-semibold ${expense.is_reimbursed ? "text-amber-700" : "text-emerald-700"}`}>
+            <Text className={`text-xs font-semibold ${expense.is_reimbursed ? "text-gray-700" : "text-emerald-700"}`}>
               {expense.is_reimbursed ? "未精算に戻す" : "精算済みにする"}
             </Text>
           </TouchableOpacity>
         ) : null}
-        <Text className="text-gray-900 font-bold">¥{expense.amount.toLocaleString()}</Text>
         <TouchableOpacity
           onPress={() => handleDeleteExpense(expense.id)}
-          className="bg-red-100 rounded-lg px-2 py-1"
+          className="rounded-lg border border-gray-200 bg-white px-3 py-2"
         >
-          <Text className="text-red-600 text-xs font-semibold">削除</Text>
+          <Text className="text-gray-600 text-xs font-semibold">削除</Text>
         </TouchableOpacity>
       </View>
     </View>

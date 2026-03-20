@@ -205,6 +205,19 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
       if (isSupabaseConfigured()) {
         const { error } = await supabase.from('branches').insert(newBranch);
         if (error) throw error;
+
+        // 新規店舗はカテゴリ未登録から開始する。
+        const { error: normalizeMenuError } = await supabase
+          .from('menus')
+          .update({ category_id: null })
+          .eq('branch_id', newBranch.id);
+        if (normalizeMenuError) throw normalizeMenuError;
+
+        const { error: cleanupCategoryError } = await supabase
+          .from('menu_categories')
+          .delete()
+          .eq('branch_id', newBranch.id);
+        if (cleanupCategoryError) throw cleanupCategoryError;
       }
 
       setBranches(normalizeBranchDisplayOrders([...branches, newBranch]));

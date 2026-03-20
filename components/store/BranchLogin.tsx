@@ -184,26 +184,7 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
         created_at: new Date().toISOString(),
       };
 
-      // ローカル用デフォルトカテゴリ/サンプルメニューを作成
-      let defaultCategoryId = `cat-${Date.now()}`;
       const nowIso = new Date().toISOString();
-      const currentCategories = await getMenuCategories();
-      const existingCategory = currentCategories.find(
-        (c) => c.branch_id === newBranch.id && c.category_name === 'なし',
-      );
-      if (!existingCategory) {
-        const defaultCategory: MenuCategory = {
-          id: defaultCategoryId,
-          branch_id: newBranch.id,
-          category_name: 'なし',
-          sort_order: 0,
-          created_at: nowIso,
-        };
-        await saveMenuCategories([...currentCategories, defaultCategory]);
-      } else {
-        defaultCategoryId = existingCategory.id;
-      }
-
       const currentMenus = await getMenus();
       const menuExists = currentMenus.some((m) => m.branch_id === newBranch.id);
       if (!menuExists) {
@@ -214,7 +195,7 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
           price: 500,
           menu_number: 101,
           sort_order: 0,
-          category_id: defaultCategoryId,
+          category_id: null,
           stock_management: false,
           stock_quantity: 0,
           is_active: true,
@@ -281,7 +262,6 @@ export const BranchLogin = ({ onLoginSuccess, onBackToHome }: BranchLoginProps) 
                   setPassword(text);
                   if (submitted) setError(null);
                 }}
-                secureTextEntry
                 error={submitted ? error ?? undefined : undefined}
               />
 

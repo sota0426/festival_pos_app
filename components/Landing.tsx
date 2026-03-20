@@ -48,7 +48,7 @@ export const Landing = ({
                     <Text className="text-[11px] font-bold tracking-[0.3px] text-emerald-700">
                       まず画面を見てみたい場合はこれ
                     </Text>
-                    <Text className="text-emerald-950 text-lg font-bold mt-0.5">①デモを試す</Text>
+                    <Text className="text-emerald-950 text-lg font-bold mt-0.5">デモを試す</Text>
                     <Text className="text-emerald-700 text-xs mt-0.5">ダミーデータで流れをすぐ確認できます</Text>
                   </View>
                 </View>
@@ -68,7 +68,7 @@ export const Landing = ({
                     <Text className="text-[11px] font-bold tracking-[0.3px] text-amber-700">
                       使い始めたい場合はこれ
                     </Text>
-                    <Text className="text-amber-950 text-lg font-bold">②利用画面に進む</Text>
+                    <Text className="text-amber-950 text-lg font-bold">利用画面に進む</Text>
                     <Text className="text-amber-800 text-xs mt-0.5">まずは無料プランで端末内にローカル保存</Text>
                   </View>
                 </View>
@@ -88,7 +88,7 @@ export const Landing = ({
                     <Text className="text-[11px] font-bold tracking-[0.3px] text-slate-600">
                       共有コードを受け取っている場合はこれ
                     </Text>
-                    <Text className="text-slate-900 text-lg font-bold">③ログインコードで入る</Text>
+                    <Text className="text-slate-900 text-lg font-bold">ログインコードで入る</Text>
                     <Text className="text-slate-600 text-xs mt-0.5">管理者からもらったコード６文字を入力</Text>
                   </View>
                 </View>
@@ -148,7 +148,7 @@ export const Landing = ({
                       未ログイン利用ではデータは端末内に保存されます。ログイン利用では、認証情報と同期対象データが外部サービス上に保存される場合があります。
                     </Text>
                     <Text className="mt-1 text-sm leading-6 text-slate-600">
-                      クラウド上の同期データは、最終更新から2年を目安に順次削除される場合があります。
+                      クラウド上の同期データは、最終更新から1年を目安に順次削除される場合があります。
                     </Text>
                   </View>
                   <View>
@@ -181,7 +181,7 @@ export const Landing = ({
                   <View>
                     <Text className="text-sm font-bold text-slate-900">4. 保持と削除</Text>
                     <Text className="mt-1 text-sm leading-6 text-slate-600">
-                      端末内データはアプリ削除や端末操作により消えることがあります。クラウド上のデータは、利用停止や削除依頼に応じて対応するほか、最終更新から2年を目安に順次削除される場合があります。
+                      端末内データはアプリ削除や端末操作により消えることがあります。クラウド上のデータは、利用停止や削除依頼に応じて対応するほか、最終更新から1年を目安に順次削除される場合があります。
                     </Text>
                   </View>
                 </View>

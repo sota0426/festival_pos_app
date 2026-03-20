@@ -87,25 +87,7 @@ export const ensureLocalBranch = async (): Promise<Branch> => {
 
   await saveBranch(newBranch);
 
-  let defaultCategoryId = `cat-${Date.now()}`;
   const nowIso = new Date().toISOString();
-  const currentCategories = await getMenuCategories();
-  const existingCategory = currentCategories.find(
-    (category) => category.branch_id === newBranch.id && category.category_name === 'なし',
-  );
-
-  if (!existingCategory) {
-    const defaultCategory: MenuCategory = {
-      id: defaultCategoryId,
-      branch_id: newBranch.id,
-      category_name: 'なし',
-      sort_order: 0,
-      created_at: nowIso,
-    };
-    await saveMenuCategories([...currentCategories, defaultCategory]);
-  } else {
-    defaultCategoryId = existingCategory.id;
-  }
 
   const currentMenus = await getMenus();
   const menuExists = currentMenus.some((menu) => menu.branch_id === newBranch.id);
@@ -117,7 +99,7 @@ export const ensureLocalBranch = async (): Promise<Branch> => {
       price: 500,
       menu_number: 101,
       sort_order: 0,
-      category_id: defaultCategoryId,
+      category_id: null,
       stock_management: false,
       stock_quantity: 0,
       is_active: true,

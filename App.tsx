@@ -547,6 +547,7 @@ function AppContent() {
                   : 'landing'
               )
             }
+            onNavigateToAuth={handleNavigateToAuthEntry}
           />
         );
 
