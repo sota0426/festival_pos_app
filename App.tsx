@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import { ActivityIndicator, Modal as RNModal, Platform, Text, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 
 import './global.css';
@@ -14,6 +14,7 @@ import { BranchLogin, StoreHome, MenuManagement, Register, SalesHistory, OrderBo
 import { useSync } from './hooks/useSync';
 import type { Branch, BudgetExpense, Menu, MenuCategory, PrepIngredient } from './types/database';
 import {
+  ensureLocalBranch,
   getBranch as getLocalBranch,
   getBudgetExpenses,
   getMenuCategories,
@@ -67,7 +68,7 @@ type Screen =
   | 'store_budget_expense';
 
 function AppContent() {
-  const { authState, enterDemo, exitDemo, hasDemoReturnTarget, refreshSubscription } = useAuth();
+  const { authState, enterDemo, enterGuest, exitDemo, exitGuest, hasDemoReturnTarget, refreshSubscription } = useAuth();
 
   const [currentScreen, setCurrentScreen] = useState<Screen>(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -105,6 +106,11 @@ function AppContent() {
     }
     setCurrentScreen('auth_signin');
   }, [authState.status]);
+
+  const handleNavigateToGuestEntry = useCallback(() => {
+    enterGuest();
+    setCurrentScreen('account_dashboard');
+  }, [enterGuest]);
 
   // Initialize sync
   const {
@@ -179,6 +185,13 @@ function AppContent() {
       return;
     }
 
+    if (authState.status === 'guest') {
+      const localBranch = await ensureLocalBranch();
+      setCurrentBranch(localBranch);
+      setCurrentScreen('store_home');
+      return;
+    }
+
     if (authState.status === 'demo') {
       const demoBranch = DEMO_BRANCHES[0] ?? null;
       if (demoBranch) {
@@ -208,6 +221,9 @@ function AppContent() {
 
   const handleBranchLogout = useCallback(() => {
     if (authState.status === 'authenticated') {
+      setCurrentBranch(null);
+      setCurrentScreen('account_dashboard');
+    } else if (authState.status === 'guest') {
       setCurrentBranch(null);
       setCurrentScreen('account_dashboard');
     } else if (authState.status === 'demo') {
@@ -263,6 +279,11 @@ function AppContent() {
 
     if (authState.status === 'authenticated') {
       if (currentScreen === 'landing' || currentScreen === 'auth_signin') {
+        setCurrentScreen('account_dashboard');
+      }
+    }
+    if (authState.status === 'guest') {
+      if (currentScreen === 'landing') {
         setCurrentScreen('account_dashboard');
       }
     }
@@ -472,7 +493,7 @@ function AppContent() {
               enterDemo();
               setCurrentScreen('home');
             }}
-            onNavigateToAuth={handleNavigateToAuthEntry}
+            onNavigateToGuest={handleNavigateToGuestEntry}
             onNavigateToLoginCode={() => setCurrentScreen('login_code_entry')}
           />
         );
@@ -480,7 +501,7 @@ function AppContent() {
       case 'auth_signin':
         return (
           <AuthSignIn
-            onBack={() => setCurrentScreen('landing')}
+            onBack={() => setCurrentScreen(authState.status === 'guest' ? 'account_dashboard' : 'landing')}
           />
         );
 
@@ -506,14 +527,26 @@ function AppContent() {
             onNavigateToStore={navigateToStoreEntry}
             onNavigateToHQ={() => setCurrentScreen('hq_home')}
             onNavigateToPricing={() => setCurrentScreen('pricing')}
-            onLogout={() => setCurrentScreen('landing')}
+            onNavigateToAuth={handleNavigateToAuthEntry}
+            onLogout={() => {
+              if (authState.status === 'guest') {
+                exitGuest();
+              }
+              setCurrentScreen('landing');
+            }}
           />
         );
 
       case 'pricing':
         return (
           <PricingScreen
-            onBack={() => setCurrentScreen('account_dashboard')}
+            onBack={() =>
+              setCurrentScreen(
+                authState.status === 'authenticated' || authState.status === 'guest'
+                  ? 'account_dashboard'
+                  : 'landing'
+              )
+            }
           />
         );
 
@@ -596,6 +629,8 @@ function AppContent() {
               onBackToHome={() => {
                 if (authState.status === 'authenticated') {
                   setCurrentScreen('account_dashboard');
+                } else if (authState.status === 'guest') {
+                  setCurrentScreen('account_dashboard');
                 } else if (authState.status === 'demo') {
                   setCurrentScreen('home');
                 } else {
@@ -611,32 +646,28 @@ function AppContent() {
           return null;
         }
         return (
-          <>
-            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <StoreHome
-              branch={currentBranch}
-              onNavigateToRegister={() => setCurrentScreen('store_register')}
-              onNavigateToMenus={() => setCurrentScreen('store_menus')}
-              onNavigateToHistory={() => setCurrentScreen('store_history')}
-              onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
-              onNavigateToMobileOrder={() => setCurrentScreen('store_mobile_order')}
-              onNavigateToPrep={() => setCurrentScreen('store_prep')}
-              onNavigateToBudget={() => setCurrentScreen('store_budget')}
-              onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
-              onNavigateToPricing={() => setCurrentScreen('pricing')}
-              onNavigateToDemoHome={() => {
-                setDemoReturnScreen('store_home');
-                enterDemo();
-                setCurrentScreen('home');
-              }}
-              onNavigateToDemoOrderBoard={() => startShareFeatureDemo('store_order_board')}
-              onNavigateToDemoMobileOrder={() => startShareFeatureDemo('store_mobile_order')}
-              onNavigateToDemoPrep={() => startShareFeatureDemo('store_prep')}
-              onBranchUpdated={(updatedBranch) => setCurrentBranch(updatedBranch)}
-              onLogout={handleBranchLogout}
-            />
-          </>
+          <StoreHome
+            branch={currentBranch}
+            onNavigateToRegister={() => setCurrentScreen('store_register')}
+            onNavigateToMenus={() => setCurrentScreen('store_menus')}
+            onNavigateToHistory={() => setCurrentScreen('store_history')}
+            onNavigateToOrderBoard={() => setCurrentScreen('store_order_board')}
+            onNavigateToMobileOrder={() => setCurrentScreen('store_mobile_order')}
+            onNavigateToPrep={() => setCurrentScreen('store_prep')}
+            onNavigateToBudget={() => setCurrentScreen('store_budget')}
+            onNavigateToBudgetExpense={() => setCurrentScreen('store_budget_expense')}
+            onNavigateToPricing={() => setCurrentScreen('pricing')}
+            onNavigateToDemoHome={() => {
+              setDemoReturnScreen('store_home');
+              enterDemo();
+              setCurrentScreen('home');
+            }}
+            onNavigateToDemoOrderBoard={() => startShareFeatureDemo('store_order_board')}
+            onNavigateToDemoMobileOrder={() => startShareFeatureDemo('store_mobile_order')}
+            onNavigateToDemoPrep={() => startShareFeatureDemo('store_prep')}
+            onBranchUpdated={(updatedBranch) => setCurrentBranch(updatedBranch)}
+            onLogout={handleBranchLogout}
+          />
         );
 
       case 'store_menus':
@@ -645,14 +676,10 @@ function AppContent() {
           return null;
         }
         return (
-          <>
-            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <MenuManagement
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-            />
-          </>
+          <MenuManagement
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+          />
         );
 
       case 'store_register':
@@ -661,16 +688,12 @@ function AppContent() {
           return null;
         }
         return (
-          <>
-            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <Register
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-              onNavigateToHistory={() => setCurrentScreen('store_history')}
-              onNavigateToMenus={()=>setCurrentScreen("store_menus")}
-            />
-          </>
+          <Register
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+            onNavigateToHistory={() => setCurrentScreen('store_history')}
+            onNavigateToMenus={()=>setCurrentScreen("store_menus")}
+          />
         );
 
       case 'store_history':
@@ -679,14 +702,10 @@ function AppContent() {
           return null;
         }
         return (
-          <>
-            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <SalesHistory
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-            />
-          </>
+          <SalesHistory
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+          />
         );
 
       case 'store_order_board':
@@ -695,14 +714,10 @@ function AppContent() {
           return null;
         }
         return (
-          <>
-            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <OrderBoard
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-            />
-          </>
+          <OrderBoard
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+          />
         );
 
       case 'store_mobile_order':
@@ -711,19 +726,15 @@ function AppContent() {
           return null;
         }
         return (
-          <>
-            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <MobileOrderDashboard
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-              onOpenDemoClient={
-                authState.status === 'demo'
-                  ? () => setCurrentScreen('mobile_order_demo_client')
-                  : undefined
-              }
-            />
-          </>
+          <MobileOrderDashboard
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+            onOpenDemoClient={
+              authState.status === 'demo'
+                ? () => setCurrentScreen('mobile_order_demo_client')
+                : undefined
+            }
+          />
         );
 
       case 'store_prep':
@@ -732,14 +743,10 @@ function AppContent() {
           return null;
         }
         return (
-          <>
-            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <PrepInventory
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-            />
-          </>
+          <PrepInventory
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+          />
         );
 
       case 'store_budget':
@@ -748,14 +755,10 @@ function AppContent() {
           return null;
         }
         return (
-          <>
-            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <BudgetManager
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-            />
-          </>
+          <BudgetManager
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+          />
         );
 
       case 'store_budget_expense':
@@ -764,21 +767,17 @@ function AppContent() {
           return null;
         }
         return (
-          <>
-            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
-            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
-            <BudgetExpenseRecorder
-              branch={currentBranch}
-              onBack={() => setCurrentScreen('store_home')}
-            />
-          </>
+          <BudgetExpenseRecorder
+            branch={currentBranch}
+            onBack={() => setCurrentScreen('store_home')}
+          />
         );
 
       default:
         return (
           <Landing
             onNavigateToDemo={() => setCurrentScreen('home')}
-            onNavigateToAuth={() => setCurrentScreen('auth_signin')}
+            onNavigateToGuest={handleNavigateToGuestEntry}
             onNavigateToLoginCode={() => setCurrentScreen('login_code_entry')}
           />
         );
@@ -793,10 +792,27 @@ function AppContent() {
         if (demoReturnScreen) setCurrentScreen(demoReturnScreen);
       }
     : undefined;
+  const isStoreRoute = [
+    'store_home',
+    'store_menus',
+    'store_register',
+    'store_history',
+    'store_order_board',
+    'store_mobile_order',
+    'store_prep',
+    'store_budget',
+    'store_budget_expense',
+  ].includes(currentScreen);
 
   return (
     <>
       <View style={{ flex: 1 }}>
+        {isStoreRoute && currentBranch ? (
+          <>
+            <DemoBanner onExitDemo={handleExitDemoFromFooter} />
+            <SyncStatusBanner branchId={currentBranch.id} onSyncNow={handleManualSyncFromBanner} />
+          </>
+        ) : null}
         {renderScreen()}
       </View>
       <StatusBar style="auto" />
@@ -900,7 +916,7 @@ function AppContent() {
 
 export default function App() {
   return (
-    <SafeAreaProvider>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <AuthProvider>
         <SubscriptionProvider>
           <DemoProvider>

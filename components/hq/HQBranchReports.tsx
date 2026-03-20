@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Card, Header } from '../common';
+import { compareBranchesByDisplayOrder, formatBranchDisplayCode } from '../../lib/branchDisplay';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { DEMO_BRANCHES, DEMO_BUDGET_EXPENSES, DEMO_TRANSACTIONS } from '../../data/demoData';
+import { useDemo } from '../../contexts/DemoContext';
+import { useAuth } from '../../contexts/AuthContext';
 import type { Branch } from '../../types/database';
 
 interface HQBranchReportsProps {
@@ -24,80 +28,96 @@ interface BranchReportSummary {
   menuRows: { menu_name: string; quantity: number; subtotal: number }[];
 }
 
+const buildDemoReports = (
+  branchesSource: Branch[] = DEMO_BRANCHES,
+  getTransactions?: (branchId: string) => typeof DEMO_TRANSACTIONS[string],
+  getExpenses?: (branchId: string) => typeof DEMO_BUDGET_EXPENSES[string],
+): BranchReportSummary[] => {
+  return branchesSource.map((branch) => {
+    const branchTx = getTransactions?.(branch.id) ?? DEMO_TRANSACTIONS[branch.id] ?? [];
+    const totalSales = branchTx.reduce((sum, tx) => sum + (tx.total_amount ?? 0), 0);
+    const transactionCount = branchTx.length;
+    const averageOrder = transactionCount > 0 ? Math.round(totalSales / transactionCount) : 0;
+    const paypaySales = branchTx
+      .filter((tx) => tx.payment_method === 'paypay')
+      .reduce((sum, tx) => sum + (tx.total_amount ?? 0), 0);
+    const voucherSales = branchTx
+      .filter((tx) => tx.payment_method === 'voucher')
+      .reduce((sum, tx) => sum + (tx.total_amount ?? 0), 0);
+    const cashSales = branchTx
+      .filter((tx) => tx.payment_method === 'cash')
+      .reduce((sum, tx) => sum + (tx.total_amount ?? 0), 0);
+    const totalExpense = (getExpenses?.(branch.id) ?? DEMO_BUDGET_EXPENSES[branch.id] ?? []).reduce(
+      (sum, expense) => sum + (expense.amount ?? 0),
+      0,
+    );
+    const profit = totalSales - totalExpense;
+    const targetAchievementRate = branch.sales_target > 0 ? Math.round((totalSales / branch.sales_target) * 100) : 0;
+
+    const menuMap = new Map<string, { menu_name: string; quantity: number; subtotal: number }>();
+    branchTx.forEach((tx) => {
+      tx.items.forEach((item) => {
+        const current = menuMap.get(item.menu_name) ?? {
+          menu_name: item.menu_name,
+          quantity: 0,
+          subtotal: 0,
+        };
+        current.quantity += item.quantity ?? 0;
+        current.subtotal += item.subtotal ?? 0;
+        menuMap.set(item.menu_name, current);
+      });
+    });
+
+    return {
+      branch,
+      totalSales,
+      totalExpense,
+      profit,
+      transactionCount,
+      averageOrder,
+      targetAchievementRate,
+      paypaySales,
+      voucherSales,
+      cashSales,
+      menuRows: Array.from(menuMap.values()).sort((a, b) => b.subtotal - a.subtotal),
+    };
+  });
+};
+
 export const HQBranchReports = ({ focusBranchId, onBack }: HQBranchReportsProps) => {
+  const { isDemo, demoBranches, getDemoTransactions, getDemoBudgetExpenses } = useDemo();
+  const { authState } = useAuth();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reports, setReports] = useState<BranchReportSummary[]>([]);
   const [showComparison, setShowComparison] = useState(false);
 
   const fetchData = useCallback(async () => {
-    if (!isSupabaseConfigured()) {
-      const demoBranches: Branch[] = [
-        {
-          id: '1',
-          branch_code: 'S001',
-          branch_name: '焼きそば屋',
-          password: '',
-          sales_target: 50000,
-          status: 'active',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: '2',
-          branch_code: 'S002',
-          branch_name: 'たこ焼き屋',
-          password: '',
-          sales_target: 40000,
-          status: 'active',
-          created_at: new Date().toISOString(),
-        },
-      ];
-
-      const demoReports: BranchReportSummary[] = [
-        {
-          branch: demoBranches[0],
-          totalSales: 65000,
-          totalExpense: 22000,
-          profit: 43000,
-          transactionCount: 130,
-          averageOrder: 500,
-          targetAchievementRate: 130,
-          paypaySales: 40000,
-          voucherSales: 15000,
-          cashSales: 10000,
-          menuRows: [
-            { menu_name: '焼きそば', quantity: 180, subtotal: 54000 },
-            { menu_name: 'トッピング', quantity: 55, subtotal: 11000 },
-          ],
-        },
-        {
-          branch: demoBranches[1],
-          totalSales: 60000,
-          totalExpense: 18000,
-          profit: 42000,
-          transactionCount: 104,
-          averageOrder: 577,
-          targetAchievementRate: 150,
-          paypaySales: 35000,
-          voucherSales: 12000,
-          cashSales: 13000,
-          menuRows: [
-            { menu_name: 'たこ焼き', quantity: 160, subtotal: 51200 },
-            { menu_name: 'ドリンク', quantity: 44, subtotal: 8800 },
-          ],
-        },
-      ];
-
-      setReports(demoReports);
+    if (isDemo || !isSupabaseConfigured()) {
+      setReports(
+        buildDemoReports(
+          isDemo ? demoBranches : DEMO_BRANCHES,
+          isDemo ? getDemoTransactions : undefined,
+          isDemo ? getDemoBudgetExpenses : undefined,
+        ),
+      );
       setLoading(false);
       setRefreshing(false);
       return;
     }
 
     try {
+      const ownerId = authState.status === 'authenticated' ? authState.user.id : null;
+      const organizationId = authState.status === 'authenticated' ? authState.subscription.organization_id : null;
+      let branchQuery = supabase.from('branches').select('*').order('branch_code', { ascending: true });
+      if (ownerId && organizationId) {
+        branchQuery = branchQuery.or(`owner_id.eq.${ownerId},organization_id.eq.${organizationId}`);
+      } else if (ownerId) {
+        branchQuery = branchQuery.eq('owner_id', ownerId);
+      }
       const [{ data: branches, error: branchError }, { data: transactions, error: txError }, { data: items, error: itemError }, { data: expenses, error: expenseError }] =
         await Promise.all([
-          supabase.from('branches').select('*').order('branch_code', { ascending: true }),
+          branchQuery,
           supabase.from('transactions').select('id,branch_id,total_amount,payment_method,status').eq('status', 'completed'),
           supabase.from('transaction_items').select('transaction_id,menu_name,quantity,subtotal'),
           supabase.from('budget_expenses').select('branch_id,amount'),
@@ -108,12 +128,15 @@ export const HQBranchReports = ({ focusBranchId, onBack }: HQBranchReportsProps)
       if (itemError) throw itemError;
       if (expenseError) throw expenseError;
 
-      const txList = transactions ?? [];
-      const itemList = items ?? [];
-      const expenseList = expenses ?? [];
+      const filteredBranches = ((branches ?? []) as Branch[]).sort(compareBranchesByDisplayOrder);
+      const branchIdSet = new Set(filteredBranches.map((branch) => branch.id));
+      const txList = (transactions ?? []).filter((tx) => branchIdSet.has(tx.branch_id));
+      const txIdSet = new Set(txList.map((tx) => tx.id));
+      const itemList = (items ?? []).filter((item) => txIdSet.has(item.transaction_id));
+      const expenseList = (expenses ?? []).filter((expense) => branchIdSet.has(expense.branch_id));
       const txBranchMap = new Map<string, string>(txList.map((tx) => [tx.id, tx.branch_id]));
 
-      const summaries: BranchReportSummary[] = (branches ?? []).map((branch: Branch) => {
+      const summaries: BranchReportSummary[] = filteredBranches.map((branch: Branch) => {
         const branchTx = txList.filter((tx) => tx.branch_id === branch.id);
         const totalSales = branchTx.reduce((sum, tx) => sum + (tx.total_amount ?? 0), 0);
         const transactionCount = branchTx.length;
@@ -173,7 +196,7 @@ export const HQBranchReports = ({ focusBranchId, onBack }: HQBranchReportsProps)
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [authState, demoBranches, getDemoBudgetExpenses, getDemoTransactions, isDemo]);
 
   useEffect(() => {
     fetchData();
@@ -259,7 +282,7 @@ export const HQBranchReports = ({ focusBranchId, onBack }: HQBranchReportsProps)
                       }`}
                     >
                       <View className="w-36 px-3 py-2 border-r border-gray-100">
-                        <Text className="text-gray-900 text-xs font-semibold">{report.branch.branch_code}</Text>
+                        <Text className="text-gray-900 text-xs font-semibold">{formatBranchDisplayCode(report.branch)}</Text>
                         <Text className="text-gray-600 text-xs" numberOfLines={1}>
                           {report.branch.branch_name}
                         </Text>
@@ -299,7 +322,7 @@ export const HQBranchReports = ({ focusBranchId, onBack }: HQBranchReportsProps)
               >
                 <View className="flex-row items-center justify-between mb-2">
                   <View>
-                    <Text className="text-blue-700 font-bold">{report.branch.branch_code}</Text>
+                    <Text className="text-blue-700 font-bold">{formatBranchDisplayCode(report.branch)}</Text>
                     <Text className="text-gray-900 text-lg font-bold">{report.branch.branch_name}</Text>
                   </View>
                   <View

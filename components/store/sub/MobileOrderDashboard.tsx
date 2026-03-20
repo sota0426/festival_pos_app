@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header } from '../../common';
 import { useAuth } from '../../../contexts/AuthContext';
 import { resolveDemoBranchId } from '../../../data/demoData';
+import { formatBranchDisplayTitle } from '../../../lib/branchDisplay';
 import type { Branch } from '../../../types/database';
 
 interface MobileOrderDashboardProps {
@@ -30,7 +31,7 @@ export const MobileOrderDashboard = ({ branch, onBack, onOpenDemoClient }: Mobil
     <SafeAreaView className="flex-1 bg-rose-50" edges={['top']}>
       <Header
         title="モバイルオーダー"
-        subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+        subtitle={formatBranchDisplayTitle(branch)}
         showBack
         onBack={onBack}
       />

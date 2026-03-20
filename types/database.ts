@@ -65,6 +65,8 @@ export interface LoginCode {
 export interface Branch {
   id: string;
   branch_code: string;
+  branch_number?: number;
+  display_order?: number;
   branch_name: string;
   password: string;
   sales_target: number;

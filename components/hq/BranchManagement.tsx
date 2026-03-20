@@ -8,6 +8,12 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Button, Input, Card, Header, Modal } from '../common';
 import { alertNotify } from '../../lib/alertUtils';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import {
+  compareBranchesByDisplayOrder,
+  formatBranchDisplayCode,
+  normalizeBranchDisplayOrders,
+  assignBranchNumbersInCurrentOrder,
+} from '../../lib/branchDisplay';
 import { useAuth } from '../../contexts/AuthContext';
 import type { Branch } from '../../types/database';
 
@@ -55,6 +61,8 @@ const parseCsvLine = (line: string): string[] => {
 
 type CsvImportRow = {
   branch_code: string;
+  branch_number?: number;
+  display_order?: number;
   branch_name: string;
   password: string;
   sales_target: number;
@@ -117,6 +125,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
         {
           id: '1',
           branch_code: 'S001',
+          display_order: 1,
           branch_name: '焼きそば屋',
           password: '0000',
           sales_target: 50000,
@@ -129,10 +138,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
     }
 
     try {
-      let query = supabase
-        .from('branches')
-        .select('*')
-        .order('branch_code', { ascending: true });
+      let query = supabase.from('branches').select('*').order('branch_code', { ascending: true });
       if (ownerId && organizationId) {
         query = query.or(`owner_id.eq.${ownerId},organization_id.eq.${organizationId}`);
       } else if (ownerId) {
@@ -148,9 +154,9 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
           .select('*')
           .order('branch_code', { ascending: true });
         if (fallbackError) throw fallbackError;
-        setBranches(fallbackData || []);
+        setBranches(normalizeBranchDisplayOrders((fallbackData || []) as Branch[]));
       } else {
-        setBranches(data || []);
+        setBranches(normalizeBranchDisplayOrders((data || []) as Branch[]));
       }
     } catch (error) {
       console.error('Error fetching branches:', error);
@@ -185,6 +191,8 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
       const newBranch: Branch = {
         id: Crypto.randomUUID(),
         branch_code: nextBranchCode,
+        branch_number: branches.length + 1,
+        display_order: branches.length + 1,
         branch_name: newBranchName.trim(),
         password: newPassword.trim(),
         sales_target: parseInt(newSalesTarget, 10) || 0,
@@ -199,10 +207,10 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
         if (error) throw error;
       }
 
-      setBranches([...branches, newBranch]);
+      setBranches(normalizeBranchDisplayOrders([...branches, newBranch]));
       setShowAddModal(false);
       resetForm();
-      Alert.alert('成功', `支店番号 ${newBranch.branch_code} を発行しました`);
+      Alert.alert('成功', `${formatBranchDisplayCode(newBranch)} を作成しました`);
     } catch (error) {
       console.error('Error adding branch:', error);
       const msg = error instanceof Error ? error.message : '支店の追加に失敗しました';
@@ -213,7 +221,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
   };
 
   const handleToggleStatus = async (branch: Branch) => {
-    const newStatus = branch.status === 'active' ? 'inactive' : 'active';
+    const newStatus: Branch['status'] = branch.status === 'active' ? 'inactive' : 'active';
 
     try {
       if (isSupabaseConfigured()) {
@@ -225,7 +233,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
       }
 
       setBranches(
-        branches.map((b) => (b.id === branch.id ? { ...b, status: newStatus } : b))
+        normalizeBranchDisplayOrders(branches.map((b) => (b.id === branch.id ? { ...b, status: newStatus } : b)))
       );
     } catch (error) {
       console.error('Error updating branch status:', error);
@@ -271,11 +279,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
         if (error) throw error;
       }
 
-      setBranches(
-        branches.map((b) =>
-          b.id === editingBranch.id ? { ...b, ...updatedFields } : b
-        )
-      );
+      setBranches(normalizeBranchDisplayOrders(branches.map((b) => (b.id === editingBranch.id ? { ...b, ...updatedFields } : b))));
 
       setShowEditModal(false);
       setEditingBranch(null);
@@ -412,7 +416,14 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
         continue;
       }
 
-      const row: CsvImportRow = { branch_code: branchCode, branch_name: branchName, password, sales_target: salesTarget, status };
+      const row: CsvImportRow = {
+        branch_code: branchCode,
+        display_order: branches.length + newRows.length + 1,
+        branch_name: branchName,
+        password,
+        sales_target: salesTarget,
+        status,
+      };
 
       if (branchCode && existingMap.has(branchCode)) {
         updateRows.push({ ...row, existingId: existingMap.get(branchCode)!.id });
@@ -475,6 +486,8 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
         const branch: Branch = {
           id: Crypto.randomUUID(),
           branch_code: row.branch_code,
+          branch_number: row.branch_number ?? row.display_order ?? branches.length + newBranches.length + 1,
+          display_order: row.display_order ?? branches.length + newBranches.length + 1,
           branch_name: row.branch_name,
           password: row.password,
           sales_target: row.sales_target,
@@ -512,7 +525,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
         );
       }
 
-      setBranches(updatedBranches);
+      setBranches(normalizeBranchDisplayOrders(updatedBranches));
       setShowImportModal(false);
       setImportPreview(null);
       alertNotify(
@@ -533,11 +546,11 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
     <>
       {isEdit && editingBranch ? (
         <Text className="text-gray-500 text-sm mb-4">
-          支店番号: {editingBranch.branch_code}
+          店舗番号: {formatBranchDisplayCode(editingBranch)}
         </Text>
       ) : (
         <Text className="text-gray-500 text-sm mb-4">
-          支店番号は自動で発行されます
+          店舗番号は並び順に応じて自動で決まります
         </Text>
       )}
 
@@ -591,13 +604,45 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
     </>
   );
 
+  const moveBranch = async (branchId: string, direction: -1 | 1) => {
+    const sorted = normalizeBranchDisplayOrders(branches);
+    const currentIndex = sorted.findIndex((branch) => branch.id === branchId);
+    const swapIndex = currentIndex + direction;
+    if (currentIndex === -1 || swapIndex < 0 || swapIndex >= branches.length) return;
+    const reordered = [...sorted];
+    const [moved] = reordered.splice(currentIndex, 1);
+    reordered.splice(swapIndex, 0, moved);
+    const nextBranches = assignBranchNumbersInCurrentOrder(reordered);
+
+    setBranches(nextBranches);
+
+    if (!isSupabaseConfigured()) return;
+
+    try {
+      for (const branch of nextBranches) {
+        const { error } = await supabase
+          .from('branches')
+          .update({
+            branch_number: branch.branch_number ?? branch.display_order ?? 1,
+            display_order: branch.display_order ?? 1,
+          })
+          .eq('id', branch.id);
+        if (error) throw error;
+      }
+    } catch (error) {
+      console.error('Error reordering branches:', error);
+      setBranches(branches);
+      Alert.alert('エラー', '店舗番号の更新に失敗しました');
+    }
+  };
+
   const renderBranchItem = ({ item }: { item: Branch }) => (
     <Card className={`mb-2 px-3 py-2 border ${item.status === 'active' ? 'border-blue-200 bg-white' : 'border-gray-200 bg-gray-100 opacity-60'}`}>
       <View className="flex-row items-start justify-between">
         <View className="flex-1 pr-2">
           <View className="flex-row items-center gap-1 mb-1">
             <View className="px-2 py-0.5 rounded bg-blue-100">
-              <Text className="text-[10px] font-bold text-blue-700">{item.branch_code}</Text>
+              <Text className="text-[10px] font-bold text-blue-700">{formatBranchDisplayCode(item)}</Text>
             </View>
             <View
               className={`px-2 py-0.5 rounded ${
@@ -624,6 +669,22 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
 
         <View className="items-end gap-1">
           <View className="flex-row gap-1">
+            <TouchableOpacity
+              onPress={() => {
+                void moveBranch(item.id, -1);
+              }}
+              className="px-2 py-1 bg-gray-100 rounded"
+            >
+              <Text className="text-gray-700 text-xs font-medium">↑</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                void moveBranch(item.id, 1);
+              }}
+              className="px-2 py-1 bg-gray-100 rounded"
+            >
+              <Text className="text-gray-700 text-xs font-medium">↓</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               onPress={() => openEditModal(item)}
               className="px-2 py-1 bg-blue-50 rounded"
@@ -685,7 +746,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
         </View>
         ):(
         <FlatList
-          data={branches}
+          data={[...branches].sort(compareBranchesByDisplayOrder)}
           renderItem={renderBranchItem}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: 16 }}
@@ -754,7 +815,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
                 {importPreview.newRows.map((row, i) => (
                   <View key={`new-${i}`} className="flex-row items-center justify-between bg-green-50 rounded-lg px-3 py-2 mb-1">
                     <View>
-                      <Text className="text-gray-900 font-medium">{row.branch_code} {row.branch_name}</Text>
+                      <Text className="text-gray-900 font-medium">{formatBranchDisplayCode(row)} {row.branch_name}</Text>
                       <Text className="text-gray-500 text-xs">目標: {row.sales_target.toLocaleString()}円</Text>
                     </View>
                     <View className={`px-2 py-0.5 rounded-full ${row.status === 'active' ? 'bg-green-200' : 'bg-gray-200'}`}>
@@ -773,7 +834,7 @@ export const BranchManagement = ({ onBack }: BranchManagementProps) => {
                 {importPreview.updateRows.map((row, i) => (
                   <View key={`upd-${i}`} className="flex-row items-center justify-between bg-blue-50 rounded-lg px-3 py-2 mb-1">
                     <View>
-                      <Text className="text-gray-900 font-medium">{row.branch_code} {row.branch_name}</Text>
+                      <Text className="text-gray-900 font-medium">{formatBranchDisplayCode(row)} {row.branch_name}</Text>
                       <Text className="text-gray-500 text-xs">目標: {row.sales_target.toLocaleString()}円</Text>
                     </View>
                     <View className={`px-2 py-0.5 rounded-full ${row.status === 'active' ? 'bg-green-200' : 'bg-gray-200'}`}>

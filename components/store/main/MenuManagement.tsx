@@ -25,6 +25,7 @@ import { Button, Input, Card, Header, Modal } from '../../common';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { saveMenus, getMenus, saveMenuCategories, getMenuCategories, verifyAdminPassword, getRestrictions } from '../../../lib/storage';
 import { alertConfirm, alertNotify } from '../../../lib/alertUtils';
+import { formatBranchDisplayTitle } from '../../../lib/branchDisplay';
 import type { Branch, Menu, MenuCategory, RestrictionSettings } from '../../../types/database';
 import { buildMenuCodeMap, getCategoryMetaMap, sortMenusByDisplay, UNCATEGORIZED_VISUAL } from './menuVisuals';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -153,8 +154,9 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
   const [adminGuardPwInput, setAdminGuardPwInput] = useState('');
   const [adminGuardError, setAdminGuardError] = useState('');
   const [adminGuardCallback, setAdminGuardCallback] = useState<(() => void) | null>(null);
-  const { height: viewportHeight } = useWindowDimensions();
+  const { height: viewportHeight, width: viewportWidth } = useWindowDimensions();
   const menuFormModalMaxHeight = Math.max(320, Math.floor(viewportHeight * 0.72));
+  const isPhoneLayout = viewportWidth < 430;
 
   const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
   const defaultCategoryId = useMemo(() => {
@@ -1314,6 +1316,11 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     const isTopInSection = indexInSection === 0;
     const isBottomInSection = indexInSection === sectionLength - 1;
     const isSelected = selectedMenuIds.has(item.id);
+    const openMenuEditor = () => withMenuRestrictionCheck('menu_edit', () => openEditModal(item));
+    const menuInfoWidth = isPhoneLayout ? '44%' : '42%';
+    const stockWidth = isPhoneLayout ? '28%' : '18%';
+    const orderWidth = isPhoneLayout ? '28%' : '16%';
+    const actionWidth = isPhoneLayout ? '0%' : '24%';
 
     return (
       <Card
@@ -1321,7 +1328,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
       >
         <View className="px-3 py-3 bg-white">
           <View className="flex-row items-stretch">
-            <View className="justify-center pr-2" style={{ width: '42%' }}>
+            <View className="justify-center pr-2" style={{ width: menuInfoWidth }}>
               <View className="flex-row items-center gap-2 mb-1">
                 {isBulkDeleteMode ? (
                   <TouchableOpacity
@@ -1338,7 +1345,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                   <Text className={`text-xs font-bold ${categoryVisual.chipTextClass}`}>{menuCode}</Text>
                 </View>
               </View>
-              <Text className="text-base font-bold text-gray-900" numberOfLines={1}>
+              <Text className="text-base font-bold text-gray-900" numberOfLines={2}>
                 {item.menu_name}
               </Text>
               <Text className="mt-1 text-sm font-bold text-blue-600">
@@ -1346,7 +1353,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               </Text>
             </View>
 
-            <View className="justify-center border-l border-gray-200 px-2" style={{ width: '18%' }}>
+            <View className="justify-center border-l border-gray-200 px-2" style={{ width: stockWidth }}>
               <Text className="text-[11px] font-semibold text-gray-500 text-center">在庫数</Text>
               {item.stock_management ? (
                 <View className="mt-1 flex-row items-center justify-center gap-1">
@@ -1357,17 +1364,19 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                   >
                     <Text className="text-xs font-bold text-gray-700">−</Text>
                   </TouchableOpacity>
-                  <Text
-                    className={`min-w-[24px] text-center text-lg font-bold ${
-                      item.stock_quantity === 0
-                        ? 'text-red-500'
-                        : item.stock_quantity <= 5
-                          ? 'text-orange-500'
-                          : 'text-gray-900'
-                    }`}
-                  >
-                    {item.stock_quantity}
-                  </Text>
+                  <TouchableOpacity onPress={openMenuEditor} activeOpacity={0.7} className="px-1 py-0.5">
+                    <Text
+                      className={`min-w-[24px] text-center text-lg font-bold ${
+                        item.stock_quantity === 0
+                          ? 'text-red-500'
+                          : item.stock_quantity <= 5
+                            ? 'text-orange-500'
+                            : 'text-gray-900'
+                      }`}
+                    >
+                      {item.stock_quantity}
+                    </Text>
+                  </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => handleStockChange(item, 1)}
                     activeOpacity={0.7}
@@ -1377,11 +1386,13 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                   </TouchableOpacity>
                 </View>
               ) : (
-                <Text className="mt-1 text-center text-xs font-semibold text-green-700">無制限</Text>
+                <TouchableOpacity onPress={openMenuEditor} activeOpacity={0.7} className="mt-1 px-1 py-0.5">
+                  <Text className="text-center text-xs font-semibold text-green-700">無制限</Text>
+                </TouchableOpacity>
               )}
             </View>
 
-            <View className="justify-center items-center border-l border-gray-200 px-2 gap-1.5" style={{ width: '16%' }}>
+            <View className="justify-center items-center border-l border-gray-200 px-2 gap-1.5" style={{ width: orderWidth }}>
               <Text className="text-[11px] font-semibold text-gray-500 text-center">順番</Text>
               <TouchableOpacity
                 onPress={() => moveMenuOrder(item, 'up')}
@@ -1405,11 +1416,41 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
               </TouchableOpacity>
             </View>
 
-            <View className="justify-center items-end border-l border-gray-200 pl-2" style={{ width: '24%' }}>
+            <View
+              className={`justify-center items-end ${isPhoneLayout ? '' : 'border-l border-gray-200'} pl-2`}
+              style={{ width: actionWidth }}
+            >
+              {isPhoneLayout ? null : (
+                <>
+                  <TouchableOpacity
+                    onPress={() => handleVisible(item)}
+                    activeOpacity={0.7}
+                    className={`mb-2 rounded-full px-2.5 py-1 ${
+                      item.is_show ? 'bg-green-50 border border-green-200' : 'bg-orange-50 border border-orange-200'
+                    }`}
+                  >
+                    <Text className={`text-xs font-semibold ${item.is_show ? 'text-green-600' : 'text-orange-500'}`}>
+                      {item.is_show ? '表示中' : '非表示'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={openMenuEditor}
+                    activeOpacity={0.7}
+                    className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-1.5"
+                  >
+                    <Text className="text-blue-600 text-xs font-semibold">編集</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+
+          {isPhoneLayout ? (
+            <View className="mt-3 flex-row items-center gap-2 border-t border-gray-100 pt-3">
               <TouchableOpacity
                 onPress={() => handleVisible(item)}
                 activeOpacity={0.7}
-                className={`mb-2 rounded-full px-2.5 py-1 ${
+                className={`flex-1 rounded-full px-3 py-2 items-center ${
                   item.is_show ? 'bg-green-50 border border-green-200' : 'bg-orange-50 border border-orange-200'
                 }`}
               >
@@ -1418,14 +1459,14 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => withMenuRestrictionCheck('menu_edit', () => openEditModal(item))}
+                onPress={openMenuEditor}
                 activeOpacity={0.7}
-                className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-1.5"
+                className="flex-1 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 items-center"
               >
                 <Text className="text-blue-600 text-xs font-semibold">編集</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          ) : null}
         </View>
       </Card>
     );
@@ -1526,7 +1567,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
       <Header
         title="メニュー登録"
-        subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+        subtitle={formatBranchDisplayTitle(branch)}
         showBack
         onBack={onBack}
         rightElement={

@@ -69,6 +69,68 @@ export const clearBranch = async (): Promise<void> => {
   await AsyncStorage.removeItem(STORAGE_KEYS.BRANCH);
 };
 
+export const ensureLocalBranch = async (): Promise<Branch> => {
+  const existingBranch = await getBranch();
+  if (existingBranch) return existingBranch;
+
+  const newBranch: Branch = {
+    id: `local-${Date.now()}`,
+    branch_code: 'S001',
+    branch_number: 1,
+    display_order: 1,
+    branch_name: '店舗1',
+    password: '0000',
+    sales_target: 0,
+    status: 'active',
+    created_at: new Date().toISOString(),
+  };
+
+  await saveBranch(newBranch);
+
+  let defaultCategoryId = `cat-${Date.now()}`;
+  const nowIso = new Date().toISOString();
+  const currentCategories = await getMenuCategories();
+  const existingCategory = currentCategories.find(
+    (category) => category.branch_id === newBranch.id && category.category_name === 'なし',
+  );
+
+  if (!existingCategory) {
+    const defaultCategory: MenuCategory = {
+      id: defaultCategoryId,
+      branch_id: newBranch.id,
+      category_name: 'なし',
+      sort_order: 0,
+      created_at: nowIso,
+    };
+    await saveMenuCategories([...currentCategories, defaultCategory]);
+  } else {
+    defaultCategoryId = existingCategory.id;
+  }
+
+  const currentMenus = await getMenus();
+  const menuExists = currentMenus.some((menu) => menu.branch_id === newBranch.id);
+  if (!menuExists) {
+    const sampleMenu: Menu = {
+      id: `menu-${Date.now()}`,
+      branch_id: newBranch.id,
+      menu_name: 'サンプルメニュー',
+      price: 500,
+      menu_number: 101,
+      sort_order: 0,
+      category_id: defaultCategoryId,
+      stock_management: false,
+      stock_quantity: 0,
+      is_active: true,
+      is_show: true,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+    await saveMenus([...currentMenus, sampleMenu]);
+  }
+
+  return newBranch;
+};
+
 // Menu storage
 export const saveMenus = async (menus: Menu[]): Promise<void> => {
   await AsyncStorage.setItem(STORAGE_KEYS.MENUS, JSON.stringify(menus));
@@ -316,6 +378,11 @@ export const getNextOrderNumber = async (branchId?: string): Promise<number> => 
 
   await AsyncStorage.setItem(scopedKey, JSON.stringify({ date: today, counter }));
   return counter;
+};
+
+export const resetOrderCounter = async (branchId?: string): Promise<void> => {
+  const scopedKey = branchId ? `${ORDER_COUNTER_KEY_PREFIX}/${branchId}` : STORAGE_KEYS.ORDER_COUNTER;
+  await AsyncStorage.removeItem(scopedKey);
 };
 
 // Clear all data

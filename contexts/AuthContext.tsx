@@ -16,6 +16,7 @@ if (Platform.OS !== 'web' && typeof WebBrowser.maybeCompleteAuthSession === 'fun
 export type AuthState =
   | { status: 'loading' }
   | { status: 'unauthenticated' }
+  | { status: 'guest' }
   | { status: 'demo' }
   | { status: 'login_code'; branch: Branch; loginCode: string }
   | {
@@ -37,6 +38,8 @@ interface AuthContextValue {
     displayName: string
   ) => Promise<{ needsEmailConfirmation: boolean; alreadyRegistered: boolean }>;
   signOut: () => Promise<void>;
+  enterGuest: () => void;
+  exitGuest: () => void;
   enterDemo: () => void;
   exitDemo: () => void;
   enterWithLoginCode: (branch: Branch, code: string) => void;
@@ -75,7 +78,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Web本番では常に固定URLへ戻して localhost への誤リダイレクトを防ぐ
       return prodWebUrl;
     }
-    // Expo Go ではカスタムschemeより、現在のhostを使ったexp:// URLの方が復帰が安定する
+    // Expo Go / dev host では、現在の host を使った URL のほうが復帰が安定する
     if (Constants.appOwnership === 'expo') {
       return Linking.createURL('auth/callback');
     }
@@ -92,7 +95,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const extractHashParam = useCallback((hash: string, key: string): string | null => {
-    const normalized = hash.startsWith('#') ? hash.slice(1) : hash;
+    const hashIndex = hash.indexOf('#');
+    const rawHash = hashIndex >= 0 ? hash.slice(hashIndex + 1) : hash;
+    const normalized = rawHash.startsWith('#') ? rawHash.slice(1) : rawHash;
     if (!normalized) return null;
     const params = new URLSearchParams(normalized);
     const value = params.get(key);
@@ -200,6 +205,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .from('branches')
         .insert({
           branch_code: branchCode,
+          branch_number: 1,
+          display_order: 1,
           branch_name: '店舗1',
           password: '0000',
           sales_target: 0,
@@ -250,6 +257,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [ensureUserBootstrapData, clearLoginCodeSession]);
 
+  const consumeAuthRedirectUrl = useCallback(async (url: string): Promise<User | null> => {
+    const errorCode = extractQueryParam(url, 'error_code') ?? extractHashParam(url, 'error_code');
+    const errorDescription =
+      extractQueryParam(url, 'error_description') ?? extractHashParam(url, 'error_description');
+
+    if (errorCode) {
+      console.error('[Auth] auth callback error:', { errorCode, errorDescription, url });
+      return null;
+    }
+
+    const code = extractQueryParam(url, 'code');
+    if (code) {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) {
+        console.error('[Auth] exchangeCodeForSession failed:', error);
+        return null;
+      }
+      return data.session?.user ?? null;
+    }
+
+    const accessToken = extractHashParam(url, 'access_token');
+    const refreshToken = extractHashParam(url, 'refresh_token');
+    if (accessToken && refreshToken) {
+      const { data, error } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (error) {
+        console.error('[Auth] setSession from callback failed:', error);
+        return null;
+      }
+      return data.user ?? data.session?.user ?? null;
+    }
+
+    return null;
+  }, [extractHashParam, extractQueryParam]);
+
   useEffect(() => {
     const fallbackToLoginCodeOrUnauthenticated = async () => {
       const restored = await restoreLoginCodeSession();
@@ -263,43 +307,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const tryRestoreSessionFromWebUrl = async (): Promise<User | null> => {
       if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
       const href = window.location.href;
-      const code = extractQueryParam(href, 'code');
-      const errorCode = extractQueryParam(href, 'error_code') ?? extractHashParam(window.location.hash, 'error_code');
-      const errorDescription =
-        extractQueryParam(href, 'error_description') ?? extractHashParam(window.location.hash, 'error_description');
-
-      if (errorCode) {
-        console.error('[Auth] auth callback error:', { errorCode, errorDescription });
-      }
-
-      if (code) {
-        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-        if (error) {
-          console.error('[Auth] exchangeCodeForSession failed:', error);
-          return null;
-        }
+      const user = await consumeAuthRedirectUrl(href);
+      if (user) {
         if (window.location.search.includes('code=')) {
           window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}`);
         }
-        return data.session?.user ?? null;
+        if (window.location.hash.includes('access_token=')) {
+          window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}`);
+        }
+        return user;
       }
 
-      const accessToken = extractHashParam(window.location.hash, 'access_token');
-      const refreshToken = extractHashParam(window.location.hash, 'refresh_token');
-      if (!accessToken || !refreshToken) return null;
-
-      const { data, error } = await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      });
-      if (error) {
-        console.error('[Auth] setSession from URL hash failed:', error);
-        return null;
-      }
       if (window.location.hash.includes('access_token=')) {
         window.history.replaceState({}, '', `${window.location.origin}${window.location.pathname}`);
       }
-      return data.user ?? data.session?.user ?? null;
+      return null;
     };
 
     if (!hasSupabaseEnvConfigured()) {
@@ -330,26 +352,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
+    const handleNativeUrl = async ({ url }: { url: string }) => {
+      if (Platform.OS === 'web') return;
+      const user = await consumeAuthRedirectUrl(url);
+      if (user) {
+        await WebBrowser.dismissBrowser();
+        await fetchProfileAndSubscription(user);
+      }
+    };
+
+    const linkingSubscription = Linking.addEventListener('url', (event) => {
+      void handleNativeUrl(event);
+    });
+
+    if (Platform.OS !== 'web') {
+      Linking.getInitialURL().then((url) => {
+        if (url) {
+          void handleNativeUrl({ url });
+        }
+      });
+    }
+
     return () => {
       authListener.unsubscribe();
+      linkingSubscription.remove();
     };
-  }, [extractHashParam, extractQueryParam, fetchProfileAndSubscription, restoreLoginCodeSession]);
+  }, [consumeAuthRedirectUrl, fetchProfileAndSubscription, restoreLoginCodeSession]);
 
   const signInWithProvider = useCallback(async (provider: 'google' | 'apple') => {
     const redirectTo = getOAuthRedirectUri();
     console.log('[Auth] OAuth redirectTo:', redirectTo);
+    const oauthOptions = {
+      redirectTo,
+      ...(provider === 'google'
+        ? {
+            queryParams: {
+              prompt: 'select_account',
+            },
+          }
+        : {}),
+    };
 
     if (Platform.OS === 'web') {
       await supabase.auth.signInWithOAuth({
         provider,
-        options: { redirectTo },
+        options: oauthOptions,
       });
       return;
     }
 
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider,
-      options: { redirectTo, skipBrowserRedirect: true },
+      options: { ...oauthOptions, skipBrowserRedirect: true },
     });
     if (error) throw error;
     if (!data?.url) throw new Error('OAuth URLの取得に失敗しました');
@@ -357,31 +411,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
     if (result.type !== 'success' || !result.url) {
       if (result.type === 'cancel' || result.type === 'dismiss') {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData.session?.user) {
+          return;
+        }
         throw new Error('ログインをキャンセルしました');
       }
       throw new Error('OAuth認証が完了しませんでした');
     }
 
-    const code = extractQueryParam(result.url, 'code');
-    if (code) {
-      const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-      if (exchangeError) throw exchangeError;
+    const user = await consumeAuthRedirectUrl(result.url);
+    if (user) {
       return;
     }
 
-    const accessToken = extractHashParam(result.url, 'access_token');
-    const refreshToken = extractHashParam(result.url, 'refresh_token');
-    if (accessToken && refreshToken) {
-      const { error: sessionError } = await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      });
-      if (sessionError) throw sessionError;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData.session?.user) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    console.error('[Auth] OAuth callback missing tokens/code', {
+      redirectTo,
+      resultType: result.type,
+      resultUrl: result.url,
+    });
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session?.user) {
       return;
     }
 
     throw new Error('認証情報を取得できませんでした。iOSシミュレータではブラウザを閉じずに完了してください。');
-  }, [extractHashParam, extractQueryParam, getOAuthRedirectUri]);
+  }, [consumeAuthRedirectUrl, getOAuthRedirectUri]);
 
   const signInWithGoogle = useCallback(async () => {
     await signInWithProvider('google');
@@ -429,6 +493,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthState({ status: 'unauthenticated' });
     await clearLoginCodeSession();
   }, [clearLoginCodeSession]);
+
+  const enterGuest = useCallback(() => {
+    setAuthState({ status: 'guest' });
+  }, []);
+
+  const exitGuest = useCallback(() => {
+    setAuthState({ status: 'unauthenticated' });
+  }, []);
 
   const enterDemo = useCallback(() => {
     setPreDemoAuthState((prev) => {
@@ -503,6 +575,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signInWithEmail,
         signUpWithEmail,
         signOut,
+        enterGuest,
+        exitGuest,
         enterDemo,
         exitDemo,
         enterWithLoginCode,

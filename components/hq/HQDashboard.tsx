@@ -15,8 +15,12 @@ import * as Sharing from 'expo-sharing';
 import { Feather } from '@expo/vector-icons';
 import { Button, Card, Header, Modal } from '../common';
 import { alertNotify } from '../../lib/alertUtils';
+import { compareBranchesByDisplayOrder, formatBranchDisplayCode } from '../../lib/branchDisplay';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import type { Branch, BranchSales, SalesAggregation } from '../../types/database';
+import { DEMO_BRANCHES, DEMO_BUDGET_EXPENSES, DEMO_TRANSACTIONS } from '../../data/demoData';
+import { useDemo } from '../../contexts/DemoContext';
+import { useAuth } from '../../contexts/AuthContext';
+import type { Branch, BranchSales, PendingTransaction, SalesAggregation } from '../../types/database';
 
 interface HQDashboardProps {
   onNavigateToBranchInfo: (branchId?: string) => void;
@@ -72,6 +76,64 @@ type ExpenseRow = {
   created_at: string;
 };
 
+const buildDemoDashboardRows = (
+  branchesSource: Branch[] = DEMO_BRANCHES,
+  getDemoPendingTransactions?: (branchId: string) => PendingTransaction[],
+  getTransactions?: (branchId: string) => TransactionRow[],
+  getExpenses?: (branchId: string) => ExpenseRow[],
+) => {
+  const branchRows: Branch[] = branchesSource.map((branch) => ({
+    ...branch,
+    created_at: branch.created_at || new Date().toISOString(),
+  }));
+
+  const transactionRows: TransactionRow[] = branchRows.flatMap((branch) => {
+    const transactions =
+      getTransactions?.(branch.id) ??
+      (DEMO_TRANSACTIONS[branch.id] ?? []).map((tx) => ({
+        id: tx.id,
+        branch_id: tx.branch_id,
+        total_amount: tx.total_amount,
+        payment_method: tx.payment_method,
+        status: 'completed',
+        created_at: tx.created_at,
+      }));
+    return transactions;
+  });
+
+  const transactionItemRows: TransactionItemRow[] = branchRows.flatMap((branch) => {
+    const rawTransactions = getDemoPendingTransactions?.(branch.id) ?? DEMO_TRANSACTIONS[branch.id] ?? [];
+    return rawTransactions.flatMap((tx) =>
+      tx.items.map((item) => ({
+        transaction_id: tx.id,
+        menu_name: item.menu_name,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        subtotal: item.subtotal,
+      })),
+    );
+  });
+
+  const expenseRows: ExpenseRow[] = branchRows.flatMap((branch) => {
+    const expenses =
+      getExpenses?.(branch.id) ??
+      (DEMO_BUDGET_EXPENSES[branch.id] ?? []).map((expense) => ({
+        id: expense.id,
+        branch_id: expense.branch_id,
+        date: expense.date,
+        category: expense.category,
+        amount: expense.amount,
+        recorded_by: expense.recorded_by,
+        payment_method: expense.payment_method,
+        memo: expense.memo ?? '',
+        created_at: expense.created_at,
+      }));
+    return expenses;
+  });
+
+  return { branchRows, transactionRows, transactionItemRows, expenseRows };
+};
+
 const BRANCH_STACK_COLORS = [
   '#2563EB',
   '#16A34A',
@@ -121,6 +183,8 @@ const toCsvCell = (value: string | number): string => {
 };
 
 export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps) => {
+  const { isDemo, demoBranches, getDemoTransactions, getDemoBudgetExpenses } = useDemo();
+  const { authState } = useAuth();
   const [activeTab, setActiveTab] = useState<DashboardTab>('dashboard');
   const [resultPanelIndex, setResultPanelIndex] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -151,55 +215,57 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
 
-    if (!isSupabaseConfigured()) {
-      const demoBranches: Branch[] = [
-        {
-          id: '1',
-          branch_code: 'S001',
-          branch_name: '焼きそば屋',
-          password: '',
-          sales_target: 50000,
-          status: 'active',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: '2',
-          branch_code: 'S002',
-          branch_name: 'たこ焼き屋',
-          password: '',
-          sales_target: 40000,
-          status: 'active',
-          created_at: new Date().toISOString(),
-        },
-      ];
-      const demoTransactions: TransactionRow[] = [
-        { id: 't1', branch_id: '1', total_amount: 1200, payment_method: 'paypay', status: 'completed', created_at: new Date().toISOString() },
-        { id: 't2', branch_id: '1', total_amount: 800, payment_method: 'cash', status: 'completed', created_at: new Date().toISOString() },
-        { id: 't3', branch_id: '2', total_amount: 1000, payment_method: 'voucher', status: 'completed', created_at: new Date().toISOString() },
-      ];
-      const demoItems: TransactionItemRow[] = [
-        { transaction_id: 't1', menu_name: '焼きそば', quantity: 2, unit_price: 600, subtotal: 1200 },
-        { transaction_id: 't2', menu_name: '焼きそば', quantity: 1, unit_price: 800, subtotal: 800 },
-        { transaction_id: 't3', menu_name: 'たこ焼き', quantity: 2, unit_price: 500, subtotal: 1000 },
-      ];
-      const demoExpenses: ExpenseRow[] = [
-        { id: 'e1', branch_id: '1', date: toDateLabel(new Date().toISOString()), category: 'material', amount: 22000, recorded_by: '担当A', payment_method: 'cash', memo: '', created_at: new Date().toISOString() },
-        { id: 'e2', branch_id: '2', date: toDateLabel(new Date().toISOString()), category: 'material', amount: 18000, recorded_by: '担当B', payment_method: 'online', memo: '', created_at: new Date().toISOString() },
-      ];
-
-      setBranchRows(demoBranches);
-      setTransactionRows(demoTransactions);
-      setTransactionItemRows(demoItems);
-      setExpenseRows(demoExpenses);
+    if (isDemo || !isSupabaseConfigured()) {
+      const demoRows = buildDemoDashboardRows(
+        isDemo ? demoBranches : DEMO_BRANCHES,
+        isDemo ? getDemoTransactions : undefined,
+        isDemo
+          ? (branchId) =>
+              getDemoTransactions(branchId).map((tx) => ({
+                id: tx.id,
+                branch_id: tx.branch_id,
+                total_amount: tx.total_amount,
+                payment_method: tx.payment_method,
+                status: 'completed',
+                created_at: tx.created_at,
+              }))
+          : undefined,
+        isDemo
+          ? (branchId) =>
+              getDemoBudgetExpenses(branchId).map((expense) => ({
+                id: expense.id,
+                branch_id: expense.branch_id,
+                date: expense.date,
+                category: expense.category,
+                amount: expense.amount,
+                recorded_by: expense.recorded_by,
+                payment_method: expense.payment_method,
+                memo: expense.memo ?? '',
+                created_at: expense.created_at,
+              }))
+          : undefined,
+      );
+      setBranchRows(demoRows.branchRows);
+      setTransactionRows(demoRows.transactionRows);
+      setTransactionItemRows(demoRows.transactionItemRows);
+      setExpenseRows(demoRows.expenseRows);
     } else {
       try {
+        const ownerId = authState.status === 'authenticated' ? authState.user.id : null;
+        const organizationId = authState.status === 'authenticated' ? authState.subscription.organization_id : null;
+        let branchQuery = supabase.from('branches').select('*').order('branch_code', { ascending: true });
+        if (ownerId && organizationId) {
+          branchQuery = branchQuery.or(`owner_id.eq.${ownerId},organization_id.eq.${organizationId}`);
+        } else if (ownerId) {
+          branchQuery = branchQuery.eq('owner_id', ownerId);
+        }
         const [
           { data: branches, error: branchError },
           { data: transactions, error: txError },
           { data: items, error: itemError },
           { data: expenses, error: expenseError },
         ] = await Promise.all([
-          supabase.from('branches').select('*').order('branch_code', { ascending: true }),
+          branchQuery,
           supabase.from('transactions').select('id,branch_id,total_amount,payment_method,status,created_at').eq('status', 'completed'),
           supabase.from('transaction_items').select('transaction_id,menu_name,quantity,unit_price,subtotal'),
           supabase.from('budget_expenses').select('id,branch_id,date,category,amount,recorded_by,payment_method,memo,created_at'),
@@ -210,10 +276,17 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
         if (itemError) throw itemError;
         if (expenseError) throw expenseError;
 
-        setBranchRows((branches ?? []) as Branch[]);
-        setTransactionRows((transactions ?? []) as TransactionRow[]);
-        setTransactionItemRows((items ?? []) as TransactionItemRow[]);
-        setExpenseRows((expenses ?? []) as ExpenseRow[]);
+        const filteredBranches = ((branches ?? []) as Branch[]).sort(compareBranchesByDisplayOrder);
+        const branchIdSet = new Set(filteredBranches.map((branch) => branch.id));
+        const filteredTransactions = ((transactions ?? []) as TransactionRow[]).filter((tx) => branchIdSet.has(tx.branch_id));
+        const txIdSet = new Set(filteredTransactions.map((tx) => tx.id));
+        const filteredItems = ((items ?? []) as TransactionItemRow[]).filter((item) => txIdSet.has(item.transaction_id));
+        const filteredExpenses = ((expenses ?? []) as ExpenseRow[]).filter((expense) => branchIdSet.has(expense.branch_id));
+
+        setBranchRows(filteredBranches);
+        setTransactionRows(filteredTransactions);
+        setTransactionItemRows(filteredItems);
+        setExpenseRows(filteredExpenses);
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
       }
@@ -221,7 +294,7 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
 
     setRefreshing(false);
     setLoading(false);
-  }, []);
+  }, [authState, demoBranches, getDemoBudgetExpenses, getDemoTransactions, isDemo]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -234,7 +307,7 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
   }, [activeTab]);
 
   useEffect(() => {
-    const branches = [...branchRows].sort((a, b) => a.branch_code.localeCompare(b.branch_code));
+    const branches = [...branchRows].sort(compareBranchesByDisplayOrder);
     const existingBranchIds = new Set(branches.map((branch) => branch.id));
     const validTransactions = transactionRows.filter((tx) => existingBranchIds.has(tx.branch_id));
     const validExpenses = expenseRows.filter((expense) => existingBranchIds.has(expense.branch_id));
@@ -242,7 +315,7 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
     setBranchLegend(
       branches.map((branch, index) => ({
         branch_id: branch.id,
-        branch_code: branch.branch_code,
+        branch_code: formatBranchDisplayCode(branch),
         branch_name: branch.branch_name,
         color: BRANCH_STACK_COLORS[index % BRANCH_STACK_COLORS.length],
       })),
@@ -275,7 +348,7 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
         .reduce((sum, e) => sum + (e.amount ?? 0), 0);
       return {
         branch_id: branch.id,
-        branch_code: branch.branch_code,
+        branch_code: formatBranchDisplayCode(branch),
         branch_name: branch.branch_name,
         total_sales: total,
         transaction_count: count,
@@ -373,7 +446,7 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
         lines.push(
           [
             toDateTimeLabel(tx.created_at),
-            branch?.branch_code ?? '',
+            branch ? formatBranchDisplayCode(branch) : '',
             branch?.branch_name ?? '',
             toPaymentMethodLabel(tx.payment_method),
             toStatusLabel(tx.status),
@@ -429,7 +502,7 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
       branchSales.forEach((branch) => {
         lines.push(
           [
-            branch.branch_code,
+            formatBranchDisplayCode(branch),
             branch.branch_name,
             branch.total_sales,
             branch.total_expense,
@@ -683,9 +756,15 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
                     <Text className="text-blue-600 font-semibold">PayPay</Text>
                     <Text className="text-xl font-bold text-blue-700">{totalSales.paypay_sales.toLocaleString()}円</Text>
                   </View>
-                  <View className="flex-1 items-center p-3 bg-yellow-50 rounded-lg">
+                  <View className="flex-1 items-center p-3 bg-yellow-50 rounded-lg mr-2">
                     <Text className="text-yellow-600 font-semibold">金券</Text>
                     <Text className="text-xl font-bold text-yellow-700">{totalSales.voucher_sales.toLocaleString()}円</Text>
+                  </View>
+                  <View className="flex-1 items-center p-3 bg-emerald-50 rounded-lg">
+                    <Text className="text-emerald-600 font-semibold">現金</Text>
+                    <Text className="text-xl font-bold text-emerald-700">
+                      {(totalSales.total_sales - totalSales.paypay_sales - totalSales.voucher_sales).toLocaleString()}円
+                    </Text>
                   </View>
                 </View>
               </Card>
@@ -703,7 +782,7 @@ export const HQDashboard = ({ onNavigateToBranchInfo, onBack }: HQDashboardProps
                   >
                     <View className="flex-row items-center justify-between mb-1">
                       <View className="flex-row items-center">
-                        <Text className="text-blue-600 font-semibold mr-2">{branch.branch_code}</Text>
+                        <Text className="text-blue-600 font-semibold mr-2">{formatBranchDisplayCode(branch)}</Text>
                         <Text className="text-gray-900">{branch.branch_name}</Text>
                       </View>
                       <Text className="font-bold text-gray-900">{branch.total_sales.toLocaleString()}円</Text>

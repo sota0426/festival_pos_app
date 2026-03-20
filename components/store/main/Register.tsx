@@ -17,6 +17,7 @@ import {
   clearSyncedTransactions,
 } from '../../../lib/storage';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
+import { formatBranchDisplayTitle } from '../../../lib/branchDisplay';
 import type {
   Branch,
   Menu,
@@ -1013,21 +1014,21 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
           <ScrollView showsVerticalScrollIndicator={false}>
             <View className="gap-3">
               <View className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
-                <Text className="text-sm font-bold text-blue-900">⚫ 値引きをしたいとき</Text>
+                <Text className="text-sm font-bold text-blue-900">値引きをしたいとき</Text>
                 <Text className="mt-1 text-sm leading-6 text-blue-900">
                   注文内容に入ったメニューを長押しすると、割引画面が開きます。
                 </Text>
               </View>
 
               <View className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3">
-                <Text className="text-sm font-bold text-amber-900">⚫︎ メニューの残数を変更したいとき</Text>
+                <Text className="text-sm font-bold text-amber-900">メニューの残数を変更したいとき</Text>
                 <Text className="mt-1 text-sm leading-6 text-amber-900">
                   左側のメニューを長押しすると、残数の変更画面が開きます。
                 </Text>
               </View>
 
               <View className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3">
-                <Text className="text-sm font-bold text-emerald-900">⚫︎ 支払い方法を整理したいとき</Text>
+                <Text className="text-sm font-bold text-emerald-900">支払い方法を整理したいとき</Text>
                 <Text className="mt-1 text-sm leading-6 text-emerald-900">
                   「設定」で必要な支払い方法だけを表示できます。{'\n'}
                   キャッシュレスの表記名も変更できます。
@@ -1712,7 +1713,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
       <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
         <Header
           title="レジ"
-          subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+          subtitle={formatBranchDisplayTitle(branch)}
           showBack
           onBack={onBack}
           rightElement={registerHeaderRight}
@@ -1763,7 +1764,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
     <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
       <Header
         title="レジ"
-        subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+        subtitle={formatBranchDisplayTitle(branch)}
         showBack
         onBack={onBack}
         rightElement={registerHeaderRight}

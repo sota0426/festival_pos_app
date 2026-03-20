@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button } from '../../common';
 import { getStoreSettings, saveStoreSettings } from '../../../lib/storage';
+import { formatBranchDisplayTitle } from '../../../lib/branchDisplay';
 import type { Branch, PaymentMode } from '../../../types/database';
 
 interface StoreSettingsProps {
@@ -33,7 +34,7 @@ export const StoreSettings = ({ branch, onBack }: StoreSettingsProps) => {
     <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
       <Header
         title="設定"
-        subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+        subtitle={formatBranchDisplayTitle(branch)}
         showBack
         onBack={onBack}
       />

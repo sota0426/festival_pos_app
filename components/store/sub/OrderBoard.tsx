@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Button } from '../../common';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { getPendingTransactions, addServedTransactionId, getServedTransactionIds } from '../../../lib/storage';
+import { formatBranchDisplayTitle } from '../../../lib/branchDisplay';
 import type { Branch, Transaction, TransactionItem, OrderBoardItem } from '../../../types/database';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useSubscription } from '../../../contexts/SubscriptionContext';
@@ -229,9 +230,17 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
 
   if (loading) {
     return (
-      <SafeAreaView className="flex-1 bg-amber-50 items-center justify-center" edges={['top']}>
-        <ActivityIndicator size="large" color="#F59E0B" />
-        <Text className="text-gray-500 mt-4">読み込み中...</Text>
+      <SafeAreaView className="flex-1 bg-amber-50" edges={['top']}>
+        <Header
+          title="注文受付"
+          subtitle={formatBranchDisplayTitle(branch)}
+          showBack
+          onBack={onBack}
+        />
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color="#F59E0B" />
+          <Text className="text-gray-500 mt-4">読み込み中...</Text>
+        </View>
       </SafeAreaView>
     );
   }
@@ -240,7 +249,7 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
     <SafeAreaView className="flex-1 bg-amber-50" edges={['top']}>
       <Header
         title="注文受付"
-        subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+        subtitle={formatBranchDisplayTitle(branch)}
         showBack
         onBack={onBack}
         rightElement={

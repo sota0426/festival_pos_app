@@ -20,6 +20,7 @@ import {
 } from '../../../lib/storage';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
+import { formatBranchDisplayTitle } from '../../../lib/branchDisplay';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useSubscription } from '../../../contexts/SubscriptionContext';
 import {
@@ -1060,7 +1061,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
       <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
         <Header
           title="損益分岐点の計算"
-          subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+          subtitle={formatBranchDisplayTitle(branch)}
           showBack
           onBack={onBack}
         />
@@ -1391,7 +1392,7 @@ export const BudgetManager = ({ branch, onBack, mode = 'summary' }: BudgetManage
     <SafeAreaView className="flex-1 bg-gray-100" edges={['top']}>
       <Header
         title="会計処理"
-        subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+        subtitle={formatBranchDisplayTitle(branch)}
         showBack
         onBack={onBack}
         rightElement={

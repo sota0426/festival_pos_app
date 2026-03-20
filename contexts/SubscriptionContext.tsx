@@ -32,9 +32,9 @@ const getPlanRank = (value: PlanType): number => {
 const getMaxStoresByPlan = (plan: PlanType): number => {
   switch (plan) {
     case 'store':
-      return Number.POSITIVE_INFINITY;
+      return 1;
     case 'org_light':
-      return 3;
+      return 10;
     case 'org_standard':
       return 10;
     case 'org_premium':

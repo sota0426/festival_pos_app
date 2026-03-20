@@ -16,8 +16,13 @@ export const Header = ({ title, subtitle, subtitleElement, showBack = false, onB
       <View className="flex-row items-start justify-between">
         <View className="flex-row items-start flex-1 min-w-0">
           {showBack && (
-            <TouchableOpacity onPress={onBack} className="mr-3 p-1">
-              <Text className="text-blue-600 text-lg">{'<'}</Text>
+            <TouchableOpacity
+              onPress={onBack}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              activeOpacity={0.8}
+              className="mr-3 mt-0.5 h-11 min-w-11 px-3 rounded-full border border-blue-200 bg-blue-50 items-center justify-center"
+            >
+              <Text className="text-blue-700 text-base font-bold">{'＜ 戻る'}</Text>
             </TouchableOpacity>
           )}
           <View className="flex-1 min-w-0">

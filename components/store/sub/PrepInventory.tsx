@@ -6,6 +6,7 @@ import { Button, Card, Header, Input, Modal } from '../../common';
 import { isSupabaseConfigured, supabase } from '../../../lib/supabase';
 import { alertNotify } from '../../../lib/alertUtils';
 import { getPrepIngredients, savePrepIngredients } from '../../../lib/storage';
+import { formatBranchDisplayTitle } from '../../../lib/branchDisplay';
 import type { Branch, PrepIngredient } from '../../../types/database';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useSubscription } from '../../../contexts/SubscriptionContext';
@@ -295,7 +296,7 @@ export const PrepInventory = ({ branch, onBack }: PrepInventoryProps) => {
     <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
       <Header
         title="在庫確認"
-        subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+        subtitle={formatBranchDisplayTitle(branch)}
         showBack
         onBack={onBack}
         rightElement={<Button title="+ 食材登録" onPress={() => setShowAddModal(true)} size="sm" />}

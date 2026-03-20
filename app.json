@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "festival_pos",
+    "name": "Festival POS",
     "slug": "festival_pos",
     "version": "2.0.0",
     "scheme": "festival-pos",
@@ -31,8 +31,12 @@
       "**/*"
     ],
     "ios": {
+      "buildNumber": "1",
       "supportsTablet": true,
-      "bundleIdentifier": "com.festivalpos.app"
+      "bundleIdentifier": "com.festivalpos.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -40,6 +44,11 @@
         "backgroundColor": "#ffffff"
       },
       "package": "com.anonymous.festival_pos_app"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6b1d4db0-6260-490b-9b26-67336f2d5eac"
+      }
     }
   }
 }

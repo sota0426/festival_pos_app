@@ -28,6 +28,7 @@ import {
   updateBranchRecorder,
 } from '../../lib/recorderRegistry';
 import { alertNotify } from '../../lib/alertUtils';
+import { compareBranchesByDisplayOrder, formatBranchDisplayCode } from '../../lib/branchDisplay';
 import type {
   BranchRecorder,
   RecorderRegistrationMode,
@@ -325,11 +326,14 @@ export const StoreHome = ({
   const [importSourceName, setImportSourceName] = useState('');
   const [importError, setImportError] = useState('');
   const isFreeAuthenticatedPlan = authState.status === 'authenticated' && isFreePlan;
-  const isShareFeatureLocked = isFreePlan && authState.status !== 'demo';
   const canSyncToSupabase =
     isSupabaseConfigured() &&
     authState.status !== 'demo' &&
     (authState.status === 'login_code' || canSync);
+  const isShareFeatureLocked =
+    authState.status !== 'demo' &&
+    authState.status !== 'login_code' &&
+    isFreePlan;
 
   // Restriction management state
   const [restrictions, setRestrictions] = useState<RestrictionSettings>({
@@ -476,7 +480,7 @@ export const StoreHome = ({
         setSwitchableBranches([]);
         return;
       }
-      setSwitchableBranches(data ?? []);
+      setSwitchableBranches(((data ?? []) as Branch[]).sort(compareBranchesByDisplayOrder));
     };
 
     loadSwitchableBranches();
@@ -1974,7 +1978,7 @@ export const StoreHome = ({
         subtitleElement={
           <View className="mt-1 gap-1">
             <View className="flex-row items-center gap-2">
-              <Text className="text-sm text-gray-500">支店番号: {branch.branch_code}</Text>
+              <Text className="text-sm text-gray-500">店舗番号: {formatBranchDisplayCode(branch)}</Text>
               {canShowLoginCodeInHeader && branchLoginCode ? (
                 <TouchableOpacity
                   onPress={() => setShowLoginCodeModal(true)}
@@ -2054,7 +2058,7 @@ export const StoreHome = ({
               <Card className="bg-amber-50 border border-amber-200 p-4">
                 <Text className="text-amber-900 font-bold text-base">共有タブは有料プラン機能です</Text>
                 <Text className="text-amber-800 text-sm mt-1">
-                  無料プランではデモモードで動作をお試しできます。実運用には有料プラン（店舗6か月パス以上）が必要です。
+                  無料プランではデモモードで動作をお試しできます。実運用には有料プランが必要です。
                 </Text>
               </Card>
             )}

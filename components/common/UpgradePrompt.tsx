@@ -17,9 +17,7 @@ export const UpgradePrompt = ({
           プランをアップグレード
         </Text>
         <Text className="text-blue-600 text-xs">{message}</Text>
-        <Text className="text-blue-500 text-xs mt-2 font-semibold">
-          6か月200円から &rarr;
-        </Text>
+        <Text className="text-blue-500 text-xs mt-2 font-semibold">買い切り500円から &rarr;</Text>
       </Card>
     </TouchableOpacity>
   );

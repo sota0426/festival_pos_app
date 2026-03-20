@@ -10,6 +10,8 @@ import {
   clearAllPendingTransactions,
 } from '../lib/storage';
 import * as Crypto from 'expo-crypto';
+import { useAuth } from '../contexts/AuthContext';
+import { useSubscription } from '../contexts/SubscriptionContext';
 
 const SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
 // 未同期データがある場合のリトライ間隔（短め）
@@ -32,6 +34,8 @@ export interface SyncDialogState {
 }
 
 export const useSync = () => {
+  const { authState } = useAuth();
+  const { canSync } = useSubscription();
   const syncInProgress = useRef(false);
   const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -45,12 +49,16 @@ export const useSync = () => {
     type: 'confirm_sync',
   });
 
+  const canUseSyncFlow =
+    authState.status === 'login_code' ||
+    (authState.status === 'authenticated' && canSync);
+
   const closeSyncDialog = useCallback(() => {
     setSyncDialog((prev) => ({ ...prev, visible: false }));
   }, []);
 
   const syncPendingTransactions = useCallback(async (): Promise<'ok' | 'error' | 'none'> => {
-    if (!isSupabaseConfigured() || syncInProgress.current) {
+    if (!isSupabaseConfigured() || !canUseSyncFlow || syncInProgress.current) {
       return 'none';
     }
 
@@ -182,14 +190,14 @@ export const useSync = () => {
     } finally {
       syncInProgress.current = false;
     }
-  }, []);
+  }, [canUseSyncFlow]);
 
   /**
    * 未同期件数を確認し、1件以上あれば「同期しますか？」ダイアログを表示。
    * ダイアログの確認後に呼ばれる onConfirm で実際に同期する。
    */
   const promptSyncIfNeeded = useCallback(async () => {
-    if (!isSupabaseConfigured()) return;
+    if (!isSupabaseConfigured() || !canUseSyncFlow) return;
 
     const pending = await getPendingTransactions();
     const unsynced = pending.filter((t) => !t.synced);
@@ -200,10 +208,10 @@ export const useSync = () => {
       type: 'confirm_sync',
       pendingCount: unsynced.length,
     });
-  }, []);
+  }, [canUseSyncFlow]);
 
   const checkAndSync = useCallback(async () => {
-    if (!isSupabaseConfigured()) return;
+    if (!isSupabaseConfigured() || !canUseSyncFlow) return;
 
     // 未同期データがあれば間隔に関わらず即時同期
     const pending = await getPendingTransactions();
@@ -223,10 +231,11 @@ export const useSync = () => {
     if (Date.now() - lastSyncTime >= SYNC_INTERVAL) {
       await syncPendingTransactions();
     }
-  }, [syncPendingTransactions]);
+  }, [canUseSyncFlow, syncPendingTransactions]);
 
   // 未同期データが残っている間、短い間隔でリトライタイマーを張る
   const scheduleRetryIfNeeded = useCallback(async () => {
+    if (!canUseSyncFlow) return;
     if (retryTimerRef.current) return; // すでにスケジュール済み
     const pending = await getPendingTransactions();
     const hasUnsynced = pending.some((t) => !t.synced);
@@ -244,7 +253,7 @@ export const useSync = () => {
       }
       await syncPendingTransactions();
     }, RETRY_INTERVAL);
-  }, [syncPendingTransactions]);
+  }, [canUseSyncFlow, syncPendingTransactions]);
 
   // Set up periodic sync
   useEffect(() => {

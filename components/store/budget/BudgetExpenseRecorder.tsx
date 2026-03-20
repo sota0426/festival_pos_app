@@ -14,6 +14,7 @@ import {
   saveBudgetExpense,
 } from "lib/storage";
 import { isSupabaseConfigured, supabase } from "lib/supabase";
+import { formatBranchDisplayTitle } from "lib/branchDisplay";
 import type {
   Branch,
   BudgetExpense,
@@ -74,6 +75,7 @@ const DEFAULT_EXPENSE_PAYMENT_METHODS: ExpensePaymentMethodSettings = {
 const INITIAL_VISIBLE_EXPENSES = 5;
 type ExpenseTab = "entry" | "history";
 type ExpenseSortKey = "created_desc" | "created_asc" | "amount_desc" | "amount_asc";
+type HistoryFilterMenu = "category" | "recorder" | "payment" | "sort" | null;
 
 const EXPENSE_TABS: { key: ExpenseTab; label: string }[] = [
   { key: "entry", label: "支出記録" },
@@ -110,6 +112,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
   const [historyRecorderFilter, setHistoryRecorderFilter] = useState<string>("all");
   const [historyPaymentFilter, setHistoryPaymentFilter] = useState<"all" | ExpensePaymentMethod>("all");
   const [historySort, setHistorySort] = useState<ExpenseSortKey>("created_desc");
+  const [activeHistoryFilterMenu, setActiveHistoryFilterMenu] = useState<HistoryFilterMenu>(null);
   const [pendingReimbursedToggle, setPendingReimbursedToggle] = useState<BudgetExpense | null>(null);
   const [enabledExpensePaymentMethods, setEnabledExpensePaymentMethods] = useState<ExpensePaymentMethodSettings>(
     DEFAULT_EXPENSE_PAYMENT_METHODS,
@@ -322,6 +325,13 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
     return enabled.length > 0 ? enabled : EXPENSE_PAYMENT_METHOD_ORDER;
   }, [enabledExpensePaymentMethods]);
   const paymentMethodButtonWidth = enabledExpenseMethods.length >= 4 ? "48%" : "100%";
+  const currentHistoryCategoryLabel =
+    historyCategoryFilter === "all" ? "すべて" : CATEGORY_LABELS[historyCategoryFilter];
+  const currentHistoryRecorderLabel = historyRecorderFilter === "all" ? "すべて" : historyRecorderFilter;
+  const currentHistoryPaymentLabel =
+    historyPaymentFilter === "all" ? "すべて" : PAYMENT_METHOD_LABELS[historyPaymentFilter];
+  const currentHistorySortLabel =
+    EXPENSE_SORT_OPTIONS.find((option) => option.key === historySort)?.label ?? "新しい順";
 
   useEffect(() => {
     if (historyRecorderFilter === "all") return;
@@ -491,11 +501,40 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
     </View>
   );
 
+  const FilterChip = ({
+    label,
+    value,
+    isActive,
+    onPress,
+  }: {
+    label: string;
+    value: string;
+    isActive: boolean;
+    onPress: () => void;
+  }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.8}
+      className={`mb-2 rounded-2xl border px-3 py-2.5 ${
+        isActive ? "border-indigo-500 bg-indigo-50" : "border-gray-300 bg-white"
+      }`}
+      style={{ width: "48%" }}
+    >
+      <Text className="text-[10px] font-semibold text-gray-500">{label}</Text>
+      <Text
+        numberOfLines={1}
+        className={`mt-0.5 text-sm font-bold ${isActive ? "text-indigo-700" : "text-gray-700"}`}
+      >
+        {value} ▼
+      </Text>
+    </TouchableOpacity>
+  );
+
   return (
     <SafeAreaView className="flex-1 bg-gray-100" edges={["top"]}>
       <Header
         title="支出管理"
-        subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+        subtitle={formatBranchDisplayTitle(branch)}
         showBack
         onBack={onBack}
         rightElement={
@@ -554,6 +593,134 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
         </View>
       </Modal>
 
+      <Modal
+        visible={activeHistoryFilterMenu !== null}
+        onClose={() => setActiveHistoryFilterMenu(null)}
+        title={
+          activeHistoryFilterMenu === "category"
+            ? "カテゴリで絞り込み"
+            : activeHistoryFilterMenu === "recorder"
+              ? "登録者で絞り込み"
+              : activeHistoryFilterMenu === "payment"
+                ? "支払い方法で絞り込み"
+                : "並び順"
+        }
+      >
+        <ScrollView className="max-h-96">
+          <View className="gap-2">
+            {activeHistoryFilterMenu === "category" && (
+              <>
+                <TouchableOpacity
+                  onPress={() => {
+                    setHistoryCategoryFilter("all");
+                    setActiveHistoryFilterMenu(null);
+                  }}
+                  className={`rounded-xl border px-4 py-3 ${historyCategoryFilter === "all" ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white"}`}
+                  activeOpacity={0.8}
+                >
+                  <Text className={`font-semibold ${historyCategoryFilter === "all" ? "text-indigo-700" : "text-gray-700"}`}>すべて</Text>
+                </TouchableOpacity>
+                {(["material", "decoration", "equipment", "other"] as ExpenseCategory[]).map((cat) => (
+                  <TouchableOpacity
+                    key={cat}
+                    onPress={() => {
+                      setHistoryCategoryFilter(cat);
+                      setActiveHistoryFilterMenu(null);
+                    }}
+                    className={`rounded-xl border px-4 py-3 ${historyCategoryFilter === cat ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white"}`}
+                    activeOpacity={0.8}
+                  >
+                    <Text className={`font-semibold ${historyCategoryFilter === cat ? "text-indigo-700" : "text-gray-700"}`}>
+                      {CATEGORY_LABELS[cat]}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+
+            {activeHistoryFilterMenu === "recorder" && (
+              <>
+                <TouchableOpacity
+                  onPress={() => {
+                    setHistoryRecorderFilter("all");
+                    setActiveHistoryFilterMenu(null);
+                  }}
+                  className={`rounded-xl border px-4 py-3 ${historyRecorderFilter === "all" ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white"}`}
+                  activeOpacity={0.8}
+                >
+                  <Text className={`font-semibold ${historyRecorderFilter === "all" ? "text-indigo-700" : "text-gray-700"}`}>すべて</Text>
+                </TouchableOpacity>
+                {historyRecorderOptions.map((name) => (
+                  <TouchableOpacity
+                    key={name}
+                    onPress={() => {
+                      setHistoryRecorderFilter(name);
+                      setActiveHistoryFilterMenu(null);
+                    }}
+                    className={`rounded-xl border px-4 py-3 ${historyRecorderFilter === name ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white"}`}
+                    activeOpacity={0.8}
+                  >
+                    <Text className={`font-semibold ${historyRecorderFilter === name ? "text-indigo-700" : "text-gray-700"}`}>
+                      {name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+
+            {activeHistoryFilterMenu === "payment" && (
+              <>
+                <TouchableOpacity
+                  onPress={() => {
+                    setHistoryPaymentFilter("all");
+                    setActiveHistoryFilterMenu(null);
+                  }}
+                  className={`rounded-xl border px-4 py-3 ${historyPaymentFilter === "all" ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white"}`}
+                  activeOpacity={0.8}
+                >
+                  <Text className={`font-semibold ${historyPaymentFilter === "all" ? "text-indigo-700" : "text-gray-700"}`}>すべて</Text>
+                </TouchableOpacity>
+                {enabledExpenseMethods.map((method) => (
+                  <TouchableOpacity
+                    key={method}
+                    onPress={() => {
+                      setHistoryPaymentFilter(method);
+                      setActiveHistoryFilterMenu(null);
+                    }}
+                    className={`rounded-xl border px-4 py-3 ${historyPaymentFilter === method ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white"}`}
+                    activeOpacity={0.8}
+                  >
+                    <Text className={`font-semibold ${historyPaymentFilter === method ? "text-indigo-700" : "text-gray-700"}`}>
+                      {PAYMENT_METHOD_LABELS[method]}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+
+            {activeHistoryFilterMenu === "sort" && (
+              <>
+                {EXPENSE_SORT_OPTIONS.map((option) => (
+                  <TouchableOpacity
+                    key={option.key}
+                    onPress={() => {
+                      setHistorySort(option.key);
+                      setActiveHistoryFilterMenu(null);
+                    }}
+                    className={`rounded-xl border px-4 py-3 ${historySort === option.key ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white"}`}
+                    activeOpacity={0.8}
+                  >
+                    <Text className={`font-semibold ${historySort === option.key ? "text-indigo-700" : "text-gray-700"}`}>
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+          </View>
+        </ScrollView>
+      </Modal>
+
       <View className="flex-row bg-white border-b border-gray-200">
         {EXPENSE_TABS.map((tab) => (
           <TouchableOpacity
@@ -576,7 +743,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
       >
         {activeTab === "entry" ? (
           <>
-            <Card className="mb-4">
+            <Card className="mb-4 shadow-none">
               <Text className="text-gray-900 text-lg font-bold mb-3">支出を記録</Text>
 
               <View className="mb-3">
@@ -691,7 +858,7 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
               />
             </Card>
 
-            <Card>
+            <Card className="shadow-none">
               <Text className="text-gray-900 text-lg font-bold mb-3">支出履歴（直近5件）</Text>
               {expenses.length === 0 ? (
                 <Text className="text-gray-400 text-center py-4">支出データがありません</Text>
@@ -713,91 +880,52 @@ export const BudgetExpenseRecorder = ({ branch, onBack }: Props) => {
           </>
         ) : (
           <>
-            <Card className="mb-4">
-              <Text className="text-gray-900 text-lg font-bold mb-3">絞り込み</Text>
-
-              <Text className="text-gray-600 text-sm mb-1">カテゴリ</Text>
-              <View className="flex-row flex-wrap gap-2 mb-3">
+            <Card className="mb-4 shadow-none">
+              <View className="flex-row items-center justify-between mb-3">
+                <Text className="text-gray-900 text-lg font-bold">絞り込み</Text>
                 <TouchableOpacity
-                  onPress={() => setHistoryCategoryFilter("all")}
-                  className={`px-3 py-1.5 rounded-full border ${historyCategoryFilter === "all" ? "bg-indigo-500 border-indigo-500" : "bg-white border-gray-300"}`}
+                  onPress={() => {
+                    setHistoryCategoryFilter("all");
+                    setHistoryRecorderFilter("all");
+                    setHistoryPaymentFilter("all");
+                    setHistorySort("created_desc");
+                  }}
+                  activeOpacity={0.8}
+                  className="rounded-full bg-gray-100 px-3 py-1.5"
                 >
-                  <Text className={`text-xs font-semibold ${historyCategoryFilter === "all" ? "text-white" : "text-gray-600"}`}>すべて</Text>
+                  <Text className="text-xs font-semibold text-gray-600">リセット</Text>
                 </TouchableOpacity>
-                {(["material", "decoration", "equipment", "other"] as ExpenseCategory[]).map((cat) => (
-                  <TouchableOpacity
-                    key={cat}
-                    onPress={() => setHistoryCategoryFilter(cat)}
-                    className={`px-3 py-1.5 rounded-full border ${historyCategoryFilter === cat ? "bg-indigo-500 border-indigo-500" : "bg-white border-gray-300"}`}
-                  >
-                    <Text className={`text-xs font-semibold ${historyCategoryFilter === cat ? "text-white" : "text-gray-600"}`}>
-                      {CATEGORY_LABELS[cat]}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
               </View>
 
-              <Text className="text-gray-600 text-sm mb-1">登録者</Text>
-              <View className="flex-row flex-wrap gap-2 mb-3">
-                <TouchableOpacity
-                  onPress={() => setHistoryRecorderFilter("all")}
-                  className={`px-3 py-1.5 rounded-full border ${historyRecorderFilter === "all" ? "bg-indigo-500 border-indigo-500" : "bg-white border-gray-300"}`}
-                >
-                  <Text className={`text-xs font-semibold ${historyRecorderFilter === "all" ? "text-white" : "text-gray-600"}`}>
-                    すべて
-                  </Text>
-                </TouchableOpacity>
-                {historyRecorderOptions.map((name) => (
-                  <TouchableOpacity
-                    key={name}
-                    onPress={() => setHistoryRecorderFilter(name)}
-                    className={`px-3 py-1.5 rounded-full border ${historyRecorderFilter === name ? "bg-indigo-500 border-indigo-500" : "bg-white border-gray-300"}`}
-                  >
-                    <Text className={`text-xs font-semibold ${historyRecorderFilter === name ? "text-white" : "text-gray-600"}`}>
-                      {name}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <Text className="text-gray-600 text-sm mb-1">支払い方法</Text>
-              <View className="flex-row flex-wrap gap-2 mb-3">
-                <TouchableOpacity
-                  onPress={() => setHistoryPaymentFilter("all")}
-                  className={`px-3 py-1.5 rounded-full border ${historyPaymentFilter === "all" ? "bg-indigo-500 border-indigo-500" : "bg-white border-gray-300"}`}
-                >
-                  <Text className={`text-xs font-semibold ${historyPaymentFilter === "all" ? "text-white" : "text-gray-600"}`}>すべて</Text>
-                </TouchableOpacity>
-                {enabledExpenseMethods.map((method) => (
-                  <TouchableOpacity
-                    key={method}
-                    onPress={() => setHistoryPaymentFilter(method)}
-                    className={`px-3 py-1.5 rounded-full border ${historyPaymentFilter === method ? "bg-indigo-500 border-indigo-500" : "bg-white border-gray-300"}`}
-                  >
-                    <Text className={`text-xs font-semibold ${historyPaymentFilter === method ? "text-white" : "text-gray-600"}`}>
-                      {PAYMENT_METHOD_LABELS[method]}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <Text className="text-gray-600 text-sm mb-1">並び順</Text>
-              <View className="flex-row flex-wrap gap-2">
-                {EXPENSE_SORT_OPTIONS.map((option) => (
-                  <TouchableOpacity
-                    key={option.key}
-                    onPress={() => setHistorySort(option.key)}
-                    className={`px-3 py-1.5 rounded-full border ${historySort === option.key ? "bg-indigo-500 border-indigo-500" : "bg-white border-gray-300"}`}
-                  >
-                    <Text className={`text-xs font-semibold ${historySort === option.key ? "text-white" : "text-gray-600"}`}>
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+              <View className="flex-row flex-wrap justify-between">
+                <FilterChip
+                  label="カテゴリ"
+                  value={currentHistoryCategoryLabel}
+                  isActive={activeHistoryFilterMenu === "category"}
+                  onPress={() => setActiveHistoryFilterMenu("category")}
+                />
+                <FilterChip
+                  label="登録者"
+                  value={currentHistoryRecorderLabel}
+                  isActive={activeHistoryFilterMenu === "recorder"}
+                  onPress={() => setActiveHistoryFilterMenu("recorder")}
+                />
+                <FilterChip
+                  label="支払い"
+                  value={currentHistoryPaymentLabel}
+                  isActive={activeHistoryFilterMenu === "payment"}
+                  onPress={() => setActiveHistoryFilterMenu("payment")}
+                />
+                <FilterChip
+                  label="並び順"
+                  value={currentHistorySortLabel}
+                  isActive={activeHistoryFilterMenu === "sort"}
+                  onPress={() => setActiveHistoryFilterMenu("sort")}
+                />
               </View>
             </Card>
 
-            <Card>
+            <Card className="shadow-none">
               <Text className="text-gray-900 text-lg font-bold mb-3">
                 支出履歴一覧（{filteredHistoryExpenses.length}件）
               </Text>

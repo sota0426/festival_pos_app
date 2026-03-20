@@ -8,33 +8,40 @@ interface AccountDashboardProps {
   onNavigateToStore: () => void;
   onNavigateToHQ: () => void;
   onNavigateToPricing: () => void;
+  onNavigateToAuth: () => void;
   onLogout: () => void;
 }
 
 const planLabels: Record<string, { label: string; color: string; bg: string }> = {
   free: { label: '無料プラン', color: 'text-green-700', bg: 'bg-green-100' },
-  store: { label: '店舗プラン（同時稼働1店舗）', color: 'text-blue-700', bg: 'bg-blue-100' },
-  org_light: { label: '団体ライト（3店舗）', color: 'text-violet-700', bg: 'bg-violet-100' },
-  org_standard: { label: '団体スタンダード（10店舗）', color: 'text-purple-700', bg: 'bg-purple-100' },
-  org_premium: { label: '団体プレミアム（30店舗）', color: 'text-fuchsia-700', bg: 'bg-fuchsia-100' },
-  organization: { label: '団体スタンダード（10店舗）', color: 'text-purple-700', bg: 'bg-purple-100' }, // legacy
+  store: { label: '店舗プラン（買い切り500円）', color: 'text-blue-700', bg: 'bg-blue-100' },
+  org_light: { label: '団体プラン（10店舗）', color: 'text-violet-700', bg: 'bg-violet-100' },
+  org_standard: { label: '団体プラン（10店舗・3,000円）', color: 'text-purple-700', bg: 'bg-purple-100' },
+  org_premium: { label: '団体プラン（30店舗・6,000円）', color: 'text-fuchsia-700', bg: 'bg-fuchsia-100' },
+  organization: { label: '団体プラン（10店舗・3,000円）', color: 'text-purple-700', bg: 'bg-purple-100' }, // legacy
 };
 
 export const AccountDashboard = ({
   onNavigateToStore,
   onNavigateToHQ,
   onNavigateToPricing,
+  onNavigateToAuth,
   onLogout,
 }: AccountDashboardProps) => {
   const { authState, signOut } = useAuth();
   const { plan, canAccessHQ, isFreePlan } = useSubscription();
 
-  if (authState.status !== 'authenticated') return null;
+  if (authState.status !== 'authenticated' && authState.status !== 'guest') return null;
 
-  const { profile } = authState;
+  const isGuest = authState.status === 'guest';
+  const profile = authState.status === 'authenticated' ? authState.profile : null;
   const planInfo = planLabels[plan] ?? planLabels.free;
 
   const handleLogout = async () => {
+    if (isGuest) {
+      onLogout();
+      return;
+    }
     await signOut();
     onLogout();
   };
@@ -46,18 +53,29 @@ export const AccountDashboard = ({
         <View className="items-center mb-6">
           <View className="w-16 h-16 rounded-full bg-gray-300 items-center justify-center mb-3">
             <Text className="text-2xl text-gray-600">
-              {profile.display_name.charAt(0).toUpperCase()}
+              {isGuest ? '?' : profile?.display_name.charAt(0).toUpperCase()}
             </Text>
           </View>
           <Text className="text-xl font-bold text-gray-900">
-            {profile.display_name}
+            {isGuest ? '未ログイン' : profile?.display_name}
           </Text>
-          <Text className="text-gray-500 text-sm">{profile.email}</Text>
+          <Text className="text-gray-500 text-sm">
+            {isGuest ? 'この端末にデータを保存して利用できます' : profile?.email}
+          </Text>
           <View className={`mt-2 px-3 py-1 rounded-full ${planInfo.bg}`}>
             <Text className={`text-sm font-semibold ${planInfo.color}`}>
-              {planInfo.label}
+              {isGuest ? 'ローカル利用モード' : planInfo.label}
             </Text>
           </View>
+          {isGuest && (
+            <TouchableOpacity
+              onPress={onNavigateToAuth}
+              activeOpacity={0.8}
+              className="mt-4 px-4 py-2 rounded-full bg-blue-600"
+            >
+              <Text className="text-white font-semibold">ログインする</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* クイックアクション */}
@@ -68,21 +86,21 @@ export const AccountDashboard = ({
           >
             <Card className="bg-green-500 p-5">
               <Text className="text-white text-lg font-bold text-center">
-                店舗管理
+                {isGuest ? '模擬店を開く' : '店舗管理'}
               </Text>
               <Text className="text-green-100 text-center text-sm mt-1">
-                店舗一覧・店舗設定・店舗画面へ移動
+                {isGuest ? 'ログインなしでローカル保存のまま利用' : '店舗一覧・店舗設定・店舗画面へ移動'}
               </Text>
             </Card>
           </TouchableOpacity>
 
           <TouchableOpacity
-            onPress={canAccessHQ ? onNavigateToHQ : undefined}
-            activeOpacity={canAccessHQ ? 0.8 : 1}
+            onPress={!isGuest && canAccessHQ ? onNavigateToHQ : undefined}
+            activeOpacity={!isGuest && canAccessHQ ? 0.8 : 1}
           >
             <Card
               className={`p-5 ${
-                canAccessHQ ? 'bg-gray-600' : 'bg-gray-300'
+                !isGuest && canAccessHQ ? 'bg-gray-600' : 'bg-gray-300'
               }`}
             >
               <Text className="text-white text-lg font-bold text-center">
@@ -90,12 +108,14 @@ export const AccountDashboard = ({
               </Text>
               <Text
                 className={`text-center text-sm mt-1 ${
-                  canAccessHQ ? 'text-gray-200' : 'text-gray-400'
+                  !isGuest && canAccessHQ ? 'text-gray-200' : 'text-gray-400'
                 }`}
               >
-                {canAccessHQ
+                {!isGuest && canAccessHQ
                   ? '売上集計・店舗管理'
-                  : '店舗プラン以上で利用可能'}
+                  : isGuest
+                    ? 'ログイン後に利用可能'
+                    : '店舗プラン以上で利用可能'}
               </Text>
             </Card>
           </TouchableOpacity>
@@ -105,22 +125,49 @@ export const AccountDashboard = ({
         <View className="gap-3 mb-6">
           <Text className="text-base font-bold text-gray-800 mb-1">管理</Text>
 
-          <TouchableOpacity onPress={onNavigateToPricing} activeOpacity={0.8}>
-            <Card className="bg-white p-4">
-              <View className="flex-row justify-between items-center">
-                <Text className="font-semibold text-gray-800">プラン変更</Text>
-                <Text className="text-gray-400">&gt;</Text>
-              </View>
-              <Text className="text-gray-500 text-xs mt-1">
-                現在: {planInfo.label}
-              </Text>
-            </Card>
-          </TouchableOpacity>
+          {isGuest ? (
+            <>
+              <TouchableOpacity onPress={onNavigateToPricing} activeOpacity={0.8}>
+                <Card className="bg-white p-4">
+                  <View className="flex-row justify-between items-center">
+                    <Text className="font-semibold text-gray-800">料金プランを見る</Text>
+                    <Text className="text-gray-400">&gt;</Text>
+                  </View>
+                  <Text className="text-gray-500 text-xs mt-1">
+                    無料利用と有料プランの違いを確認できます
+                  </Text>
+                </Card>
+              </TouchableOpacity>
 
+              <TouchableOpacity onPress={onNavigateToAuth} activeOpacity={0.8}>
+                <Card className="bg-white p-4">
+                  <View className="flex-row justify-between items-center">
+                    <Text className="font-semibold text-gray-800">ログインして同期を有効化</Text>
+                    <Text className="text-gray-400">&gt;</Text>
+                  </View>
+                  <Text className="text-gray-500 text-xs mt-1">
+                    複数端末アクセスやDB同期を利用できます
+                  </Text>
+                </Card>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <TouchableOpacity onPress={onNavigateToPricing} activeOpacity={0.8}>
+              <Card className="bg-white p-4">
+                <View className="flex-row justify-between items-center">
+                  <Text className="font-semibold text-gray-800">プラン変更</Text>
+                  <Text className="text-gray-400">&gt;</Text>
+                </View>
+                <Text className="text-gray-500 text-xs mt-1">
+                  現在: {planInfo.label}
+                </Text>
+              </Card>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* アップグレード誘導（無料プランの場合） */}
-        {isFreePlan && (
+        {!isGuest && isFreePlan && (
           <TouchableOpacity onPress={onNavigateToPricing} activeOpacity={0.8}>
             <Card className="bg-gradient-to-r from-blue-500 to-purple-500 bg-blue-500 p-5 mb-6">
               <Text className="text-white text-lg font-bold text-center">
@@ -130,7 +177,7 @@ export const AccountDashboard = ({
                 DB連携・他端末アクセス・本部機能
               </Text>
               <Text className="text-white text-center text-xs mt-2">
-                6か月パス 200円から
+                買い切り 500円から
               </Text>
             </Card>
           </TouchableOpacity>
@@ -143,7 +190,7 @@ export const AccountDashboard = ({
           className="py-3"
         >
           <Text className="text-red-500 text-center font-semibold">
-            ログアウト
+            {isGuest ? 'トップへ戻る' : 'ログアウト'}
           </Text>
         </TouchableOpacity>
       </ScrollView>

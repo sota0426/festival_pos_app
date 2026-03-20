@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { FlatList, ScrollView, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSubscription } from '../../contexts/SubscriptionContext';
 import type { PlanType } from '../../types/database';
@@ -53,6 +53,7 @@ const PLANS: PlanCard[] = [
     },
     headline: 'まずは1台で、すぐ始めたい方向け',
     convenienceBody: [
+      '完全広告なし',
       '1台だけで手早く始めたい',
       '費用をかけず当日運用したい',
     ],
@@ -72,7 +73,7 @@ const PLANS: PlanCard[] = [
     key: 'store',
     name: '店舗プラン',
     shortName: '店舗',
-    priceLabel: '200円 / 6か月',
+    priceLabel: '500円 / 買い切り',
     tone: {
       shell: 'bg-white',
       border: 'border-sky-200',
@@ -84,7 +85,7 @@ const PLANS: PlanCard[] = [
     },
     headline: '1店舗を複数人・複数端末で運用したい方向け',
     convenienceBody: [
-      '複数の端末で使用したい',
+      '複数の端末で共同で使用したい',
       'スマホだけでなく、PCでも操作したい',
     ],
     canDo: [
@@ -92,6 +93,7 @@ const PLANS: PlanCard[] = [
       '複数端末で同時運用',
       'Web版での店舗操作',
       'モバイルオーダーなど共有機能',
+      'データ保管期間は最終更新から2年',
     ],
     cannotDo: [
       '本部ダッシュボード',
@@ -101,9 +103,9 @@ const PLANS: PlanCard[] = [
   },
   {
     key: 'org_standard',
-    name: '団体スタンダード10店舗',
+    name: '団体プラン 10店舗',
     shortName: '団体10',
-    priceLabel: '500円 / 6か月',
+    priceLabel: '3,000円 / 買い切り',
     tone: {
       shell: 'bg-white',
       border: 'border-amber-200',
@@ -123,6 +125,7 @@ const PLANS: PlanCard[] = [
       '本部ダッシュボード',
       '全店舗の売上集計と一括CSV出力',
       '各店舗のクラウド保存・複数端末運用',
+      'データ保管期間は最終更新から2年',
     ],
     cannotDo: [
       '10店舗を超える大規模運用',
@@ -130,9 +133,9 @@ const PLANS: PlanCard[] = [
   },
   {
     key: 'org_premium',
-    name: '団体プレミアム30店舗',
+    name: '団体プラン 30店舗',
     shortName: '団体30',
-    priceLabel: '1,000円 / 6か月',
+    priceLabel: '6,000円 / 買い切り',
     tone: {
       shell: 'bg-white',
       border: 'border-rose-200',
@@ -152,6 +155,7 @@ const PLANS: PlanCard[] = [
       '本部ダッシュボード',
       '全店舗の売上集計と一括CSV出力',
       '各店舗のクラウド保存・複数端末運用',
+      'データ保管期間は最終更新から2年',
     ],
     cannotDo: [],
   },
@@ -164,8 +168,11 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
   const initialIndex = Math.max(PLANS.findIndex((plan) => plan.key === currentPlanKey), 0);
   const [selectedIndex, setSelectedIndex] = useState(initialIndex);
   const listRef = useRef<FlatList<PlanCard> | null>(null);
-  const { width } = useWindowDimensions();
-  const cardWidth = Math.max(width - 40, 280);
+  const { width, height } = useWindowDimensions();
+  const footerHeight = 132;
+  const cardWidth = Math.max(width - 24, 300);
+  const cardHeight = Math.max(Math.min(height - footerHeight - 84, 760), 420);
+  const cardBodyHeight = Math.max(cardHeight - 148, 300);
 
   useEffect(() => {
     const nextIndex = Math.max(PLANS.findIndex((plan) => plan.key === currentPlanKey), 0);
@@ -203,10 +210,10 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
         <TouchableOpacity onPress={onBack} activeOpacity={0.7} className="self-start px-1 py-2">
           <Text className="text-sky-700 text-sm font-semibold">戻る</Text>
         </TouchableOpacity>
-        <Text className="text-3xl font-black text-stone-900 mt-1">料金プラン</Text>
       </View>
 
-      <View className="flex-1 justify-center">
+
+      <View className="flex-1 pt-2">
         <FlatList
           ref={listRef}
           data={PLANS}
@@ -222,13 +229,13 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
             const nextIndex = Math.round(event.nativeEvent.contentOffset.x / cardWidth);
             setSelectedIndex(Math.max(0, Math.min(nextIndex, PLANS.length - 1)));
           }}
-          contentContainerStyle={{ paddingHorizontal: 20, paddingVertical: 8 }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 6, paddingBottom: 12 }}
           renderItem={({ item }) => {
             const planIsCurrent = item.key === currentPlanKey;
 
             return (
-              <View style={{ width: cardWidth }}>
-                <View className={`rounded-[28px] border-2 ${item.tone.border} ${item.tone.shell} overflow-hidden`}>
+              <View style={{ width: cardWidth, height: cardHeight }}>
+                <View className={`rounded-[28px] border-2 ${item.tone.border} ${item.tone.shell} overflow-hidden h-full`}>
                   <View className={`${item.tone.accent} px-5 pt-4 pb-3`}>
                     <View className="flex-row items-start justify-between">
                       <View className="flex-1 pr-3">
@@ -244,7 +251,12 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
                     <Text className="text-white text-[34px] font-black mt-3">{item.priceLabel}</Text>
                   </View>
 
-                  <View className="px-4 pt-4 pb-4">
+                  <ScrollView
+                    className="px-4 pt-4"
+                    contentContainerStyle={{ paddingBottom: 28 }}
+                    style={{ maxHeight: cardBodyHeight }}
+                    showsVerticalScrollIndicator
+                  >
                     <View className={`rounded-2xl ${item.tone.accentSoft} px-4 py-3 mb-3`}>
                       <Text className={`text-[11px] font-bold tracking-wide ${item.tone.accentText}`}>向いている使い方</Text>
                       <Text className={`mt-1 text-[15px] leading-5 font-bold ${item.tone.accentText}`}>{item.headline}</Text>
@@ -283,7 +295,7 @@ export const PricingScreen = ({ onBack }: PricingScreenProps) => {
                         ))
                       )}
                     </View>
-                  </View>
+                  </ScrollView>
                 </View>
               </View>
             );

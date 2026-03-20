@@ -41,7 +41,9 @@ export const DEMO_BRANCHES: Branch[] = [
   {
     id: 'demo-1',
     branch_code: 'S001',
-    branch_name: '焼きそば屋',
+    branch_number: 1,
+    display_order: 1,
+    branch_name: 'さくら鉄板',
     password: '',
     sales_target: 50000,
     status: 'active',
@@ -50,7 +52,9 @@ export const DEMO_BRANCHES: Branch[] = [
   {
     id: 'demo-2',
     branch_code: 'S002',
-    branch_name: 'たこ焼き屋',
+    branch_number: 2,
+    display_order: 2,
+    branch_name: 'まるたこ亭',
     password: '',
     sales_target: 40000,
     status: 'active',
@@ -59,7 +63,9 @@ export const DEMO_BRANCHES: Branch[] = [
   {
     id: 'demo-3',
     branch_code: 'S003',
-    branch_name: '焼き鳥屋',
+    branch_number: 3,
+    display_order: 3,
+    branch_name: '炭火いろどり',
     password: '',
     sales_target: 35000,
     status: 'active',
@@ -68,7 +74,9 @@ export const DEMO_BRANCHES: Branch[] = [
   {
     id: 'demo-4',
     branch_code: 'S004',
-    branch_name: 'クレープ屋',
+    branch_number: 4,
+    display_order: 4,
+    branch_name: 'Luna Crepe',
     password: '',
     sales_target: 30000,
     status: 'active',

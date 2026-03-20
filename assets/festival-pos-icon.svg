@@ -1,0 +1,20 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" rx="232" fill="#F8F7F1"/>
+  <g fill="#17000B">
+    <path d="M124 251C144 214 183 188 228 188H796C841 188 880 214 900 251H124Z"/>
+    <rect x="124" y="251" width="776" height="22"/>
+    <path d="M124 273H300V367C300 400.137 273.137 427 240 427H184C150.863 427 124 400.137 124 367V273Z"/>
+    <path d="M424 273H600V367C600 400.137 573.137 427 540 427H484C450.863 427 424 400.137 424 367V273Z"/>
+    <path d="M724 273H900V367C900 400.137 873.137 427 840 427H784C750.863 427 724 400.137 724 367V273Z"/>
+  </g>
+  <text
+    x="512"
+    y="730"
+    text-anchor="middle"
+    font-size="286"
+    font-weight="700"
+    fill="#17000B"
+    font-family="Hiragino Sans, Yu Gothic, Noto Sans CJK JP, sans-serif"
+    letter-spacing="-10"
+  >模擬店</text>
+</svg>

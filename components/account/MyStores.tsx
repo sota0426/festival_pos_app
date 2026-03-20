@@ -11,6 +11,12 @@ import { supabase } from '../../lib/supabase';
 import { getLoginCodesForUser, createLoginCode, regenerateLoginCode } from '../../lib/loginCode';
 import { alertNotify } from '../../lib/alertUtils';
 import {
+  compareBranchesByDisplayOrder,
+  formatBranchDisplayCode,
+  normalizeBranchDisplayOrders,
+  assignBranchNumbersInCurrentOrder,
+} from '../../lib/branchDisplay';
+import {
   clearBranch,
   getBranch,
   getBudgetExpenses,
@@ -89,6 +95,8 @@ const escapeHtml = (value: string): string =>
 
 type CsvImportRow = {
   branch_code: string;
+  branch_number?: number;
+  display_order?: number;
   branch_name: string;
   password: string;
   sales_target: number;
@@ -265,11 +273,11 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
             .order('branch_code', { ascending: true });
           if (error) throw error;
 
-          const remote = (remoteBranches ?? []) as Branch[];
+          const remote = normalizeBranchDisplayOrders((remoteBranches ?? []) as Branch[]);
           const localBranch = await getBranch();
 
           if (remote.length === 0) {
-            setBranches(localBranch ? [localBranch] : []);
+            setBranches(normalizeBranchDisplayOrders(localBranch ? [localBranch] : []));
             setLoginCodes({});
             setShowFreePlanBranchSelectModal(false);
             setLoading(false);
@@ -282,7 +290,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
 
           if (matchedLocal) {
             await saveBranch(matchedLocal);
-            setBranches([matchedLocal]);
+            setBranches(normalizeBranchDisplayOrders([matchedLocal]));
             setLoginCodes({});
             setShowFreePlanBranchSelectModal(false);
             setLoading(false);
@@ -291,7 +299,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
 
           if (remote.length === 1) {
             await migrateBranchDataToLocal(remote[0]);
-            setBranches([remote[0]]);
+            setBranches(normalizeBranchDisplayOrders([remote[0]]));
             setLoginCodes({});
             setShowFreePlanBranchSelectModal(false);
             setLoading(false);
@@ -309,7 +317,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           console.error('Failed to prepare free plan branch selection:', e);
           alertNotify('エラー', '無料プラン用の店舗データ準備に失敗しました');
           const localBranch = await getBranch();
-          setBranches(localBranch ? [localBranch] : []);
+          setBranches(normalizeBranchDisplayOrders(localBranch ? [localBranch] : []));
           setLoginCodes({});
           setLoading(false);
           return;
@@ -317,7 +325,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
       }
 
       const localBranch = await getBranch();
-      setBranches(localBranch ? [localBranch] : []);
+      setBranches(normalizeBranchDisplayOrders(localBranch ? [localBranch] : []));
       setLoginCodes({});
       setLoading(false);
       return;
@@ -338,8 +346,8 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
       }
       const { data: branchData, error: branchError } = await branchQuery;
       if (branchError) throw branchError;
-      resolvedBranches = (branchData ?? []) as Branch[];
-      setBranches(resolvedBranches);
+      resolvedBranches = normalizeBranchDisplayOrders((branchData ?? []) as Branch[]);
+      setBranches(normalizeBranchDisplayOrders(resolvedBranches));
 
       if (isStorePlan) {
         const activeBranches = resolvedBranches.filter((row) => row.status !== 'inactive');
@@ -354,8 +362,10 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           }
           const { error: normalizeError } = await normalizeQuery;
           if (normalizeError) throw normalizeError;
-          resolvedBranches = resolvedBranches.map((row) => ({ ...row, status: 'inactive' }));
-          setBranches(resolvedBranches);
+          resolvedBranches = normalizeBranchDisplayOrders(
+            resolvedBranches.map((row) => ({ ...row, status: 'inactive' as const }))
+          );
+          setBranches(normalizeBranchDisplayOrders(resolvedBranches));
           alertNotify('店舗プラン制限', '店舗プランでは同時に稼働できる店舗は1つまでのため、全店舗を停止状態に変更しました。');
         }
       }
@@ -407,7 +417,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     setMigratingFreePlanBranch(true);
     try {
       await migrateBranchDataToLocal(target);
-      setBranches([target]);
+      setBranches(normalizeBranchDisplayOrders([target]));
       setShowFreePlanBranchSelectModal(false);
       alertNotify('適用完了', `無料プランでは「${target.branch_name}」を利用します`);
     } catch (e) {
@@ -490,7 +500,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     const cardsHtml = rows
       .map(({ branch, code, url, qrUrl }) => `
         <div class="card">
-          <h3>${escapeHtml(branch.branch_code)} ${escapeHtml(branch.branch_name)}</h3>
+          <h3>${escapeHtml(formatBranchDisplayCode(branch))} ${escapeHtml(branch.branch_name)}</h3>
           <p>ログインコード: ${escapeHtml(code ?? '未生成')}</p>
           ${qrUrl ? `<img src="${qrUrl}" alt="QR" />` : '<div class="empty">QR未生成</div>'}
           <div class="url">${escapeHtml(url ?? '')}</div>
@@ -630,12 +640,13 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
 
     setLoading(true);
     try {
-      const nextNumber = branches.length + 1;
-      const branchName = `店舗${nextNumber}`;
+      const branchName = '新しい模擬店';
       const nextBranchCode = await fetchNextBranchCode();
       const newBranch: Branch = {
         id: Crypto.randomUUID(),
         branch_code: nextBranchCode,
+        branch_number: branches.length + 1,
+        display_order: branches.length + 1,
         branch_name: branchName,
         password: '0000',
         sales_target: 0,
@@ -728,11 +739,13 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         if (!storedBranch) throw new Error('ローカル店舗データが見つかりません');
         const nextBranch = {
           ...storedBranch,
+          branch_number: editingBranch.branch_number,
+          display_order: editingBranch.display_order,
           branch_name: nextName,
           status: editingBranchStatus,
         };
         await saveBranch(nextBranch);
-        setBranches([nextBranch]);
+        setBranches(normalizeBranchDisplayOrders([nextBranch]));
       } else {
         if (isStorePlan && editingBranchStatus === 'active') {
           const { error: deactivateError } = await supabase
@@ -756,19 +769,21 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         if (!data) throw new Error('更新対象の店舗が見つかりません');
 
         setBranches((prev) =>
-          prev.map((b) => {
-            if (b.id === editingBranch.id) {
-              return {
-                ...b,
-                branch_name: nextName,
-                status: editingBranchStatus,
-              };
-            }
-            if (isStorePlan && editingBranchStatus === 'active') {
-              return { ...b, status: 'inactive' };
-            }
-            return b;
-          }),
+          normalizeBranchDisplayOrders(
+            prev.map((b) => {
+              if (b.id === editingBranch.id) {
+                return {
+                  ...b,
+                  branch_name: nextName,
+                  status: editingBranchStatus,
+                };
+              }
+              if (isStorePlan && editingBranchStatus === 'active') {
+                return { ...b, status: 'inactive' as const };
+              }
+              return b;
+            })
+          ),
         );
 
         if (
@@ -808,7 +823,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         if (storedBranch?.id === target.id || storedBranch?.branch_code === target.branch_code) {
           await clearBranch();
         }
-        setBranches((prev) => prev.filter((b) => b.id !== target.id));
+        setBranches((prev) => normalizeBranchDisplayOrders(prev.filter((b) => b.id !== target.id)));
       } else {
         const deletedIds = await deleteBranchesWithPermission([target.id]);
         if (deletedIds.length === 0) {
@@ -817,7 +832,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         if (storedBranch?.id === target.id || storedBranch?.branch_code === target.branch_code) {
           await clearBranch();
         }
-        setBranches((prev) => prev.filter((b) => b.id !== target.id));
+        setBranches((prev) => normalizeBranchDisplayOrders(prev.filter((b) => b.id !== target.id)));
       }
 
       setLoginCodes((prev) => {
@@ -908,7 +923,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         await clearBranch();
       }
 
-      setBranches((prev) => prev.filter((b) => !deletedIds.has(b.id)));
+      setBranches((prev) => normalizeBranchDisplayOrders(prev.filter((b) => !deletedIds.has(b.id))));
       setLoginCodes((prev) => {
         const next = { ...prev };
         deletedIds.forEach((id) => {
@@ -1081,7 +1096,14 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         continue;
       }
 
-      const row: CsvImportRow = { branch_code: branchCode, branch_name: branchName, password, sales_target: salesTarget, status };
+      const row: CsvImportRow = {
+        branch_code: branchCode,
+        display_order: branches.length + newRows.length + 1,
+        branch_name: branchName,
+        password,
+        sales_target: salesTarget,
+        status,
+      };
 
       if (branchCode && existingMap.has(branchCode)) {
         updateRows.push({ ...row, existingId: existingMap.get(branchCode)!.id });
@@ -1138,10 +1160,12 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
 
     setImporting(true);
     try {
-      for (const row of importPreview.newRows) {
+      for (const [index, row] of importPreview.newRows.entries()) {
         const branch: Branch = {
           id: Crypto.randomUUID(),
           branch_code: row.branch_code,
+          branch_number: row.branch_number ?? row.display_order ?? branches.length + index + 1,
+          display_order: row.display_order ?? branches.length + index + 1,
           branch_name: row.branch_name,
           password: row.password,
           sales_target: row.sales_target,
@@ -1191,11 +1215,53 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     }
   };
 
+  const moveStore = async (branchId: string, direction: -1 | 1) => {
+    const sorted = normalizeBranchDisplayOrders(branches);
+    const currentIndex = sorted.findIndex((branch) => branch.id === branchId);
+    const swapIndex = currentIndex + direction;
+    if (currentIndex === -1 || swapIndex < 0 || swapIndex >= sorted.length) return;
+
+    const reordered = [...sorted];
+    const [moved] = reordered.splice(currentIndex, 1);
+    reordered.splice(swapIndex, 0, moved);
+    const normalized = assignBranchNumbersInCurrentOrder(reordered);
+    const previous = branches;
+
+    setBranches(normalized);
+
+    if (isFreePlan) {
+      const storedBranch = await getBranch();
+      const updatedCurrent = storedBranch ? normalized.find((branch) => branch.id === storedBranch.id) : null;
+      if (updatedCurrent) {
+        await saveBranch(updatedCurrent);
+      }
+      return;
+    }
+
+    try {
+      for (const branch of normalized) {
+        const { error } = await supabase
+          .from('branches')
+          .update({
+            branch_number: branch.branch_number ?? branch.display_order ?? 1,
+            display_order: branch.display_order ?? 1,
+          })
+          .eq('id', branch.id);
+        if (error) throw error;
+      }
+    } catch (error) {
+      console.error('Failed to reorder stores:', error);
+      setBranches(previous);
+      alertNotify('エラー', '店舗番号の更新に失敗しました');
+    }
+  };
+
   // ─── Render helpers ───
 
   const renderStoreItem = ({ item }: { item: Branch }) => {
     const code = loginCodes[item.id];
     const selected = selectedBranchIds.includes(item.id);
+    const currentIndex = branches.findIndex((branch) => branch.id === item.id);
     return (
       <Card className={`mb-2 px-3 py-2 border ${item.status === 'active' ? 'border-blue-200 bg-white' : 'border-gray-200 bg-gray-100 opacity-60'}`}>
         <View className="flex-row items-start justify-between">
@@ -1214,7 +1280,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           <View className="flex-1 pr-2">
             <View className="flex-row items-center gap-1 mb-1">
               <View className="px-2 py-0.5 rounded bg-blue-100">
-                <Text className="text-[10px] font-bold text-blue-700">{item.branch_code}</Text>
+                <Text className="text-[10px] font-bold text-blue-700">{formatBranchDisplayCode(item)}</Text>
               </View>
               <View className={`px-2 py-0.5 rounded ${item.status === 'active' ? 'bg-green-100' : 'bg-gray-200'}`}>
                 <Text className={`text-[10px] font-bold ${item.status === 'active' ? 'text-green-700' : 'text-gray-500'}`}>
@@ -1258,6 +1324,34 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           {/* Right: action buttons */}
           {!selectDeleteMode && (
             <View className="items-end gap-1">
+              {!isFreePlan && (
+                <View className="flex-row gap-1">
+                  <TouchableOpacity
+                    onPress={() => {
+                      void moveStore(item.id, -1);
+                    }}
+                    disabled={currentIndex <= 0}
+                    className={`px-2 py-1 rounded ${currentIndex <= 0 ? 'bg-gray-100' : 'bg-gray-100'}`}
+                  >
+                    <Text className={`text-xs font-medium ${currentIndex <= 0 ? 'text-gray-300' : 'text-gray-700'}`}>↑</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      void moveStore(item.id, 1);
+                    }}
+                    disabled={currentIndex === -1 || currentIndex >= branches.length - 1}
+                    className="px-2 py-1 bg-gray-100 rounded"
+                  >
+                    <Text
+                      className={`text-xs font-medium ${
+                        currentIndex === -1 || currentIndex >= branches.length - 1 ? 'text-gray-300' : 'text-gray-700'
+                      }`}
+                    >
+                      ↓
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
               <TouchableOpacity
                 onPress={() => {
                   if (item.status === 'inactive') {
@@ -1340,7 +1434,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         </View>
       ) : (
         <FlatList
-          data={branches}
+          data={normalizeBranchDisplayOrders(branches)}
           renderItem={renderStoreItem}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: 16 }}
@@ -1652,7 +1746,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
 
               return (
                 <View key={branch.id} className="mb-4 border border-violet-200 rounded-xl bg-white px-3 py-3">
-                  <Text className="text-violet-900 font-bold">{branch.branch_code} {branch.branch_name}</Text>
+                  <Text className="text-violet-900 font-bold">{formatBranchDisplayCode(branch)} {branch.branch_name}</Text>
                   <Text className="text-gray-600 text-xs mt-0.5">ログインコード: {code ?? '準備中...'}</Text>
                   {qrImageUrl ? (
                     <View className="items-center mt-3">
@@ -1712,7 +1806,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
                 {importPreview.newRows.map((row, i) => (
                   <View key={`new-${i}`} className="flex-row items-center justify-between bg-green-50 rounded-lg px-3 py-2 mb-1">
                     <View>
-                      <Text className="text-gray-900 font-medium">{row.branch_code} {row.branch_name}</Text>
+                      <Text className="text-gray-900 font-medium">{formatBranchDisplayCode(row)} {row.branch_name}</Text>
                     </View>
                     <View className={`px-2 py-0.5 rounded-full ${row.status === 'active' ? 'bg-green-200' : 'bg-gray-200'}`}>
                       <Text className="text-xs">{row.status === 'active' ? '稼働' : '停止'}</Text>
@@ -1730,7 +1824,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
                 {importPreview.updateRows.map((row, i) => (
                   <View key={`upd-${i}`} className="flex-row items-center justify-between bg-blue-50 rounded-lg px-3 py-2 mb-1">
                     <View>
-                      <Text className="text-gray-900 font-medium">{row.branch_code} {row.branch_name}</Text>
+                      <Text className="text-gray-900 font-medium">{formatBranchDisplayCode(row)} {row.branch_name}</Text>
                     </View>
                     <View className={`px-2 py-0.5 rounded-full ${row.status === 'active' ? 'bg-green-200' : 'bg-gray-200'}`}>
                       <Text className="text-xs">{row.status === 'active' ? '稼働' : '停止'}</Text>
@@ -1789,7 +1883,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
                 activeOpacity={0.8}
               >
                 <Text className={`font-semibold ${selected ? 'text-blue-700' : 'text-gray-800'}`}>
-                  {branch.branch_code} {branch.branch_name}
+                  {formatBranchDisplayCode(branch)} {branch.branch_name}
                 </Text>
               </TouchableOpacity>
             );

@@ -4,8 +4,9 @@ import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header, Modal, Button } from '../../../common';
 import { supabase, isSupabaseConfigured } from '../../../../lib/supabase';
-import { getPendingTransactions, getMenus, saveMenus, getRestrictions, savePendingTransactions, verifyAdminPassword } from '../../../../lib/storage';
+import { getPendingTransactions, getMenus, saveMenus, getRestrictions, resetOrderCounter, savePendingTransactions, verifyAdminPassword } from '../../../../lib/storage';
 import { alertConfirm, alertNotify } from '../../../../lib/alertUtils';
+import { formatBranchDisplayTitle } from '../../../../lib/branchDisplay';
 import type { Branch, Transaction, TransactionItem, RestrictionSettings } from '../../../../types/database';
 import { MenuSalesSummary } from './MenuSalesSummary';
 import { handleExportCSV } from './ExportCSV';
@@ -109,64 +110,9 @@ export const SalesHistory = ({
         }));
 
       if (!canSyncToSupabase) {
-        // Add some demo data if no local transactions
-        if (localTrans.length === 0) {
-          const demoTrans: TransactionWithItems[] = [
-            {
-              id: '1',
-              branch_id: branch.id,
-              transaction_code: `${branch.branch_code}-0205-1030-001`,
-              total_amount: 600,
-              payment_method: 'paypay',
-              status: 'completed',
-              fulfillment_status: 'served', 
-              served_at: new Date(Date.now() - 3600000).toISOString(),                  
-              created_at: new Date(Date.now() - 3600000).toISOString(),
-              cancelled_at: null,
-              items: [
-                { id: '1-1', transaction_id: '1', menu_id: '1', menu_name: '焼きそば', quantity: 2, unit_price: 300, subtotal: 600 },
-              ],
-            },
-            {
-              id: '2',
-              branch_id: branch.id,
-              transaction_code: `${branch.branch_code}-0205-1045-002`,
-              total_amount: 500,
-              payment_method: 'voucher',
-              status: 'completed',
-              fulfillment_status: 'served', 
-              served_at: new Date(Date.now() - 3600000).toISOString(),                 
-              created_at: new Date(Date.now() - 1800000).toISOString(),
-              cancelled_at: null,
-              items: [
-                { id: '2-1', transaction_id: '2', menu_id: '1', menu_name: '焼きそば', quantity: 1, unit_price: 300, subtotal: 300 },
-                { id: '2-2', transaction_id: '2', menu_id: '2', menu_name: 'フランクフルト', quantity: 1, unit_price: 200, subtotal: 200 },
-              ],
-            },
-            {
-              id: '3',
-              branch_id: branch.id,
-              transaction_code: `${branch.branch_code}-0205-1100-003`,
-              total_amount: 300,
-              payment_method: 'paypay',
-              status: 'cancelled',
-              fulfillment_status: 'served', 
-              served_at: new Date(Date.now() - 3600000).toISOString(),                 
-              created_at: new Date(Date.now() - 900000).toISOString(),
-              cancelled_at: new Date(Date.now() - 600000).toISOString(),
-              items: [
-                { id: '3-1', transaction_id: '3', menu_id: '1', menu_name: '焼きそば', quantity: 1, unit_price: 300, subtotal: 300 },
-              ],
-            },
-          ];
-          setTransactions([...localTrans, ...demoTrans].sort((a, b) =>
-            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-          ));
-        } else {
-          setTransactions(localTrans.sort((a, b) =>
-            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-          ));
-        }
+        setTransactions(localTrans.sort((a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        ));
         setLoading(false);
         setRefreshing(false);
         return;
@@ -378,6 +324,7 @@ export const SalesHistory = ({
         const pending = await getPendingTransactions();
         const remained = pending.filter((t) => t.branch_id !== branch.id);
         await savePendingTransactions(remained);
+        await resetOrderCounter(branch.id);
       }
 
       setTransactions([]);
@@ -417,7 +364,7 @@ export const SalesHistory = ({
 
       <Header
         title={ view === "menuSales" ? "メニュー別売り上げ" :"販売履歴"}
-        subtitle={`${branch.branch_code} - ${branch.branch_name}`}
+        subtitle={formatBranchDisplayTitle(branch)}
         showBack
         onBack={onBack}
         rightElement={
@@ -437,10 +384,11 @@ export const SalesHistory = ({
             )}
             <TouchableOpacity
               onPress={() => setShowActionsModal(true)}
-              className="w-9 h-9 bg-gray-100 rounded-lg items-center justify-center"
+              className="w-12 h-12 bg-gray-100 rounded-xl items-center justify-center"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               activeOpacity={0.7}
             >
-              <Feather name="menu" size={18} color="#374151" />
+              <Feather name="menu" size={22} color="#374151" />
             </TouchableOpacity>
 
           </View>

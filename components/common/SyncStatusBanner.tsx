@@ -12,12 +12,24 @@ interface SyncStatusBannerProps {
   onSyncNow?: () => Promise<void> | void;
 }
 
+const bannerStateCache: {
+  branchId: string | null;
+  pendingTx: number;
+  online: boolean;
+} = {
+  branchId: null,
+  pendingTx: 0,
+  online: true,
+};
+
 export const SyncStatusBanner = ({ branchId, onSyncNow }: SyncStatusBannerProps) => {
   const { authState } = useAuth();
-  const { isFreePlan } = useSubscription();
+  const { canSync, isFreePlan } = useSubscription();
   const insets = useSafeAreaInsets();
-  const [pendingTx, setPendingTx] = useState(0);
-  const [online, setOnline] = useState(true);
+  const [pendingTx, setPendingTx] = useState(() =>
+    bannerStateCache.branchId === branchId ? bannerStateCache.pendingTx : 0,
+  );
+  const [online, setOnline] = useState(() => bannerStateCache.online);
   const [syncingNow, setSyncingNow] = useState(false);
 
   const syncEnabled = getSyncEnabled();
@@ -29,16 +41,21 @@ export const SyncStatusBanner = ({ branchId, onSyncNow }: SyncStatusBannerProps)
   const refreshPending = useCallback(async () => {
     if (!branchId) return;
     const transactions = await getPendingTransactions();
-    setPendingTx(transactions.filter((t) => t.branch_id === branchId && !t.synced).length);
+    const nextPendingTx = transactions.filter((t) => t.branch_id === branchId && !t.synced).length;
+    bannerStateCache.branchId = branchId;
+    bannerStateCache.pendingTx = nextPendingTx;
+    setPendingTx(nextPendingTx);
   }, [branchId]);
 
   const probeNetwork = useCallback(async () => {
     if (isLocalMode) {
+      bannerStateCache.online = false;
       setOnline(false);
       return;
     }
 
     if (Platform.OS === 'web' && typeof navigator !== 'undefined') {
+      bannerStateCache.online = navigator.onLine;
       setOnline(navigator.onLine);
       return;
     }
@@ -46,6 +63,7 @@ export const SyncStatusBanner = ({ branchId, onSyncNow }: SyncStatusBannerProps)
     const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
     const apikey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
     if (!url || !apikey) {
+      bannerStateCache.online = false;
       setOnline(false);
       return;
     }
@@ -55,8 +73,10 @@ export const SyncStatusBanner = ({ branchId, onSyncNow }: SyncStatusBannerProps)
         method: 'GET',
         headers: { apikey },
       });
+      bannerStateCache.online = !!res;
       setOnline(!!res);
     } catch {
+      bannerStateCache.online = false;
       setOnline(false);
     }
   }, [isLocalMode]);
@@ -105,8 +125,14 @@ export const SyncStatusBanner = ({ branchId, onSyncNow }: SyncStatusBannerProps)
 
   // デモ時は未同期表示を出さない
   if (authState.status === 'demo') return null;
+  // 未ログイン利用では同期バー自体を表示しない
+  if (authState.status === 'guest') return null;
+  // ログインしていない状態では同期バーを表示しない
+  if (authState.status === 'unauthenticated' || authState.status === 'loading') return null;
   // 無料プランは同期対象外のため、未同期表示を出さない
   if (authState.status === 'authenticated' && isFreePlan) return null;
+  // 有料プランまたはログインコードで同期可能な場合のみ表示対象
+  if (authState.status !== 'login_code' && !canSync) return null;
 
   // 表示する必要がない状態（オンライン正常）は何も描画しない
   if (!branchId || style === null) return null;
