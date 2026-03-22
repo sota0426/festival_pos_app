@@ -1,10 +1,12 @@
 import React, { createContext, useContext, useMemo, useEffect, useCallback } from 'react';
-import { Alert, Linking, Platform } from 'react-native';
+import { Alert, Linking as NativeLinking, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ExpoLinking from 'expo-linking';
 import { useAuth } from './AuthContext';
 import { supabase } from '../lib/supabase';
-import { setSyncEnabled } from '../lib/syncMode';
+import { setSyncEnabled, setSyncForced } from '../lib/syncMode';
 import { runCloudRetentionCleanup } from '../lib/cloudRetention';
+import { buildCheckoutStatusUrl } from '../lib/webAppUrl';
 import type { PlanType, SubscriptionStatus } from '../types/database';
 
 type CheckoutPlan = 'store' | 'org_standard' | 'org_premium';
@@ -85,18 +87,21 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
     currentPeriodEndMs !== null && Number.isFinite(currentPeriodEndMs)
       ? currentPeriodEndMs <= Date.now()
       : false;
+  const isTrialing = status === 'trialing' && !isExpiredByDate;
   const isActive = (status === 'active' || status === 'trialing') && !isExpiredByDate;
 
   const isOrgPlan = ORG_PLANS.includes(plan);
-  const canSync = isActive && (plan === 'store' || isOrgPlan);
-  const canAccessHQ = isActive && (plan === 'store' || isOrgPlan);
-  const maxStores = getMaxStoresByPlan(plan);
+  const hasPaidFeatureAccess = isTrialing || (isActive && (plan === 'store' || isOrgPlan));
+  const canSync = hasPaidFeatureAccess;
+  const canAccessHQ = hasPaidFeatureAccess;
+  const maxStores = isTrialing ? 30 : getMaxStoresByPlan(plan);
 
   // ログインコードの場合はSync有効、デモモードでは無効
   const isLoginCode = authState.status === 'login_code';
   const isDemo = authState.status === 'demo';
 
   useEffect(() => {
+    setSyncForced(isLoginCode);
     if (isDemo) {
       setSyncEnabled(false);
     } else {
@@ -219,15 +224,29 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
 
+      const nativeReturnBase =
+        Platform.OS === 'web'
+          ? null
+          : ExpoLinking.createURL('pricing');
+      const successUrl = buildCheckoutStatusUrl(
+        'success',
+        nativeReturnBase ? `${nativeReturnBase}?checkout=success` : null,
+      );
+      const cancelUrl = buildCheckoutStatusUrl(
+        'cancel',
+        nativeReturnBase ? `${nativeReturnBase}?checkout=cancel` : null,
+      );
       const data = await invokeEdgeFunctionWithAuth('create-checkout-session', accessToken, {
         plan: targetPlan,
         accessToken,
+        successUrl,
+        cancelUrl,
       });
       if (data?.url) {
         if (Platform.OS === 'web') {
           window.location.href = data.url;
         } else {
-          await Linking.openURL(data.url);
+          await NativeLinking.openURL(data.url);
         }
       }
     } catch (e) {
@@ -254,7 +273,7 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
         if (Platform.OS === 'web') {
           window.location.href = data.url;
         } else {
-          await Linking.openURL(data.url);
+          await NativeLinking.openURL(data.url);
         }
       }
     } catch (e) {
@@ -273,13 +292,13 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({
       canSync,
       canAccessHQ,
       maxStores,
-      isFreePlan: plan === 'free',
+      isFreePlan: plan === 'free' && !isTrialing,
       isStorePlan: plan === 'store',
       isOrgPlan,
       openCheckout,
       openPortal,
     }),
-    [plan, status, canSync, canAccessHQ, maxStores, isOrgPlan, openCheckout, openPortal]
+    [plan, status, canSync, canAccessHQ, maxStores, isTrialing, isOrgPlan, openCheckout, openPortal]
   );
 
   return (

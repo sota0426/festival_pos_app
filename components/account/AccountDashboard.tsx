@@ -29,13 +29,21 @@ export const AccountDashboard = ({
   onLogout,
 }: AccountDashboardProps) => {
   const { authState, signOut } = useAuth();
-  const { plan, canAccessHQ, isFreePlan } = useSubscription();
+  const { plan, status, canAccessHQ, isFreePlan } = useSubscription();
 
   if (authState.status !== 'authenticated' && authState.status !== 'guest') return null;
 
   const isGuest = authState.status === 'guest';
   const profile = authState.status === 'authenticated' ? authState.profile : null;
   const planInfo = planLabels[plan] ?? planLabels.free;
+  const trialEndLabel =
+    authState.status === 'authenticated' && authState.subscription.current_period_end
+      ? new Date(authState.subscription.current_period_end).toLocaleDateString('ja-JP', {
+          year: 'numeric',
+          month: 'numeric',
+          day: 'numeric',
+        })
+      : null;
 
   const handleLogout = async () => {
     if (isGuest) {
@@ -64,9 +72,14 @@ export const AccountDashboard = ({
           </Text>
           <View className={`mt-2 px-3 py-1 rounded-full ${planInfo.bg}`}>
             <Text className={`text-sm font-semibold ${planInfo.color}`}>
-              {isGuest ? 'ローカル利用モード' : planInfo.label}
+              {isGuest ? 'ローカル利用モード' : status === 'trialing' ? '7日間無料トライアル中' : planInfo.label}
             </Text>
           </View>
+          {!isGuest && status === 'trialing' && trialEndLabel ? (
+            <Text className="mt-2 text-xs text-slate-500">
+              無料期間: {trialEndLabel} まで
+            </Text>
+          ) : null}
           {isGuest && (
             <TouchableOpacity
               onPress={onNavigateToAuth}
@@ -159,7 +172,7 @@ export const AccountDashboard = ({
                   <Text className="text-gray-400">&gt;</Text>
                 </View>
                 <Text className="text-gray-500 text-xs mt-1">
-                  現在: {planInfo.label}
+                  現在: {status === 'trialing' ? `7日間無料トライアル中（${trialEndLabel ?? '期限確認中'}まで）` : planInfo.label}
                 </Text>
               </Card>
             </TouchableOpacity>

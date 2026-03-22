@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../lib/supabase';
+import { allocateRemoteOrderNumber, formatOrderNumber } from '../../lib/orderNumber';
 import { Modal } from '../common';
 import type { Branch, CartItem, Menu, MenuCategory } from '../../types/database';
 
@@ -76,7 +77,7 @@ export const MobileOrderClient = ({ branchId }: MobileOrderClientProps) => {
           { data: menuData, error: menuError },
           { data: categoryData, error: categoryError },
         ] = await Promise.all([
-          supabase.from('branches').select('*').eq('id', branchId).maybeSingle(),
+          supabase.from('branches_public').select('id,branch_name').eq('id', branchId).maybeSingle(),
           supabase
             .from('menus')
             .select('*')
@@ -95,7 +96,10 @@ export const MobileOrderClient = ({ branchId }: MobileOrderClientProps) => {
         if (categoryError) throw categoryError;
         if (!branchData) throw new Error('店舗が見つかりませんでした');
 
-        setBranch(branchData as Branch);
+        setBranch({
+          id: String(branchData.id),
+          branch_name: String(branchData.branch_name),
+        } as Branch);
         setMenus(sortMenus((menuData ?? []) as Menu[]));
         setCategories((categoryData ?? []) as MenuCategory[]);
       } catch (error) {
@@ -267,25 +271,9 @@ export const MobileOrderClient = ({ branchId }: MobileOrderClientProps) => {
     setSubmitting(true);
     try {
       const nowDate = new Date();
-      const todayStart = new Date(nowDate);
-      todayStart.setHours(0, 0, 0, 0);
-      const tomorrowStart = new Date(todayStart);
-      tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-
-      const { data: todayOrders, error: fetchOrderNumberError } = await supabase
-        .from('mobile_order_requests')
-        .select('order_number')
-        .eq('branch_id', branch.id)
-        .gte('created_at', todayStart.toISOString())
-        .lt('created_at', tomorrowStart.toISOString());
-      if (fetchOrderNumberError) throw fetchOrderNumberError;
-
-      const maxOrderNumber = (todayOrders ?? []).reduce((max, row) => {
-        const parsed = Number.parseInt(String(row.order_number ?? ''), 10);
-        return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
-      }, 0);
-      const nextOrderNumber = maxOrderNumber >= 99 ? 1 : maxOrderNumber + 1;
-      const orderNumber = String(nextOrderNumber).padStart(2, '0');
+      const orderNumber = formatOrderNumber(
+        await allocateRemoteOrderNumber(branch.id, 'mobile_order'),
+      );
       const requestId = Crypto.randomUUID();
       const now = nowDate.toISOString();
 
@@ -447,7 +435,7 @@ export const MobileOrderClient = ({ branchId }: MobileOrderClientProps) => {
                     key={history.requestId}
                     onPress={() => setSelectedHistoryOrder(history)}
                     activeOpacity={0.8}
-                    className="bg-white border border-gray-200 rounded-lg px-3 py-2"
+                    className="w-full self-stretch bg-white border border-gray-200 rounded-lg px-3 py-2"
                   >
                     <View className="flex-row items-center justify-between">
                       <Text className="text-gray-800 text-sm font-semibold">#{formatOrderNumber2Digits(history.orderNumber)}</Text>
@@ -589,35 +577,35 @@ export const MobileOrderClient = ({ branchId }: MobileOrderClientProps) => {
         title="注文詳細"
       >
         {selectedHistoryOrder ? (
-          <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
-            <View className="mb-2">
+          <ScrollView style={{ maxHeight: 360, width: '100%' }} contentContainerStyle={{ width: '100%' }} showsVerticalScrollIndicator={false}>
+            <View className="w-full self-stretch mb-2">
               <Text className="text-sm text-gray-500">注文番号</Text>
               <Text className="text-lg font-bold text-gray-900">
                 #{formatOrderNumber2Digits(selectedHistoryOrder.orderNumber)}
               </Text>
             </View>
-            <View className="mb-2">
+            <View className="w-full self-stretch mb-2">
               <Text className="text-sm text-gray-500">状態</Text>
               <Text className="text-base font-semibold text-gray-900">{statusLabel(selectedHistoryOrder.status)}</Text>
             </View>
-            <View className="mb-3">
+            <View className="w-full self-stretch mb-3">
               <Text className="text-sm text-gray-500">申請時刻</Text>
               <Text className="text-sm text-gray-800">{new Date(selectedHistoryOrder.createdAt).toLocaleString()}</Text>
             </View>
-            <View className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 mb-3">
+            <View className="w-full self-stretch rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 mb-3">
               {selectedHistoryOrder.items.map((item, index) => (
                 <Text key={`${selectedHistoryOrder.requestId}-detail-${index}`} className="text-sm text-gray-800 mb-1">
                   ・{item.menuName} x{item.quantity}（{item.subtotal.toLocaleString()}円）
                 </Text>
               ))}
             </View>
-            <Text className="text-base font-bold text-gray-900">
+            <Text className="w-full self-stretch text-base font-bold text-gray-900">
               合計（参考）: {selectedHistoryOrder.totalAmount.toLocaleString()}円
             </Text>
             <TouchableOpacity
               onPress={() => setSelectedHistoryOrder(null)}
               activeOpacity={0.8}
-              className="mt-4 rounded-lg bg-gray-200 py-2.5"
+              className="w-full self-stretch mt-4 rounded-lg bg-gray-200 py-2.5"
             >
               <Text className="text-center text-gray-800 font-semibold">閉じる</Text>
             </TouchableOpacity>

@@ -1344,10 +1344,10 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
     const isBottomInSection = indexInSection === sectionLength - 1;
     const isSelected = selectedMenuIds.has(item.id);
     const openMenuEditor = () => withMenuRestrictionCheck('menu_edit', () => openEditModal(item));
-    const menuInfoWidth = isPhoneLayout ? '44%' : '42%';
-    const stockWidth = isPhoneLayout ? '28%' : '18%';
-    const orderWidth = isPhoneLayout ? '28%' : '16%';
-    const actionWidth = isPhoneLayout ? '0%' : '24%';
+    const menuInfoWidth = isPhoneLayout ? '40%' : '50%';
+    const stockWidth = isPhoneLayout ? '38%' : '20%';
+    const orderWidth = isPhoneLayout ? '30%' : '15%';
+    const actionWidth = isPhoneLayout ? '0%' : '15%';
 
     return (
       <Card
@@ -1369,27 +1369,27 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                   </TouchableOpacity>
                 ) : null}
                 <View className={`px-1.5 py-0.5 rounded-full ${categoryVisual.chipBgClass}`}>
-                  <Text className={`text-xs font-bold ${categoryVisual.chipTextClass}`}>{menuCode}</Text>
+                  <Text className={`text-sm font-bold ${categoryVisual.chipTextClass}`}>{menuCode}</Text>
                 </View>
               </View>
-              <Text className="text-base font-bold text-gray-900" numberOfLines={2}>
+              <Text className="py-1 text-xl font-bold text-gray-900" numberOfLines={2}>
                 {item.menu_name}
               </Text>
-              <Text className="mt-1 text-sm font-bold text-blue-600">
+              <Text className="mt-1 font-bold text-blue-600">
                 ¥{item.price.toLocaleString()}
               </Text>
             </View>
 
             <View className="justify-center border-l border-gray-200 px-2" style={{ width: stockWidth }}>
-              <Text className="text-[11px] font-semibold text-gray-500 text-center">在庫数</Text>
+              <Text className=" font-semibold text-gray-500 text-center">在庫数</Text>
               {item.stock_management ? (
-                <View className="mt-1 flex-row items-center justify-center gap-1">
+                <View className="mt-3 flex-row items-center justify-center gap-1">
                   <TouchableOpacity
                     onPress={() => handleStockChange(item, -1)}
                     activeOpacity={0.7}
-                    className="h-6 w-6 items-center justify-center rounded-md border border-gray-200 bg-white"
+                    className="h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white"
                   >
-                    <Text className="text-xs font-bold text-gray-700">−</Text>
+                    <Text className="font-bold text-gray-700">−</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={openMenuEditor} activeOpacity={0.7} className="px-1 py-0.5">
                     <Text
@@ -1407,14 +1407,14 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                   <TouchableOpacity
                     onPress={() => handleStockChange(item, 1)}
                     activeOpacity={0.7}
-                    className="h-6 w-6 items-center justify-center rounded-md border border-gray-200 bg-white"
+                    className="h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white"
                   >
-                    <Text className="text-xs font-bold text-gray-700">＋</Text>
+                    <Text className="font-bold text-gray-700">＋</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
                 <TouchableOpacity onPress={openMenuEditor} activeOpacity={0.7} className="mt-1 px-1 py-0.5">
-                  <Text className="text-center text-xs font-semibold text-green-700">無制限</Text>
+                  <Text className="mt-2 text-center font-semibold text-green-700">無制限</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -1429,7 +1429,7 @@ export const MenuManagement = ({ branch, onBack }: MenuManagementProps) => {
                   isTopInSection ? 'bg-gray-100 opacity-30' : 'bg-white border border-gray-200'
                 }`}
               >
-                <Text className="text-gray-600 font-bold text-xs">↑</Text>
+                <Text className="text-gray-600 font-bold ">↑</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => moveMenuOrder(item, 'down')}

@@ -54,12 +54,6 @@ export const SyncStatusBanner = ({ branchId, onSyncNow }: SyncStatusBannerProps)
       return;
     }
 
-    if (Platform.OS === 'web' && typeof navigator !== 'undefined') {
-      bannerStateCache.online = navigator.onLine;
-      setOnline(navigator.onLine);
-      return;
-    }
-
     const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
     const apikey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
     if (!url || !apikey) {
@@ -72,9 +66,11 @@ export const SyncStatusBanner = ({ branchId, onSyncNow }: SyncStatusBannerProps)
       const res = await fetch(`${url}/rest/v1/`, {
         method: 'GET',
         headers: { apikey },
+        cache: 'no-store',
       });
-      bannerStateCache.online = !!res;
-      setOnline(!!res);
+      const nextOnline = res.status < 500;
+      bannerStateCache.online = nextOnline;
+      setOnline(nextOnline);
     } catch {
       bannerStateCache.online = false;
       setOnline(false);

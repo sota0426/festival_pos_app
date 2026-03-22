@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import { ActivityIndicator, Modal as RNModal, Platform, Text, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
+import * as Linking from 'expo-linking';
+import * as Crypto from 'expo-crypto';
 
 import './global.css';
 
@@ -95,9 +97,22 @@ function AppContent() {
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [hqBranchInfoReturnScreen, setHqBranchInfoReturnScreen] = useState<'hq_home' | 'hq_dashboard'>('hq_home');
   const [hqBranchInfoFocusBranchId, setHqBranchInfoFocusBranchId] = useState<string | null>(null);
-  const [myStoresReturnScreen, setMyStoresReturnScreen] = useState<'account_dashboard' | 'hq_home'>('account_dashboard');
+  const [myStoresReturnScreen, setMyStoresReturnScreen] = useState<'account_dashboard' | 'hq_home' | 'home'>('account_dashboard');
   const [checkoutProcessing, setCheckoutProcessing] = useState(false);
+  const [pendingCheckoutResult, setPendingCheckoutResult] = useState<'success' | 'cancel' | null>(null);
   const [demoReturnScreen, setDemoReturnScreen] = useState<Screen | null>(null);
+
+  const getCheckoutResultFromUrl = useCallback((url: string | null | undefined): 'success' | 'cancel' | null => {
+    if (!url) return null;
+    try {
+      const parsed = Linking.parse(url);
+      const raw = parsed.queryParams?.checkout;
+      if (raw === 'success' || raw === 'cancel') return raw;
+      return null;
+    } catch {
+      return null;
+    }
+  }, []);
 
   const handleNavigateToAuthEntry = useCallback(() => {
     if (authState.status === 'authenticated') {
@@ -138,6 +153,7 @@ function AppContent() {
 
   const resolveBranchForStore = useCallback(
     async (branch: Branch): Promise<Branch | null> => {
+      if (authState.status === 'demo') return branch;
       if (!isSupabaseConfigured() || isUuid(branch.id)) return branch;
 
       const { data, error } = await supabase
@@ -153,12 +169,13 @@ function AppContent() {
 
       return data;
     },
-    [isUuid],
+    [authState.status, isUuid],
   );
 
   const navigateToStoreEntry = useCallback(async () => {
     if (authState.status === 'authenticated') {
-      if (authState.subscription.plan_type === 'free') {
+      const isTrialing = authState.subscription.status === 'trialing';
+      if (authState.subscription.plan_type === 'free' && !isTrialing) {
         const { data, error } = await supabase
           .from('branches')
           .select('*')
@@ -193,12 +210,9 @@ function AppContent() {
     }
 
     if (authState.status === 'demo') {
-      const demoBranch = DEMO_BRANCHES[0] ?? null;
-      if (demoBranch) {
-        setCurrentBranch(demoBranch);
-        setCurrentScreen('store_home');
-        return;
-      }
+      setMyStoresReturnScreen('home');
+      setCurrentScreen('my_stores');
+      return;
     }
 
     setCurrentScreen('store_login');
@@ -360,10 +374,21 @@ function AppContent() {
               await supabase.from('menus').delete().eq('branch_id', targetBranchId);
               await supabase.from('menu_categories').delete().eq('branch_id', targetBranchId);
 
-              const categoryRows: MenuCategory[] = localCategories.map((c) => ({
-                ...c,
-                branch_id: targetBranchId,
-              }));
+              const branchCategories = localCategories.filter((category) => category.branch_id === targetBranchId);
+              const branchMenus = localMenus.filter((menu) => menu.branch_id === targetBranchId);
+              const categoryIdMap = new Map<string, string>();
+
+              const categoryRows: MenuCategory[] = branchCategories.map((category) => {
+                const nextId = isUuid(category.id) ? category.id : Crypto.randomUUID();
+                if (category.id !== nextId) {
+                  categoryIdMap.set(category.id, nextId);
+                }
+                return {
+                  ...category,
+                  id: nextId,
+                  branch_id: targetBranchId,
+                };
+              });
               if (categoryRows.length > 0) {
                 const { error: categoryUploadError } = await supabase
                   .from('menu_categories')
@@ -373,10 +398,19 @@ function AppContent() {
                 }
               }
 
-              const menuRows: Menu[] = localMenus.map((m) => ({
-                ...m,
-                branch_id: targetBranchId,
-              }));
+              const menuRows: Menu[] = branchMenus.map((menu) => {
+                const normalizedCategoryId = menu.category_id
+                  ? categoryIdMap.get(menu.category_id) ??
+                    (isUuid(menu.category_id) ? menu.category_id : null)
+                  : null;
+
+                return {
+                  ...menu,
+                  id: isUuid(menu.id) ? menu.id : Crypto.randomUUID(),
+                  branch_id: targetBranchId,
+                  category_id: normalizedCategoryId,
+                };
+              });
               if (menuRows.length > 0) {
                 const { error: menuUploadError } = await supabase.from('menus').insert(menuRows);
                 if (menuUploadError) {
@@ -439,6 +473,71 @@ function AppContent() {
     }
   }, [authState.status, handleCheckoutSuccess]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined') return;
+
+    const currentUrl = new URL(window.location.href);
+    const nativeAuthReturnTo = currentUrl.searchParams.get('return_to');
+    const isNativeAuthBridge = currentUrl.searchParams.get('native_auth') === '1';
+    if (isNativeAuthBridge && nativeAuthReturnTo) {
+      const bridgedParams = new URLSearchParams(currentUrl.search);
+      bridgedParams.delete('native_auth');
+      bridgedParams.delete('return_to');
+      const query = bridgedParams.toString();
+      const bridgedUrl = `${nativeAuthReturnTo}${query ? `?${query}` : ''}${currentUrl.hash ?? ''}`;
+      window.location.replace(bridgedUrl);
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const nativeReturnTo = params.get('return_to');
+    const isNativeBridge = params.get('native_app') === '1';
+    if (!isNativeBridge || !nativeReturnTo) return;
+
+    window.location.replace(nativeReturnTo);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    const handleUrl = (url: string | null | undefined) => {
+      const result = getCheckoutResultFromUrl(url);
+      if (result) {
+        setPendingCheckoutResult(result);
+      }
+    };
+
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      handleUrl(url);
+    });
+
+    Linking.getInitialURL().then((url) => {
+      handleUrl(url);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [getCheckoutResultFromUrl]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!pendingCheckoutResult) return;
+    if (authState.status === 'loading') return;
+
+    if (pendingCheckoutResult === 'cancel') {
+      setPendingCheckoutResult(null);
+      setCurrentScreen(authState.status === 'authenticated' ? 'pricing' : 'landing');
+      return;
+    }
+
+    if (authState.status !== 'authenticated') return;
+
+    setPendingCheckoutResult(null);
+    void handleCheckoutSuccess();
+  }, [authState.status, handleCheckoutSuccess, pendingCheckoutResult]);
+
   // ローディング中
   if (authState.status === 'loading') {
     return (
@@ -493,6 +592,7 @@ function AppContent() {
               enterDemo();
               setCurrentScreen('home');
             }}
+            onNavigateToAuth={handleNavigateToAuthEntry}
             onNavigateToGuest={handleNavigateToGuestEntry}
             onNavigateToLoginCode={() => setCurrentScreen('login_code_entry')}
           />
@@ -778,6 +878,7 @@ function AppContent() {
         return (
           <Landing
             onNavigateToDemo={() => setCurrentScreen('home')}
+            onNavigateToAuth={handleNavigateToAuthEntry}
             onNavigateToGuest={handleNavigateToGuestEntry}
             onNavigateToLoginCode={() => setCurrentScreen('login_code_entry')}
           />

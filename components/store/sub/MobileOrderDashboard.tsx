@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, Image, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Image, Platform, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Header } from '../../common';
 import { useAuth } from '../../../contexts/AuthContext';
 import { resolveDemoBranchId } from '../../../data/demoData';
 import { formatBranchDisplayTitle } from '../../../lib/branchDisplay';
+import { copyToClipboard } from '../../../lib/clipboard';
+import { buildMobileOrderUrl } from '../../../lib/webAppUrl';
 import type { Branch } from '../../../types/database';
 
 interface MobileOrderDashboardProps {
@@ -19,10 +21,7 @@ export const MobileOrderDashboard = ({ branch, onBack, onOpenDemoClient }: Mobil
   const isDemo = authState.status === 'demo';
   const demoBranchId = useMemo(() => resolveDemoBranchId(branch), [branch]);
 
-  const mobileOrderUrl =
-    !isDemo && Platform.OS === 'web' && typeof window !== 'undefined'
-      ? `${window.location.origin}${window.location.pathname}?mobile_order=1&branch=${encodeURIComponent(branch.id)}`
-      : null;
+  const mobileOrderUrl = !isDemo ? buildMobileOrderUrl(branch.id) : null;
   const qrImageUrl = mobileOrderUrl
     ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(mobileOrderUrl)}`
     : null;
@@ -91,10 +90,12 @@ export const MobileOrderDashboard = ({ branch, onBack, onOpenDemoClient }: Mobil
               </Text>
               <TouchableOpacity
                 onPress={async () => {
-                  if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                    await navigator.clipboard.writeText(mobileOrderUrl);
+                  try {
+                    await copyToClipboard(mobileOrderUrl);
                     setCopyDone(true);
                     setTimeout(() => setCopyDone(false), 1600);
+                  } catch (error) {
+                    console.error('Failed to copy mobile order url:', error);
                   }
                 }}
                 activeOpacity={0.8}
@@ -106,9 +107,15 @@ export const MobileOrderDashboard = ({ branch, onBack, onOpenDemoClient }: Mobil
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.location.href = mobileOrderUrl;
+                onPress={async () => {
+                  try {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.location.href = mobileOrderUrl;
+                      return;
+                    }
+                    await Linking.openURL(mobileOrderUrl);
+                  } catch (error) {
+                    console.error('Failed to open mobile order url:', error);
                   }
                 }}
                 activeOpacity={0.8}

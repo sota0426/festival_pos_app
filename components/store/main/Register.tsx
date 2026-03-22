@@ -19,6 +19,7 @@ import {
 import { alertNotify, alertConfirm } from '../../../lib/alertUtils';
 import { formatBranchDisplayTitle } from '../../../lib/branchDisplay';
 import { cleanupLegacyNoneCategory } from '../../../lib/menuCategoryCleanup';
+import { allocateRemoteOrderNumber, buildTransactionCode } from '../../../lib/orderNumber';
 import type {
   Branch,
   Menu,
@@ -100,6 +101,7 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
   const { width, height } = useWindowDimensions();
   const isMobile = width < 768;
+  const showTwoColumnMobileOrderCards = Platform.OS === 'web' && width >= 1024;
   const discountModalContentMaxHeight = Math.max(260, Math.floor(height *  0.9));
 
   const scrollRef = useRef<ScrollView>(null)
@@ -574,12 +576,8 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
   };
 
   const generateTransactionCode = async (): Promise<string> => {
-    const now = new Date();
-    const dateStr = `${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}`;
-    const timeStr = `${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`;
     const orderNumber = await getNextOrderNumber(branch.id);
-    const orderStr = orderNumber.toString().padStart(2, '0');
-    return `${branch.branch_code}-${dateStr}${timeStr}-${orderStr}`;
+    return buildTransactionCode(branch.branch_code, orderNumber);
   };
 
   const processPayment = async (
@@ -595,8 +593,15 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
 
     try {
       const transactionId = Crypto.randomUUID();
-      const transactionCode = await generateTransactionCode();
-      const now = new Date().toISOString();
+      const createdAt = new Date();
+      const transactionCode = canSyncToSupabase
+        ? buildTransactionCode(
+            branch.branch_code,
+            await allocateRemoteOrderNumber(branch.id, 'transaction'),
+            createdAt,
+          )
+        : await generateTransactionCode();
+      const now = createdAt.toISOString();
 
       // お釣り計算（UI表示用のみ、DBには保存しない）
       const changeAmount =
@@ -985,10 +990,10 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
   const registerHeaderRight = (
     <TouchableOpacity
       onPress={() => setShowActionsModal(true)}
-      className="w-9 h-9 bg-gray-100 rounded-lg items-center justify-center"
+      className="w-12 h-12 bg-gray-100 rounded-lg items-center justify-center"
       activeOpacity={0.7}
     >
-      <Text className="text-gray-700 text-lg font-bold leading-none">☰</Text>
+      <Text className="text-gray-700 text-2xl font-bold leading-none">☰</Text>
     </TouchableOpacity>
   );
 
@@ -1677,31 +1682,37 @@ const sortMenus = useCallback((list: Menu[]) => sortMenusByDisplay(list), []);
         {mobileOrderRequests.length === 0 ? (
           <Text className="text-gray-500 text-center py-8">現在、注文申請はありません</Text>
         ) : (
-          mobileOrderRequests.map((request) => (
-            <View key={request.id} className="mb-3 border border-violet-200 rounded-xl px-3 py-3 bg-white">
-              <View className="flex-row items-center justify-between mb-2">
-                <Text className="text-violet-800 font-bold">注文番号: {formatOrderNumber2Digits(request.order_number)}</Text>
-                <Text className="text-xs text-gray-500">{new Date(request.created_at).toLocaleTimeString()}</Text>
-              </View>
-              <View className="mb-2">
-                {request.items.map((item) => (
-                  <Text key={item.id} className="text-gray-700 text-sm">
-                    ・{item.menu_name} x{item.quantity}
-                  </Text>
-                ))}
-              </View>
-              <TouchableOpacity
-                onPress={() => importMobileOrderToCart(request.id)}
-                disabled={importingRequestId !== null}
-                className={`rounded-lg py-2 ${importingRequestId !== null ? 'bg-gray-300' : 'bg-violet-600'}`}
-                activeOpacity={0.8}
+          <View className={showTwoColumnMobileOrderCards ? 'flex-row flex-wrap justify-between' : ''}>
+            {mobileOrderRequests.map((request) => (
+              <View
+                key={request.id}
+                className="mb-3 border border-violet-200 rounded-xl px-3 py-3 bg-white"
+                style={showTwoColumnMobileOrderCards ? { width: '48.5%' } : undefined}
               >
-                <Text className="text-white text-center font-semibold">
-                  {importingRequestId === request.id ? '取り込み中...' : 'この注文をカートに取り込む'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ))
+                <View className="flex-row items-center justify-between mb-2">
+                  <Text className="text-violet-800 font-bold">注文番号: {formatOrderNumber2Digits(request.order_number)}</Text>
+                  <Text className="text-xs text-gray-500">{new Date(request.created_at).toLocaleTimeString()}</Text>
+                </View>
+                <View className="mb-2">
+                  {request.items.map((item) => (
+                    <Text key={item.id} className="text-gray-700 text-sm">
+                      ・{item.menu_name} x{item.quantity}
+                    </Text>
+                  ))}
+                </View>
+                <TouchableOpacity
+                  onPress={() => importMobileOrderToCart(request.id)}
+                  disabled={importingRequestId !== null}
+                  className={`rounded-lg py-2 ${importingRequestId !== null ? 'bg-gray-300' : 'bg-violet-600'}`}
+                  activeOpacity={0.8}
+                >
+                  <Text className="text-white text-center font-semibold">
+                    {importingRequestId === request.id ? '取り込み中...' : 'この注文をカートに取り込む'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
         )}
       </ScrollView>
     </Modal>

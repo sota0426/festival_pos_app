@@ -4,7 +4,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
-import * as Clipboard from 'expo-clipboard';
 import { Card, Header, Button, Input, Modal } from '../common';
 import {
   getStoreSettings, saveStoreSettings, saveAdminPassword, verifyAdminPassword,
@@ -29,6 +28,8 @@ import {
 } from '../../lib/recorderRegistry';
 import { alertNotify } from '../../lib/alertUtils';
 import { compareBranchesByDisplayOrder, formatBranchDisplayCode } from '../../lib/branchDisplay';
+import { copyToClipboard } from '../../lib/clipboard';
+import { buildWebLoginUrl } from '../../lib/webAppUrl';
 import type {
   BranchRecorder,
   RecorderRegistrationMode,
@@ -1899,10 +1900,7 @@ export const StoreHome = ({
       onLogout();
   };
 
-  const webLoginUrl =
-    Platform.OS === 'web' && typeof window !== 'undefined' && branchLoginCode
-      ? `${window.location.origin}${window.location.pathname}?login_code=${encodeURIComponent(branchLoginCode)}`
-      : null;
+  const webLoginUrl = buildWebLoginUrl(branchLoginCode);
   const canShowLoginCodeInHeader = authState.status === 'authenticated' || authState.status === 'login_code';
   const topButtonTitle =
     authState.status === 'demo' && hasDemoReturnTarget ? 'ログイン画面に戻る' : 'トップ画面';
@@ -1917,11 +1915,7 @@ export const StoreHome = ({
   const handleCopyLoginCode = async () => {
     if (!branchLoginCode) return;
     try {
-      if (Platform.OS === 'web') {
-        await navigator.clipboard.writeText(branchLoginCode);
-      } else {
-        await Clipboard.setStringAsync(branchLoginCode);
-      }
+      await copyToClipboard(branchLoginCode);
       setCopiedLoginCode(true);
       setTimeout(() => setCopiedLoginCode(false), 1600);
     } catch {
@@ -1932,11 +1926,7 @@ export const StoreHome = ({
   const handleCopyLoginUrl = async () => {
     if (!webLoginUrl) return;
     try {
-      if (Platform.OS === 'web') {
-        await navigator.clipboard.writeText(webLoginUrl);
-      } else {
-        await Clipboard.setStringAsync(webLoginUrl);
-      }
+      await copyToClipboard(webLoginUrl);
       setCopiedLoginUrl(true);
       setTimeout(() => setCopiedLoginUrl(false), 1600);
     } catch {
@@ -1978,14 +1968,14 @@ export const StoreHome = ({
         subtitleElement={
           <View className="mt-1 gap-1">
             <View className="flex-row items-center gap-2">
-              <Text className="text-sm text-gray-500">店舗番号: {formatBranchDisplayCode(branch)}</Text>
+              <Text className=" text-gray-500">店舗番号: {formatBranchDisplayCode(branch)}</Text>
               {canShowLoginCodeInHeader && branchLoginCode ? (
                 <TouchableOpacity
                   onPress={() => setShowLoginCodeModal(true)}
                   activeOpacity={0.8}
                   className="px-2 py-0.5 rounded-full border border-blue-200 bg-blue-50"
                 >
-                  <Text className="text-[11px] font-semibold text-blue-700">共有</Text>
+                  <Text className="font-semibold text-blue-700">共有する</Text>
                 </TouchableOpacity>
               ) : null}
             </View>

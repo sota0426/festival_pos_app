@@ -104,12 +104,23 @@ serve(async (req) => {
       requestBody && typeof requestBody === 'object' && 'plan' in requestBody
         ? requestBody.plan
         : null;
+    const successUrl =
+      requestBody && typeof requestBody === 'object' && 'successUrl' in requestBody
+        ? String(requestBody.successUrl ?? '').trim()
+        : '';
+    const cancelUrl =
+      requestBody && typeof requestBody === 'object' && 'cancelUrl' in requestBody
+        ? String(requestBody.cancelUrl ?? '').trim()
+        : '';
     if (!plan || !(plan in PRICE_ID_BY_PLAN)) {
       return new Response(JSON.stringify({ error: 'Invalid plan' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    const resolvedSuccessUrl = successUrl || `${APP_URL}?checkout=success`;
+    const resolvedCancelUrl = cancelUrl || `${APP_URL}?checkout=cancel`;
+
     const { data: sub } = await supabaseAdmin
       .from('subscriptions')
       .select('stripe_customer_id, plan_type')
@@ -162,8 +173,8 @@ serve(async (req) => {
         mode: 'payment',
         'payment_method_types[0]': 'card',
         'payment_method_types[1]': 'paypay',
-        success_url: `${APP_URL}?checkout=success`,
-        cancel_url: `${APP_URL}?checkout=cancel`,
+        success_url: resolvedSuccessUrl,
+        cancel_url: resolvedCancelUrl,
         'metadata[supabase_user_id]': resolvedUserId,
         'metadata[plan]': targetPlan,
         'metadata[price_mode]': shouldUsePremiumUpgradePrice ? 'upgrade' : 'standard',

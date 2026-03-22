@@ -48,7 +48,7 @@ serve(async (req) => {
     // ログインコード検証
     const { data: loginCode, error: codeError } = await supabaseAdmin
       .from('login_codes')
-      .select('*, subscriptions!inner(status)')
+      .select('id, branch_id, subscription_id')
       .eq('code', upperCode)
       .eq('is_active', true)
       .single();
@@ -64,7 +64,23 @@ serve(async (req) => {
     }
 
     // サブスクリプション状態確認
-    const subStatus = loginCode.subscriptions?.status;
+    const { data: subscription, error: subError } = await supabaseAdmin
+      .from('subscriptions')
+      .select('status')
+      .eq('id', loginCode.subscription_id)
+      .single();
+
+    if (subError || !subscription) {
+      if (subError) {
+        console.error('subscriptions lookup failed:', subError);
+      }
+      return new Response(
+        JSON.stringify({ valid: false, error: 'subscription lookup failed' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const subStatus = subscription.status;
     if (subStatus !== 'active' && subStatus !== 'trialing') {
       return new Response(
         JSON.stringify({ valid: false }),

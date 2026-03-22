@@ -4,12 +4,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 interface LandingProps {
   onNavigateToDemo: () => void;
+  onNavigateToAuth: () => void;
   onNavigateToGuest: () => void;
   onNavigateToLoginCode: () => void;
 }
 
 export const Landing = ({
   onNavigateToDemo,
+  onNavigateToAuth,
   onNavigateToGuest,
   onNavigateToLoginCode,
 }: LandingProps) => {
@@ -37,6 +39,8 @@ export const Landing = ({
         </View>
 
         <View className="mt-6 gap-3">
+
+
           <TouchableOpacity onPress={onNavigateToDemo} activeOpacity={0.8}>
             <View className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 px-4 py-4">
               <View className="flex-row items-center justify-between">
@@ -68,7 +72,7 @@ export const Landing = ({
                     <Text className="text-[11px] font-bold tracking-[0.3px] text-amber-700">
                       使い始めたい場合はこれ
                     </Text>
-                    <Text className="text-amber-950 text-lg font-bold">利用画面に進む</Text>
+                    <Text className="text-amber-950 text-lg font-bold">ログインせず利用画面に進む</Text>
                     <Text className="text-amber-800 text-xs mt-0.5">まずは無料プランで端末内にローカル保存</Text>
                   </View>
                 </View>
@@ -76,6 +80,27 @@ export const Landing = ({
               </View>
             </View>
           </TouchableOpacity>
+
+          <TouchableOpacity onPress={onNavigateToAuth} activeOpacity={0.8}>
+            <View className="rounded-2xl border-2 border-sky-300 bg-sky-50 px-4 py-4">
+              <View className="flex-row items-center justify-between">
+                <View className="flex-row items-center gap-3 flex-1 pr-2">
+                  <View className="w-10 h-10 rounded-xl bg-sky-500 items-center justify-center">
+                    <Text className="text-white font-bold">7日</Text>
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-[11px] font-bold tracking-[0.3px] text-sky-700">
+                      同期や共有機能も試したい場合はこれ
+                    </Text>
+                    <Text className="text-sky-950 text-lg font-bold mt-0.5">ログインして7日間無料体験する</Text>
+                    <Text className="text-sky-700 text-xs mt-0.5">初回7日間は全機能を無料で利用できます</Text>
+                  </View>
+                </View>
+                <Text className="text-sky-700 font-bold text-base">{'>'}</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+
 
           <TouchableOpacity onPress={onNavigateToLoginCode} activeOpacity={0.8}>
             <View className="rounded-2xl border border-slate-300 bg-slate-200/70 px-4 py-4">

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, ScrollView, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { Alert, FlatList, Platform, ScrollView, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSubscription } from '../../contexts/SubscriptionContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -164,7 +164,7 @@ const PLANS: PlanCard[] = [
 ];
 
 export const PricingScreen = ({ onBack, onNavigateToAuth }: PricingScreenProps) => {
-  const { plan: currentPlan, openCheckout } = useSubscription();
+  const { plan: currentPlan, status, openCheckout } = useSubscription();
   const { authState } = useAuth();
   const [loading, setLoading] = useState<PaidPlanKey | null>(null);
   const currentPlanKey = normalizePlanKey(currentPlan);
@@ -172,10 +172,20 @@ export const PricingScreen = ({ onBack, onNavigateToAuth }: PricingScreenProps) 
   const [selectedIndex, setSelectedIndex] = useState(initialIndex);
   const listRef = useRef<FlatList<PlanCard> | null>(null);
   const { width, height } = useWindowDimensions();
+  const isWeb = typeof window !== 'undefined';
+  const isNativeIOS = Platform.OS === 'ios';
   const footerHeight = 132;
   const cardWidth = Math.max(width - 24, 300);
   const cardHeight = Math.max(Math.min(height - footerHeight - 84, 760), 420);
   const cardBodyHeight = Math.max(cardHeight - 148, 300);
+  const trialEndLabel =
+    authState.status === 'authenticated' && authState.subscription.current_period_end
+      ? new Date(authState.subscription.current_period_end).toLocaleDateString('ja-JP', {
+          year: 'numeric',
+          month: 'numeric',
+          day: 'numeric',
+        })
+      : null;
 
   useEffect(() => {
     const nextIndex = Math.max(PLANS.findIndex((plan) => plan.key === currentPlanKey), 0);
@@ -188,17 +198,35 @@ export const PricingScreen = ({ onBack, onNavigateToAuth }: PricingScreenProps) 
   const selectedPlan = PLANS[selectedIndex] ?? PLANS[0];
   const isCurrent = selectedPlan.key === currentPlanKey;
 
+  const updateSelectedIndexFromOffset = (offsetX: number) => {
+    const nextIndex = Math.round(offsetX / cardWidth);
+    setSelectedIndex(Math.max(0, Math.min(nextIndex, PLANS.length - 1)));
+  };
+
+  const scrollToPlan = (index: number) => {
+    const safeIndex = Math.max(0, Math.min(index, PLANS.length - 1));
+    setSelectedIndex(safeIndex);
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToIndex({ index: safeIndex, animated: true });
+    });
+  };
+
   const actionLabel = useMemo(() => {
+    if (status === 'trialing') {
+      if (selectedPlan.key === 'free') return '7日間無料トライアル中';
+      if (isNativeIOS) return 'Safariで申込ページを開く';
+    }
     if (selectedPlan.key === 'free') {
       return currentPlanKey === 'free' ? '現在のプランです' : '無料プランを利用中';
     }
     if (isCurrent) return '現在のプランです';
+    if (isNativeIOS) return 'Safariで申込ページを開く';
     if (currentPlanKey === 'org_standard' && selectedPlan.key === 'org_premium') {
       return '差額でこのプランにアップグレード';
     }
     if (currentPlanKey === 'free') return 'このプランに変更';
     return 'このプランを購入';
-  }, [currentPlanKey, isCurrent, selectedPlan.key]);
+  }, [currentPlanKey, isCurrent, isNativeIOS, selectedPlan.key, status]);
 
   const handleSelectPlan = async () => {
     if (selectedPlan.key === 'free' || isCurrent) return;
@@ -234,6 +262,15 @@ export const PricingScreen = ({ onBack, onNavigateToAuth }: PricingScreenProps) 
 
 
       <View className="flex-1 pt-2">
+        {isWeb ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 8, gap: 8 }}
+          >
+          </ScrollView>
+        ) : null}
+
         <FlatList
           ref={listRef}
           data={PLANS}
@@ -245,10 +282,16 @@ export const PricingScreen = ({ onBack, onNavigateToAuth }: PricingScreenProps) 
           snapToAlignment="center"
           showsHorizontalScrollIndicator={false}
           getItemLayout={(_, index) => ({ length: cardWidth, offset: cardWidth * index, index })}
-          onMomentumScrollEnd={(event) => {
-            const nextIndex = Math.round(event.nativeEvent.contentOffset.x / cardWidth);
-            setSelectedIndex(Math.max(0, Math.min(nextIndex, PLANS.length - 1)));
+          onScroll={(event) => {
+            updateSelectedIndexFromOffset(event.nativeEvent.contentOffset.x);
           }}
+          onScrollEndDrag={(event) => {
+            updateSelectedIndexFromOffset(event.nativeEvent.contentOffset.x);
+          }}
+          onMomentumScrollEnd={(event) => {
+            updateSelectedIndexFromOffset(event.nativeEvent.contentOffset.x);
+          }}
+          scrollEventThrottle={16}
           contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 6, paddingBottom: 12 }}
           renderItem={({ item }) => {
             const planIsCurrent = item.key === currentPlanKey;
@@ -339,17 +382,29 @@ export const PricingScreen = ({ onBack, onNavigateToAuth }: PricingScreenProps) 
       <View className="border-t border-stone-200 bg-white px-5 pt-3 pb-4">
         <Text className="text-xs font-bold text-stone-500">選択中</Text>
         <Text className="text-base font-bold text-stone-900 mt-1">{selectedPlan.name}</Text>
+        {status === 'trialing' ? (
+          <View className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <Text className="text-sm font-bold text-emerald-900">初回7日間は全機能を無料で利用できます</Text>
+            <Text className="mt-1 text-xs leading-5 text-emerald-800">
+              {trialEndLabel ? `${trialEndLabel} まで店舗プラン相当で利用できます。` : 'トライアル終了後の継続利用はWeb版からお申し込みください。'}
+            </Text>
+          </View>
+        ) : null}
         <TouchableOpacity
           onPress={handleSelectPlan}
           disabled={selectedPlan.key === 'free' || isCurrent || loading !== null}
           activeOpacity={0.85}
           className={`mt-3 rounded-2xl py-3.5 items-center ${
-            selectedPlan.key === 'free' || isCurrent || loading !== null ? 'bg-stone-200' : selectedPlan.tone.button
+            selectedPlan.key === 'free' || isCurrent || loading !== null
+              ? 'bg-stone-200'
+              : selectedPlan.tone.button
           }`}
         >
           <Text
             className={`font-bold text-base ${
-              selectedPlan.key === 'free' || isCurrent || loading !== null ? 'text-stone-500' : selectedPlan.tone.buttonText
+              selectedPlan.key === 'free' || isCurrent || loading !== null
+                ? 'text-stone-500'
+                : selectedPlan.tone.buttonText
             }`}
           >
             {loading === selectedPlan.key ? '処理中...' : actionLabel}

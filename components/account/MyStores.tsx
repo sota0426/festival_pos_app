@@ -1,4 +1,4 @@
-import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, FlatList, RefreshControl, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, FlatList, RefreshControl, ActivityIndicator, Image, LayoutAnimation, UIManager } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useEffect, useCallback } from 'react';
 import * as Crypto from 'expo-crypto';
@@ -10,12 +10,14 @@ import { useSubscription } from '../../contexts/SubscriptionContext';
 import { supabase } from '../../lib/supabase';
 import { getLoginCodesForUser, createLoginCode, regenerateLoginCode } from '../../lib/loginCode';
 import { alertNotify } from '../../lib/alertUtils';
+import { copyToClipboard } from '../../lib/clipboard';
 import {
   compareBranchesByDisplayOrder,
   formatBranchDisplayCode,
   normalizeBranchDisplayOrders,
   assignBranchNumbersInCurrentOrder,
 } from '../../lib/branchDisplay';
+import { buildWebLoginUrl } from '../../lib/webAppUrl';
 import {
   clearBranch,
   getBranch,
@@ -35,6 +37,7 @@ import {
 } from '../../lib/storage';
 import { Button, Card, Input, Modal, Header } from '../common';
 import type { Branch, LoginCode } from '../../types/database';
+import { DEMO_BRANCHES } from '../../data/demoData';
 
 // ─── CSV utilities ───
 
@@ -123,7 +126,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loginCodes, setLoginCodes] = useState<Record<string, LoginCode>>({});
   const [loading, setLoading] = useState(true);
-  const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
   const [editingBranchName, setEditingBranchName] = useState('');
   const [editingBranchStatus, setEditingBranchStatus] = useState<'active' | 'inactive'>('active');
@@ -145,10 +147,19 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   const [showBulkLoginQrModal, setShowBulkLoginQrModal] = useState(false);
   const [copiedLoginUrlBranchId, setCopiedLoginUrlBranchId] = useState<string | null>(null);
   const [copiedAllLoginUrls, setCopiedAllLoginUrls] = useState(false);
+  const [sharingBranch, setSharingBranch] = useState<Branch | null>(null);
+  const [copiedShareCode, setCopiedShareCode] = useState(false);
+  const [copiedShareUrl, setCopiedShareUrl] = useState(false);
   const [showFreePlanBranchSelectModal, setShowFreePlanBranchSelectModal] = useState(false);
   const [freePlanSelectableBranches, setFreePlanSelectableBranches] = useState<Branch[]>([]);
   const [selectedFreePlanBranchId, setSelectedFreePlanBranchId] = useState<string | null>(null);
   const [migratingFreePlanBranch, setMigratingFreePlanBranch] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
 
   const userId = authState.status === 'authenticated' ? authState.user.id : null;
   const subscriptionId =
@@ -263,6 +274,13 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   // ─── Data loading ───
 
   const loadData = useCallback(async () => {
+    if (authState.status === 'demo') {
+      setBranches(normalizeBranchDisplayOrders(DEMO_BRANCHES));
+      setLoginCodes({});
+      setLoading(false);
+      return;
+    }
+
     if (isFreePlan) {
       if (authState.status === 'authenticated' && userId) {
         try {
@@ -436,19 +454,55 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   };
 
   const buildLoginCodeUrl = (code: string): string | null => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
-    return `${window.location.origin}${window.location.pathname}?login_code=${encodeURIComponent(code)}`;
+    return buildWebLoginUrl(code);
+  };
+
+  const handleOpenShare = (branch: Branch) => {
+    setSharingBranch(branch);
+    setCopiedShareCode(false);
+    setCopiedShareUrl(false);
+  };
+
+  const handleCloseShare = () => {
+    setSharingBranch(null);
+    setCopiedShareCode(false);
+    setCopiedShareUrl(false);
   };
 
   const handleCopyLoginUrl = async (branchId: string, code: string) => {
     const url = buildLoginCodeUrl(code);
     if (!url) return;
     try {
-      await navigator.clipboard.writeText(url);
+      await copyToClipboard(url);
       setCopiedLoginUrlBranchId(branchId);
       setTimeout(() => setCopiedLoginUrlBranchId(null), 1800);
     } catch {
       alertNotify('エラー', 'URLのコピーに失敗しました');
+    }
+  };
+
+  const handleCopyShareCode = async () => {
+    const code = sharingBranch ? loginCodes[sharingBranch.id]?.code ?? null : null;
+    if (!code) return;
+    try {
+      await copyToClipboard(code);
+      setCopiedShareCode(true);
+      setTimeout(() => setCopiedShareCode(false), 1800);
+    } catch {
+      alertNotify('エラー', 'ログインコードのコピーに失敗しました');
+    }
+  };
+
+  const handleCopyShareUrl = async () => {
+    const code = sharingBranch ? loginCodes[sharingBranch.id]?.code ?? null : null;
+    const url = code ? buildLoginCodeUrl(code) : null;
+    if (!url) return;
+    try {
+      await copyToClipboard(url);
+      setCopiedShareUrl(true);
+      setTimeout(() => setCopiedShareUrl(false), 1800);
+    } catch {
+      alertNotify('エラー', 'ログインURLのコピーに失敗しました');
     }
   };
 
@@ -463,12 +517,8 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   };
 
   const handleCopyAllLoginUrls = async () => {
-    if (Platform.OS !== 'web') {
-      alertNotify('未対応', 'この機能はWeb版で利用できます');
-      return;
-    }
     try {
-      await navigator.clipboard.writeText(buildBulkLoginUrlText());
+      await copyToClipboard(buildBulkLoginUrlText());
       setCopiedAllLoginUrls(true);
       setTimeout(() => setCopiedAllLoginUrls(false), 1800);
     } catch {
@@ -554,18 +604,6 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
   };
 
   // ─── Login code actions ───
-
-  const handleCopyCode = async (code: string) => {
-    try {
-      if (Platform.OS === 'web') {
-        await navigator.clipboard.writeText(code);
-      }
-      setCopiedCode(code);
-      setTimeout(() => setCopiedCode(null), 2000);
-    } catch {
-      alertNotify('エラー', 'コピーに失敗しました');
-    }
-  };
 
   const handleRegenerateCode = async (loginCode: LoginCode) => {
     if (!userId) return;
@@ -1229,6 +1267,9 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     const normalized = assignBranchNumbersInCurrentOrder(reordered);
     const previous = branches;
 
+    if (Platform.OS !== 'web') {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    }
     setBranches(normalized);
 
     if (isFreePlan) {
@@ -1265,12 +1306,12 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
     const selected = selectedBranchIds.includes(item.id);
     const currentIndex = branches.findIndex((branch) => branch.id === item.id);
     return (
-      <Card className={`mb-2 px-3 py-2 border ${item.status === 'active' ? 'border-blue-200 bg-white' : 'border-gray-200 bg-gray-100 opacity-60'}`}>
-        <View className="flex-row items-start justify-between">
+      <Card className={`mb-3 border px-4 py-4 ${item.status === 'active' ? 'border-blue-200 bg-white' : 'border-gray-200 bg-gray-100 opacity-60'}`}>
+        <View className="flex-row items-stretch justify-between">
           {selectDeleteMode && (
             <TouchableOpacity
               onPress={() => toggleBranchSelection(item.id)}
-              className={`mt-1 mr-2 w-6 h-6 rounded-md border items-center justify-center ${
+              className={`mr-3 mt-1 h-6 w-6 rounded-md border items-center justify-center ${
                 selected ? 'bg-red-500 border-red-500' : 'bg-white border-gray-300'
               }`}
               activeOpacity={0.8}
@@ -1278,107 +1319,98 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
               <Text className={`text-xs font-bold ${selected ? 'text-white' : 'text-gray-300'}`}>✓</Text>
             </TouchableOpacity>
           )}
-          {/* Left: store info */}
-          <View className="flex-1 pr-2">
-            <View className="flex-row items-center gap-1 mb-1">
-              <View className="px-2 py-0.5 rounded bg-blue-100">
-                <Text className="text-[10px] font-bold text-blue-700">{formatBranchDisplayCode(item)}</Text>
+          <View className="flex-1">
+            <View className="flex-row items-center gap-2">
+              <View className="rounded-md bg-blue-100 px-2.5 py-1">
+                <Text className="text-[11px] font-bold text-blue-700">{formatBranchDisplayCode(item)}</Text>
               </View>
               <TouchableOpacity
                 onPress={() => handleOpenRename(item)}
                 activeOpacity={0.8}
-                className={`px-2 py-0.5 rounded ${item.status === 'active' ? 'bg-green-100' : 'bg-pink-100'}`}
+                className={`rounded-md px-2.5 py-1 ${item.status === 'active' ? 'bg-green-100' : 'bg-pink-100'}`}
               >
-                <Text className={`text-[10px] font-bold ${item.status === 'active' ? 'text-green-700' : 'text-pink-600'}`}>
+                <Text className={`text-[11px] font-bold ${item.status === 'active' ? 'text-green-700' : 'text-pink-600'}`}>
                   {item.status === 'active' ? '稼働中' : '停止中'}
                 </Text>
               </TouchableOpacity>
             </View>
-            <Text className="text-base font-semibold text-gray-900" numberOfLines={1}>
+            <Text className="mt-3 text-lg font-bold text-gray-900" numberOfLines={1}>
               {item.branch_name}
             </Text>
-            {/* Login code inline */}
-            {!isFreePlan && (
-              <View className="flex-row items-center gap-2 mt-1.5">
-                <Text className="text-gray-400 text-[10px]">ログインコード:</Text>
-                {code ? (
-                  <View className="flex-row items-center gap-1">
-                    <Text className="text-xs font-bold tracking-[3px] text-gray-700">{code.code}</Text>
-                    <TouchableOpacity
-                      onPress={() => handleCopyCode(code.code)}
-                      className="px-1.5 py-0.5 bg-blue-50 rounded"
-                    >
-                      <Text className="text-blue-600 text-[10px] font-medium">
-                        {copiedCode === code.code ? '済' : 'コピー'}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => handleRegenerateCode(code)}
-                      className="px-1.5 py-0.5 bg-gray-100 rounded"
-                    >
-                      <Text className="text-gray-500 text-[10px] font-medium">再生成</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <View className="px-2 py-0.5 bg-gray-100 rounded">
-                    <Text className="text-gray-500 text-[10px] font-medium">準備中...</Text>
-                  </View>
-                )}
-              </View>
-            )}
-          </View>
-          {/* Right: action buttons */}
-          {!selectDeleteMode && (
-            <View className="items-end gap-1">
-              {!isFreePlan && (
-                <View className="flex-row gap-1">
+
+            {!selectDeleteMode ? (
+              <View className="mt-4 flex-row items-center gap-2 pr-12">
+                {!isFreePlan ? (
                   <TouchableOpacity
-                    onPress={() => {
-                      void moveStore(item.id, -1);
-                    }}
-                    disabled={currentIndex <= 0}
-                    className={`px-2 py-1 rounded ${currentIndex <= 0 ? 'bg-gray-100' : 'bg-gray-100'}`}
+                    onPress={() => handleOpenShare(item)}
+                    activeOpacity={0.8}
+                    className={`min-h-[42px] rounded-xl border px-4 justify-center ${
+                      code ? 'border-sky-200 bg-sky-50' : 'border-gray-200 bg-gray-100'
+                    }`}
                   >
-                    <Text className={`text-xs font-medium ${currentIndex <= 0 ? 'text-gray-300' : 'text-gray-700'}`}>↑</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      void moveStore(item.id, 1);
-                    }}
-                    disabled={currentIndex === -1 || currentIndex >= branches.length - 1}
-                    className="px-2 py-1 bg-gray-100 rounded"
-                  >
-                    <Text
-                      className={`text-xs font-medium ${
-                        currentIndex === -1 || currentIndex >= branches.length - 1 ? 'text-gray-300' : 'text-gray-700'
-                      }`}
-                    >
-                      ↓
+                    <Text className={`text-sm font-semibold ${code ? 'text-sky-700' : 'text-gray-500'}`}>
+                      {code ? '共有' : '準備中...'}
                     </Text>
                   </TouchableOpacity>
-                </View>
-              )}
+                ) : null}
+
+                <TouchableOpacity
+                  onPress={() => handleOpenRename(item)}
+                  activeOpacity={0.8}
+                  className="min-h-[42px] rounded-xl bg-blue-50 border border-sky-200 px-4 justify-center"
+                >
+                  <Text className="text-sm font-semibold text-blue-600">店舗設定</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    if (item.status === 'inactive') {
+                      alertNotify('停止中の店舗', '停止中の店舗には入れません。店舗設定で「稼働中」に変更してください。');
+                      return;
+                    }
+                    onEnterStore(item);
+                  }}
+                  activeOpacity={0.8}
+                  className={`min-h-[42px] rounded-xl px-4 justify-center ${item.status === 'active' ? 'bg-green-500' : 'bg-gray-400'}`}
+                >
+                  <Text className="text-sm font-bold text-white">店舗に入る</Text>
+                </TouchableOpacity>
+
+
+              </View>
+            ) : null}
+          </View>
+
+          {!selectDeleteMode && !isFreePlan ? (
+            <View className="ml-3 justify-center gap-2 self-stretch">
               <TouchableOpacity
                 onPress={() => {
-                  if (item.status === 'inactive') {
-                    alertNotify('停止中の店舗', '停止中の店舗には入れません。店舗設定で「稼働中」に変更してください。');
-                    return;
-                  }
-                  onEnterStore(item);
+                  void moveStore(item.id, -1);
                 }}
+                disabled={currentIndex <= 0}
                 activeOpacity={0.8}
-                className={`px-3 py-1.5 rounded ${item.status === 'active' ? 'bg-green-500' : 'bg-gray-400'}`}
+                className="h-10 w-10 items-center justify-center rounded-xl bg-gray-100"
               >
-                <Text className="text-white text-xs font-semibold">店舗に入る</Text>
+                <Text className={`text-sm font-bold ${currentIndex <= 0 ? 'text-gray-300' : 'text-gray-700'}`}>↑</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => handleOpenRename(item)}
-                className="px-2 py-1 bg-blue-50 rounded"
+                onPress={() => {
+                  void moveStore(item.id, 1);
+                }}
+                disabled={currentIndex === -1 || currentIndex >= branches.length - 1}
+                activeOpacity={0.8}
+                className="h-10 w-10 items-center justify-center rounded-xl bg-gray-100"
               >
-                <Text className="text-blue-600 text-xs font-medium">店舗設定</Text>
+                <Text
+                  className={`text-sm font-bold ${
+                    currentIndex === -1 || currentIndex >= branches.length - 1 ? 'text-gray-300' : 'text-gray-700'
+                  }`}
+                >
+                  ↓
+                </Text>
               </TouchableOpacity>
             </View>
-          )}
+          ) : null}
         </View>
       </Card>
     );
@@ -1396,15 +1428,15 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
         rightElement={
           <View className="flex-row gap-1">
             {!isFreePlan && (
-              <Button title="+ 店舗追加" onPress={handleCreateStore} size="sm" />
+              <Button title="+ 店舗追加" onPress={handleCreateStore} size="md" />
             )}
             {!isFreePlan && (
               <TouchableOpacity
                 onPress={() => setShowActionsModal(true)}
-                className="w-9 h-9 bg-gray-100 rounded-lg items-center justify-center"
+                className="ml-1 w-12 h-12 bg-gray-200 rounded-lg items-center justify-center"
                 activeOpacity={0.7}
               >
-                <Text className="text-gray-700 text-lg font-bold leading-none">☰</Text>
+                <Text className="text-gray-700 text-2xl font-bold leading-none">☰</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1479,7 +1511,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
           <View className="flex-row gap-2">
             <TouchableOpacity
               onPress={() => setEditingBranchStatus('active')}
-              className={`flex-1 px-3 py-2 rounded-lg border ${
+              className={`flex-1 px-3 py-3 rounded-lg border ${
                 editingBranchStatus === 'active' ? 'bg-green-500 border-green-500' : 'bg-white border-gray-300'
               }`}
               activeOpacity={0.8}
@@ -1490,7 +1522,7 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setEditingBranchStatus('inactive')}
-              className={`flex-1 px-3 py-2 rounded-lg border ${
+              className={`flex-1 px-3 py-3 rounded-lg border ${
                 editingBranchStatus === 'inactive' ? 'bg-gray-600 border-gray-600' : 'bg-white border-gray-300'
               }`}
               activeOpacity={0.8}
@@ -1508,7 +1540,8 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
             </View>
           )}
         </View>
-        <View className="flex-row gap-3 mt-3">
+
+        <View className="flex-row gap-3 mt-10">
           <View className="flex-1">
             <Button title="キャンセル" onPress={handleCloseRename} variant="secondary" />
           </View>
@@ -1584,6 +1617,77 @@ export const MyStores = ({ onBack, onEnterStore }: MyStoresProps) => {
               title="一括削除へ進む"
               variant="danger"
               onPress={handleConfirmBulkDeleteWithPassword}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={!!sharingBranch}
+        onClose={handleCloseShare}
+        title="共有情報"
+      >
+        <View className="py-1">
+          <Text className="text-gray-700 text-sm font-semibold mb-1">スマホ用ログインコード</Text>
+          <View className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3">
+            <Text className="text-2xl font-bold tracking-[0.22em] text-blue-900 text-center">
+              {sharingBranch ? (loginCodes[sharingBranch.id]?.code ?? '------') : '------'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => { void handleCopyShareCode(); }}
+            activeOpacity={0.8}
+            className="mt-4 rounded-lg bg-blue-600 py-4"
+          >
+            <Text className="text-white text-center font-semibold">
+              {copiedShareCode ? 'コードをコピーしました' : 'コードをコピー'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View className="py-8">
+          <Text className="text-gray-700 text-sm font-semibold mb-1">WEB用ログインURL</Text>
+          <View className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2">
+            <Text className="text-[11px] text-indigo-800" numberOfLines={2}>
+              {sharingBranch
+                ? (buildLoginCodeUrl(loginCodes[sharingBranch.id]?.code ?? '') ?? 'WEB版でURLが表示されます')
+                : 'WEB版でURLが表示されます'}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            onPress={() => { void handleCopyShareUrl(); }}
+            activeOpacity={0.8}
+            disabled={!sharingBranch || !loginCodes[sharingBranch.id]?.code}
+            className={`mt-4 rounded-lg py-4 ${
+              sharingBranch && loginCodes[sharingBranch.id]?.code ? 'bg-indigo-600' : 'bg-gray-300'
+            }`}
+          >
+            <Text className="text-white text-center font-semibold">
+              {copiedShareUrl ? 'URLをコピーしました' : 'URLをコピー'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View className="flex-row gap-3 mt-3">
+          <View className="flex-1">
+            <Button
+              title="コード再生成"
+              onPress={() => {
+                const code = sharingBranch ? loginCodes[sharingBranch.id] : null;
+                if (code) {
+                  void handleRegenerateCode(code);
+                }
+              }}
+              variant="danger"
+              disabled={!sharingBranch || !loginCodes[sharingBranch.id]}
+            />
+          </View>
+          <View className="flex-1">
+            <Button
+              title="閉じる"
+              onPress={handleCloseShare}
+              variant="secondary"
             />
           </View>
         </View>

@@ -3,14 +3,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const STORE_SETTINGS_KEY = '@festival_pos/store_settings';
 
 let syncEnabled = true;
+let syncForced = false;
 let syncModeHydrationPromise: Promise<void> | null = null;
 
 export const setSyncEnabled = (enabled: boolean): void => {
   syncEnabled = enabled;
 };
 
+export const setSyncForced = (forced: boolean): void => {
+  syncForced = forced;
+};
+
 export const getSyncEnabled = (): boolean => {
-  return syncEnabled;
+  return syncForced || syncEnabled;
 };
 
 export const hydrateSyncMode = async (): Promise<void> => {

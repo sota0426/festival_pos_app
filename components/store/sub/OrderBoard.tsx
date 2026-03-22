@@ -302,8 +302,7 @@ export const OrderBoard = ({ branch, onBack }: OrderBoardProps) => {
                 <View className="mb-2">
                   {order.items.map((item) => (
                     <View key={item.id} className="flex-row items-center justify-between py-0.5">
-                      <Text className="text-gray-700 text-sm flex-1 mr-2">{item.menu_name}</Text>
-                      <Text className="text-gray-700 text-sm">x{item.quantity}</Text>
+                      <Text className="text-gray-700 text-2xl flex-1 mr-2">{item.menu_name}（{item.quantity}個）</Text>
                     </View>
                   ))}
                 </View>

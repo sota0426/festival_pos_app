@@ -2,7 +2,7 @@
 
 ## Code And Config
 
-- App display name is `Festival POS`
+- App display name is `文化祭レジ`
 - iOS bundle identifier is `com.festivalpos.app`
 - `app.json` version is updated for the release
 - `app.json` iOS `buildNumber` is set for the next upload

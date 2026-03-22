@@ -2,10 +2,9 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
-import { makeRedirectUri } from 'expo-auth-session';
 import * as Linking from 'expo-linking';
-import Constants from 'expo-constants';
 import { supabase, hasSupabaseEnvConfigured } from '../lib/supabase';
+import { buildNativeAuthBridgeUrl, getWebAppBaseUrl } from '../lib/webAppUrl';
 import type { User } from '@supabase/supabase-js';
 import type { Profile, Subscription, Branch } from '../types/database';
 
@@ -50,6 +49,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 const LOGIN_CODE_SESSION_KEY = '@festival_pos/login_code_session';
+const TRIAL_LENGTH_DAYS = 7;
 
 type LoginCodeSession = {
   branch: Branch;
@@ -68,7 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const getOAuthRedirectUri = useCallback((): string => {
     if (Platform.OS === 'web') {
-      const prodWebUrl = 'https://festival-pos-app.vercel.app';
+      const prodWebUrl = getWebAppBaseUrl() ?? 'https://festival-pos-app.vercel.app';
       if (typeof window === 'undefined') return prodWebUrl;
 
       const origin = window.location.origin;
@@ -78,14 +78,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Web本番では常に固定URLへ戻して localhost への誤リダイレクトを防ぐ
       return prodWebUrl;
     }
-    // Expo Go / dev host では、現在の host を使った URL のほうが復帰が安定する
-    if (Constants.appOwnership === 'expo') {
-      return Linking.createURL('auth/callback');
-    }
-    return makeRedirectUri({
-      scheme: 'festival-pos',
-      path: 'auth/callback',
-    });
+    return Linking.createURL('auth/callback');
   }, []);
 
   const extractQueryParam = useCallback((url: string, key: string): string | null => {
@@ -139,6 +132,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return `S${String(maxNumber + 1).padStart(3, '0')}`;
   }, []);
 
+  const createTrialPeriod = useCallback(() => {
+    const start = new Date();
+    const end = new Date(start);
+    end.setDate(end.getDate() + TRIAL_LENGTH_DAYS);
+    return {
+      current_period_start: start.toISOString(),
+      current_period_end: end.toISOString(),
+    };
+  }, []);
+
   const ensureUserBootstrapData = useCallback(async (user: User) => {
     const profileFallback: Profile = {
       id: user.id,
@@ -179,12 +182,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     let subscription = existingSubscription;
     if (!subscription) {
+      const trialPeriod = createTrialPeriod();
       const { data: insertedSubscription } = await supabase
         .from('subscriptions')
         .insert({
           user_id: user.id,
           plan_type: 'free',
-          status: 'active',
+          status: 'trialing',
+          ...trialPeriod,
         })
         .select('*')
         .single();
@@ -225,9 +230,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       stripe_customer_id: null,
       stripe_subscription_id: null,
       plan_type: 'free',
-      status: 'active',
-      current_period_start: null,
-      current_period_end: null,
+      status: 'trialing',
+      ...createTrialPeriod(),
       cancel_at_period_end: false,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -237,7 +241,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       profile: (profile as Profile) ?? profileFallback,
       subscription: normalizedSubscription,
     };
-  }, [generateNextBranchCode]);
+  }, [createTrialPeriod, generateNextBranchCode]);
 
   const fetchProfileAndSubscription = useCallback(async (user: User) => {
     try {
@@ -380,7 +384,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [consumeAuthRedirectUrl, fetchProfileAndSubscription, restoreLoginCodeSession]);
 
   const signInWithProvider = useCallback(async (provider: 'google' | 'apple') => {
-    const redirectTo = getOAuthRedirectUri();
+    const browserReturnUrl = getOAuthRedirectUri();
+    const redirectTo =
+      Platform.OS === 'web'
+        ? browserReturnUrl
+        : buildNativeAuthBridgeUrl(browserReturnUrl) ?? browserReturnUrl;
     console.log('[Auth] OAuth redirectTo:', redirectTo);
     const oauthOptions = {
       redirectTo,
@@ -408,7 +416,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (error) throw error;
     if (!data?.url) throw new Error('OAuth URLの取得に失敗しました');
 
-    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+    const result = await WebBrowser.openAuthSessionAsync(data.url, browserReturnUrl);
     if (result.type !== 'success' || !result.url) {
       if (result.type === 'cancel' || result.type === 'dismiss') {
         const { data: sessionData } = await supabase.auth.getSession();
@@ -435,6 +443,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     console.error('[Auth] OAuth callback missing tokens/code', {
       redirectTo,
+      browserReturnUrl,
       resultType: result.type,
       resultUrl: result.url,
     });
